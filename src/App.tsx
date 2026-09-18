@@ -1,16 +1,27 @@
 import { useEffect } from "react";
+import { DialogHost } from "./components/Dialogs";
 import { listen } from "@tauri-apps/api/event";
-import { useStore } from "./state/store";
+import { useStore, type Panel } from "./state/store";
 import { applyTheme } from "./theme";
 import { workshopApi } from "./ipc/workshop";
-import { api, type LaunchStatus } from "./ipc/commands";
+import { api, type LaunchStatus, type StartupArgs } from "./ipc/commands";
 import ProfileBar from "./panels/ProfileBar";
 import ModList from "./panels/ModList";
 import ModDetails from "./panels/ModDetails";
 import LaunchBar from "./panels/LaunchBar";
 import SettingsPanel from "./panels/SettingsPanel";
 import ConflictsPanel from "./panels/ConflictsPanel";
+import LogsPanel from "./panels/LogsPanel";
+import CrashDialog from "./panels/CrashDialog";
 import UpdateBanner from "./panels/UpdateBanner";
+
+/** Apply command-line style arguments (from this process, a second instance, or a shortcut). */
+async function applyArgs(args: StartupArgs | null) {
+  if (!args) return;
+  const s = useStore.getState();
+  if (args.launch) await s.launchProfile(args.profile);
+  else if (args.profile && s.profiles.profiles.some((p) => p.name === args.profile)) await s.setActiveProfile(args.profile);
+}
 
 export default function App() {
   const ready = useStore((s) => s.ready);
@@ -21,26 +32,34 @@ export default function App() {
   const paths = useStore((s) => s.paths);
   const version = useStore((s) => s.version);
   const mods = useStore((s) => s.mods);
+  const gameRunning = useStore((s) => s.gameRunning);
 
   useEffect(() => {
-    void useStore.getState().init();
-    const un = listen<LaunchStatus>("launch-status", (e) => useStore.getState().setLaunch(e.payload));
+    const unLaunch = listen<LaunchStatus>("launch-status", (e) => useStore.getState().setLaunch(e.payload));
+    const unCli = listen<StartupArgs>("cli-args", (e) => void applyArgs(e.payload));
+    const unTray = listen<string | null>("tray-play", (e) => void useStore.getState().launchProfile(e.payload));
+    void useStore
+      .getState()
+      .init()
+      .then(() => api.startupArgs())
+      .then(applyArgs)
+      .catch((e) => console.warn("startup args", e));
     return () => {
-      void un.then((f) => f());
+      for (const un of [unLaunch, unCli, unTray]) void un.then((f) => f());
     };
   }, []);
 
   useEffect(() => applyTheme(settings), [settings.themeMode, settings.accent]);
 
-  // The launch thread reports exits for games it started; poll for games started elsewhere
-  // (or before an app restart) so the Play button comes back once the game closes.
-  const gameRunning = useStore((s) => s.gameRunning);
+  // The launch thread reports exits for games it follows; poll as a safety net so the Play
+  // button always comes back once the game closes.
   useEffect(() => {
     if (!ready) return;
     const id = window.setInterval(async () => {
       const running = await api.gameRunning().catch(() => gameRunning);
       if (running !== useStore.getState().gameRunning) {
-        useStore.setState({ gameRunning: running, launch: running ? useStore.getState().launch : { phase: "idle", message: "", pid: null } });
+        const cur = useStore.getState().launch;
+        useStore.setState({ gameRunning: running, launch: running || cur.phase === "crashed" ? cur : { phase: "idle", message: "", pid: null } });
       }
     }, 5000);
     return () => window.clearInterval(id);
@@ -70,16 +89,17 @@ export default function App() {
     return <div className="h-full flex items-center justify-center text-textMuted">Loading…</div>;
   }
 
-  const tabs: { id: typeof panel; label: string }[] = [
+  const tabs: { id: Panel; label: string }[] = [
     { id: "mods", label: "Mods" },
     { id: "conflicts", label: "Conflicts" },
+    { id: "logs", label: "Logs" },
     { id: "settings", label: "Settings" },
   ];
 
   return (
     <div className="h-full flex flex-col">
       <header className="flex items-center gap-3 px-3 py-2 border-b border-edge bg-panelHeader">
-        <div className="font-semibold text-[14px] tracking-wide">
+        <div className="font-semibold text-[14px] tracking-wide whitespace-nowrap">
           TK <span className="text-accent">Mod Manager</span>
         </div>
         <nav className="flex gap-1 ml-2">
@@ -97,7 +117,7 @@ export default function App() {
         </nav>
         <div className="flex-1" />
         <ProfileBar />
-        <div className="text-[10px] text-textMuted ml-2" title={paths?.gameRoot ?? ""}>
+        <div className="text-[10px] text-textMuted ml-2 whitespace-nowrap" title={paths?.gameRoot ?? ""}>
           {paths?.gameRoot ? `game ${paths.exeVersion ?? "found"}` : "game not found"} · v{version}
         </div>
       </header>
@@ -117,10 +137,13 @@ export default function App() {
           </>
         )}
         {panel === "conflicts" && <ConflictsPanel />}
+        {panel === "logs" && <LogsPanel />}
         {panel === "settings" && <SettingsPanel />}
       </main>
 
       <LaunchBar />
+      <CrashDialog />
+      <DialogHost />
       <UpdateBanner enabled={settings.checkAppUpdates} />
     </div>
   );

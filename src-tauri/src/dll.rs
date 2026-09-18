@@ -7,7 +7,7 @@
 use crate::fingerprint::{self, ExeFingerprint};
 use crate::paths;
 use crate::state::AppState;
-use crate::update::{download_to, fetch_latest_release};
+use crate::update::{download_to, fetch_releases, pick_release};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -128,8 +128,9 @@ pub fn dll_status(state: State<AppState>) -> DllStatus {
 
 /// Query the latest DLL release. Errors are returned as strings (offline, no release yet).
 #[tauri::command]
-pub async fn dll_check_update() -> Result<RemoteDll, String> {
-    let rel = fetch_latest_release(OWNER, REPO).await?;
+pub async fn dll_check_update(state: State<'_, AppState>) -> Result<RemoteDll, String> {
+    let allow_pre = state.settings().dll_channel == "prerelease";
+    let rel = pick_release(fetch_releases(OWNER, REPO).await?, allow_pre).ok_or("no release published yet")?;
     let dll_url = rel.asset_url(DLL_NAME).ok_or_else(|| format!("release has no {DLL_NAME}"))?.to_string();
     let manifest_url =
         rel.asset_url(MANIFEST_NAME).ok_or_else(|| format!("release has no {MANIFEST_NAME}"))?.to_string();
@@ -239,4 +240,91 @@ pub fn dll_remove(version: String) -> Result<(), String> {
 pub fn dll_read_log(dir: String) -> Result<String, String> {
     let p = Path::new(&dir).join(LOG_NAME);
     std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// `dll\script_extender.cfg`: the DLL reads it from its own folder or the parent, so one file
+/// here serves every installed version. `key=value` lines, `#` comments.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DllConfig {
+    pub build_number: String,
+    pub build_number_short: String,
+    /// None = leave the game's own "modified" flag alone.
+    pub build_modified: Option<bool>,
+}
+
+pub const CFG_NAME: &str = "script_extender.cfg";
+
+pub fn parse_cfg(text: &str) -> DllConfig {
+    let mut c = DllConfig::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let v = v.trim();
+        match k.trim() {
+            "build_number" => c.build_number = v.to_string(),
+            "build_number_short" => c.build_number_short = v.to_string(),
+            "build_modified" => c.build_modified = Some(v == "1" || v.eq_ignore_ascii_case("true")),
+            _ => {}
+        }
+    }
+    c
+}
+
+pub fn render_cfg(c: &DllConfig) -> String {
+    let mut out = String::from("# Script extender settings (written by TK Mod Manager)\n");
+    if !c.build_number.trim().is_empty() {
+        out.push_str(&format!("build_number={}\n", c.build_number.trim()));
+    }
+    if !c.build_number_short.trim().is_empty() {
+        out.push_str(&format!("build_number_short={}\n", c.build_number_short.trim()));
+    }
+    if let Some(m) = c.build_modified {
+        out.push_str(&format!("build_modified={}\n", if m { 1 } else { 0 }));
+    }
+    out
+}
+
+#[tauri::command]
+pub fn dll_read_cfg() -> DllConfig {
+    std::fs::read_to_string(dll_root().join(CFG_NAME)).map(|t| parse_cfg(&t)).unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn dll_write_cfg(config: DllConfig) -> Result<(), String> {
+    let dir = dll_root();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(CFG_NAME);
+    if config == DllConfig::default() {
+        // Nothing set: remove the file so the DLL leaves the build number alone.
+        return match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        };
+    }
+    std::fs::write(&path, render_cfg(&config)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cfg_roundtrip() {
+        let c = DllConfig { build_number: "v1.7.2 Build 25370317 (190E)".into(), build_number_short: "190E".into(), build_modified: Some(false) };
+        assert_eq!(parse_cfg(&render_cfg(&c)), c);
+        assert_eq!(parse_cfg("# only a comment\n\nunknown=1\n"), DllConfig::default());
+        assert_eq!(parse_cfg("build_modified = true").build_modified, Some(true));
+    }
+
+    #[test]
+    fn manifest_matches_fingerprint() {
+        let m = Manifest { version: "1.0.0".into(), game_exe_version: String::new(), exe_timestamp: "0x69ce4c84".into(), exe_size_of_image: "0x4836000".into(), sha256: String::new() };
+        assert!(m.matches(&ExeFingerprint { timestamp: 0x69ce4c84, size_of_image: 0x4836000 }));
+        assert!(!m.matches(&ExeFingerprint { timestamp: 1, size_of_image: 0x4836000 }));
+    }
 }

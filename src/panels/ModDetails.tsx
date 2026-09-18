@@ -13,6 +13,8 @@ export default function ModDetails() {
   const setMeta = useStore((s) => s.setMeta);
   const profile = useStore((s) => s.activeProfile());
   const mods = useStore((s) => s.mods);
+  const toggleMods = useStore((s) => s.toggleMods);
+  const gameBuildTime = useStore((s) => s.dll?.gameFingerprint?.timestamp ?? 0);
   const [notes, setNotes] = useState("");
   const [tagInput, setTagInput] = useState("");
 
@@ -42,6 +44,7 @@ export default function ModDetails() {
   const ws = mod.workshopId ? workshop[mod.workshopId] : undefined;
   const title = ws?.title || mod.file.replace(/\.pack$/i, "");
   const tags = meta?.tags ?? [];
+  const olderThanGame = !!ws?.timeUpdated && !ws.fromLauncherCache && gameBuildTime > 0 && ws.timeUpdated < gameBuildTime;
   const enabledKeys = new Set(profile.entries.filter((e) => e.enabled).map((e) => e.key));
   const required = (ws?.requiredItems ?? []).map((id) => {
     const installed = mods.find((m) => m.workshopId === id);
@@ -66,8 +69,8 @@ export default function ModDetails() {
           <div className="text-textMuted break-all select-text">{mod.file}</div>
         </div>
         <div className="flex flex-wrap gap-1">
-          <span className={`badge ${mod.source === "workshop" ? "border-accent/60 text-accent" : "border-edge text-textMuted"}`}>
-            {mod.source === "workshop" ? "Workshop" : "data/"}
+          <span className={`badge ${mod.source === "workshop" ? "border-accent/60 text-accent" : "border-edge text-textMuted"}`} title={mod.dir}>
+            {mod.source === "workshop" ? "Workshop" : mod.source === "folder" ? "Folder" : "data/"}
           </span>
           <span className={`badge ${mod.packType === "movie" ? "border-warn text-warn" : "border-edge text-textMuted"}`}>
             {mod.packType === "movie" ? "MOVIE" : "mod"}
@@ -99,9 +102,25 @@ export default function ModDetails() {
           </button>
         </div>
 
+        {olderThanGame && (
+          <div className="text-[11px] text-textMuted">
+            Last updated on the Workshop before the current game build ({formatDate(gameBuildTime)}). Most mods keep working; worth a look if it misbehaves.
+          </div>
+        )}
+
         {required.length > 0 && (
           <div>
-            <div className="font-semibold mb-1">Required items</div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-semibold">Required items</span>
+              {required.some((r) => r.installed && !r.enabled) && (
+                <button
+                  className="btn"
+                  onClick={() => void toggleMods(required.filter((r) => r.installed && !r.enabled).map((r) => r.installed!.key), true)}
+                >
+                  Enable all
+                </button>
+              )}
+            </div>
             <ul className="space-y-0.5">
               {required.map((r) => (
                 <li key={r.id} className="flex items-center gap-1.5">

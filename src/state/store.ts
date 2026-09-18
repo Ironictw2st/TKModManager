@@ -11,20 +11,23 @@ import {
   type ModEntry,
   type ModMeta,
   type Profile,
+  type ProfileEntry,
   type ProfilesDoc,
   type RemoteDll,
   type Settings,
 } from "../ipc/commands";
 import { comparePackNames } from "../util/format";
 import type { WorkshopItem } from "../ipc/workshop";
+import * as sep from "./separators";
 
 export type SortKey = "order" | "title" | "file" | "source" | "type" | "size" | "updated";
+export type Panel = "mods" | "conflicts" | "logs" | "settings";
 
 export interface Filters {
   search: string;
-  source: "all" | "workshop" | "data";
+  source: "all" | "workshop" | "data" | "folder";
   type: "all" | "mod" | "movie";
-  enabled: "all" | "enabled" | "disabled";
+  enabled: "all" | "enabled" | "disabled" | "updated";
   tag: string | null;
   showHidden: boolean;
 }
@@ -46,13 +49,17 @@ export interface AppStore {
   dllError: string | null;
   launch: LaunchStatus;
   gameRunning: boolean;
+  /** Save to load on the next launch ("" = main menu). */
+  loadSave: string;
+  /** Last abnormal exit, for the "Details" button. */
+  crash: { historyId: number | null; exitCode: number | null } | null;
 
   // ui
   filters: Filters;
   sort: { key: SortKey; dir: 1 | -1 };
   selected: string[];
   focused: string | null;
-  panel: "mods" | "conflicts" | "settings";
+  panel: Panel;
 
   // actions
   init(): Promise<void>;
@@ -61,8 +68,10 @@ export interface AppStore {
   setSettings(patch: Partial<Settings>): Promise<void>;
   setFilters(patch: Partial<Filters>): void;
   setSort(key: SortKey): void;
-  setPanel(panel: AppStore["panel"]): void;
+  setPanel(panel: Panel): void;
   select(keys: string[], focused?: string | null): void;
+  setLoadSave(name: string): void;
+  clearCrash(): void;
 
   activeProfile(): Profile;
   updateProfile(name: string, fn: (p: Profile) => Profile): Promise<void>;
@@ -72,8 +81,18 @@ export interface AppStore {
   deleteProfile(name: string): Promise<void>;
   toggleMods(keys: string[], enabled?: boolean): Promise<void>;
   moveMods(keys: string[], toIndex: number): Promise<void>;
+  moveBlock(keys: string[], overKey: string): Promise<void>;
   sortProfileAlpha(): Promise<void>;
   enabledToTop(): Promise<void>;
+
+  addSeparator(label: string, beforeKey: string | null): Promise<void>;
+  renameSeparator(sepKey: string, label: string): Promise<void>;
+  removeSeparator(sepKey: string): Promise<void>;
+  toggleGroup(sepKey: string, enabled: boolean): Promise<void>;
+  setCollapsed(sepKey: string, collapsed: boolean): Promise<void>;
+
+  /** Launch `profileName` (default: the active profile). Used by Play, the tray and shortcuts. */
+  launchProfile(profileName?: string | null): Promise<void>;
 
   setMeta(key: string, patch: Partial<ModMeta>): Promise<void>;
   setWorkshop(items: Record<string, WorkshopItem>): void;
@@ -92,7 +111,7 @@ const DEFAULT_FILTERS: Filters = {
 const EMPTY_PROFILE: Profile = { name: "Default", entries: [], dll: false, skipIntro: false };
 
 /** Make sure every installed pack has an entry (new packs are appended, disabled) and keep
- *  entries for packs that are gone (shown as missing). */
+ *  entries for packs that are gone (shown as missing). Separators are left alone. */
 export function reconcile(profile: Profile, mods: ModEntry[]): Profile {
   const have = new Set(profile.entries.map((e) => e.key));
   const missing = mods
@@ -101,6 +120,26 @@ export function reconcile(profile: Profile, mods: ModEntry[]): Profile {
     .map((m) => ({ key: m.key, enabled: false }));
   if (missing.length === 0) return profile;
   return { ...profile, entries: [...profile.entries, ...missing] };
+}
+
+/** Apply `fn` to each run of pack entries between separators, keeping separators in place. */
+export function mapSegments(entries: ProfileEntry[], fn: (segment: ProfileEntry[]) => ProfileEntry[]): ProfileEntry[] {
+  const out: ProfileEntry[] = [];
+  let seg: ProfileEntry[] = [];
+  for (const e of entries) {
+    if (sep.isSeparator(e)) {
+      out.push(...fn(seg), e);
+      seg = [];
+    } else seg.push(e);
+  }
+  out.push(...fn(seg));
+  return out;
+}
+
+/** Is this pack newer than the profile's last launch? (Workshop update time or file time.) */
+export function updatedSince(lastPlayed: number | undefined, mod: ModEntry | undefined, ws: WorkshopItem | undefined): boolean {
+  if (!lastPlayed || !mod) return false;
+  return Math.max(mod.mtime, ws?.timeUpdated ?? 0) > lastPlayed;
 }
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -116,11 +155,15 @@ export const useStore = create<AppStore>((set, get) => ({
     checkDllUpdates: true,
     steamApiKey: "",
     workshopCacheHours: 24,
+    extraModDirs: [],
+    autoInjectExternal: false,
+    dllChannel: "stable",
+    minimizeToTray: false,
   },
   paths: null,
   mods: [],
   modsByKey: {},
-  profiles: { schema: 1, active: "Default", profiles: [EMPTY_PROFILE] },
+  profiles: { schema: 2, active: "Default", profiles: [EMPTY_PROFILE] },
   meta: { mods: {} },
   workshop: {},
   dll: null,
@@ -128,6 +171,8 @@ export const useStore = create<AppStore>((set, get) => ({
   dllError: null,
   launch: { phase: "idle", message: "", pid: null },
   gameRunning: false,
+  loadSave: "",
+  crash: null,
   filters: DEFAULT_FILTERS,
   sort: { key: "order", dir: 1 },
   selected: [],
@@ -137,7 +182,7 @@ export const useStore = create<AppStore>((set, get) => ({
   async init() {
     try {
       const [settings, profiles, meta] = await Promise.all([api.getSettings(), api.loadProfiles(), api.loadMeta()]);
-      set({ settings, profiles, meta });
+      set({ settings, profiles: { ...profiles, schema: 2 }, meta });
       await get().refreshMods();
       // First run: seed the Default profile from the CA launcher's list when it exists.
       const s = get();
@@ -190,7 +235,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const settings = { ...get().settings, ...patch };
     set({ settings });
     await api.setSettings(settings);
-    if ("gameRoot" in patch || "workshopDir" in patch) {
+    if ("gameRoot" in patch || "workshopDir" in patch || "extraModDirs" in patch) {
       await get().refreshMods();
       await get().refreshDll();
     }
@@ -208,6 +253,12 @@ export const useStore = create<AppStore>((set, get) => ({
   },
   select(keys, focused) {
     set({ selected: keys, focused: focused === undefined ? (keys[keys.length - 1] ?? null) : focused });
+  },
+  setLoadSave(name) {
+    set({ loadSave: name });
+  },
+  clearCrash() {
+    set({ crash: null });
   },
 
   activeProfile() {
@@ -233,7 +284,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const doc = get().profiles;
     if (doc.profiles.some((p) => p.name === name)) throw new Error(`A profile named "${name}" already exists`);
     const base: Profile = from
-      ? { ...from, name, entries: from.entries.map((e) => ({ ...e })) }
+      ? { ...from, name, lastPlayed: undefined, entries: from.entries.map((e) => ({ ...e })) }
       : reconcile({ ...EMPTY_PROFILE, name }, get().mods);
     const next = { ...doc, active: name, profiles: [...doc.profiles, base] };
     set({ profiles: next });
@@ -263,7 +314,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   async toggleMods(keys, enabled) {
     const p = get().activeProfile();
-    const ks = new Set(keys);
+    const ks = new Set(keys.filter((k) => !k.startsWith(sep.SEP_PREFIX)));
     await get().updateProfile(p.name, (prof) => ({
       ...prof,
       entries: prof.entries.map((e) => (ks.has(e.key) ? { ...e, enabled: enabled ?? !e.enabled } : e)),
@@ -283,23 +334,71 @@ export const useStore = create<AppStore>((set, get) => ({
     });
   },
 
+  async moveBlock(keys, overKey) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.moveBlock(prof.entries, keys, overKey) }));
+  },
+
+  /** Alphabetical by file name inside each group (separators keep their place). */
   async sortProfileAlpha() {
     const p = get().activeProfile();
     const byKey = get().modsByKey;
     await get().updateProfile(p.name, (prof) => ({
       ...prof,
-      entries: [...prof.entries].sort((a, b) =>
-        comparePackNames(byKey[a.key]?.file ?? a.key, byKey[b.key]?.file ?? b.key),
+      entries: mapSegments(prof.entries, (seg) =>
+        [...seg].sort((a, b) => comparePackNames(byKey[a.key]?.file ?? a.key, byKey[b.key]?.file ?? b.key)),
       ),
     }));
   },
 
+  /** Enabled packs first, inside each group. */
   async enabledToTop() {
     const p = get().activeProfile();
     await get().updateProfile(p.name, (prof) => ({
       ...prof,
-      entries: [...prof.entries.filter((e) => e.enabled), ...prof.entries.filter((e) => !e.enabled)],
+      entries: mapSegments(prof.entries, (seg) => [...seg.filter((e) => e.enabled), ...seg.filter((e) => !e.enabled)]),
     }));
+  },
+
+  async addSeparator(label, beforeKey) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.addSeparator(prof.entries, label, beforeKey).entries }));
+  },
+  async renameSeparator(sepKey, label) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.renameSeparator(prof.entries, sepKey, label) }));
+  },
+  async removeSeparator(sepKey) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.removeSeparator(prof.entries, sepKey) }));
+  },
+  async toggleGroup(sepKey, enabled) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.toggleGroup(prof.entries, sepKey, enabled) }));
+  },
+  async setCollapsed(sepKey, collapsed) {
+    const p = get().activeProfile();
+    await get().updateProfile(p.name, (prof) => ({ ...prof, entries: sep.setCollapsed(prof.entries, sepKey, collapsed) }));
+  },
+
+  async launchProfile(profileName) {
+    const s = get();
+    if (profileName && profileName !== s.profiles.active) {
+      if (!s.profiles.profiles.some((p) => p.name === profileName)) {
+        set({ launch: { phase: "failed", message: `No profile named "${profileName}"`, pid: null } });
+        return;
+      }
+      await s.setActiveProfile(profileName);
+    }
+    const profile = get().activeProfile();
+    try {
+      set({ launch: { phase: "writing", message: "Starting…", pid: null }, crash: null });
+      await api.launchGame(profile, get().loadSave || null);
+      set({ gameRunning: true });
+      await get().updateProfile(profile.name, (p) => ({ ...p, lastPlayed: Math.floor(Date.now() / 1000) }));
+    } catch (e) {
+      set({ launch: { phase: "failed", message: String(e), pid: null } });
+    }
   },
 
   async setMeta(key, patch) {
@@ -315,6 +414,11 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   setLaunch(status) {
-    set({ launch: status, gameRunning: status.phase !== "exited" && status.phase !== "failed" && status.phase !== "idle" });
+    const ended = status.phase === "exited" || status.phase === "crashed" || status.phase === "failed" || status.phase === "idle";
+    set({
+      launch: status,
+      gameRunning: status.phase === "failed" ? get().gameRunning : !ended,
+      crash: status.phase === "crashed" ? { historyId: status.historyId ?? null, exitCode: status.exitCode ?? null } : get().crash,
+    });
   },
 }));

@@ -2,12 +2,31 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
+
+/// Key prefix of separator entries (group headers); they never resolve to a pack.
+pub const SEPARATOR_PREFIX: &str = "sep:";
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ProfileEntry {
     pub key: String,
     pub enabled: bool,
+    /// Separator caption (only for `sep:` entries).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Separator's group is folded in the UI.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub collapsed: bool,
+}
+
+impl ProfileEntry {
+    pub fn is_separator(&self) -> bool {
+        self.key.starts_with(SEPARATOR_PREFIX)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -22,6 +41,9 @@ pub struct Profile {
     /// Generate the skip-intro options pack on launch.
     #[serde(default)]
     pub skip_intro: bool,
+    /// Unix seconds of the last launch with this profile (drives the "updated" badges).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_played: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -41,6 +63,7 @@ impl Default for ProfilesDoc {
                 entries: vec![],
                 dll: false,
                 skip_intro: false,
+                last_played: None,
             }],
         }
     }

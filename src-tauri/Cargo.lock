@@ -2737,6 +2737,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mslnk"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86c97310150b7f496a93f31690da7822b99d95ff68ca9d30fb09d3ad54375c76"
+dependencies = [
+ "bitflags 1.3.2",
+ "byteorder",
+ "log",
+]
+
+[[package]]
 name = "muda"
 version = "0.19.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5034,6 +5045,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-single-instance"
+version = "2.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cd0cb5c412a5071b69bab6a6df1583cbb89460d4a83b6a24769b08d15b6b1e1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "windows-sys 0.60.2",
+ "zbus",
+]
+
+[[package]]
 name = "tauri-plugin-window-state"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5272,11 +5299,12 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tk-mod-manager"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "directories",
  "hex",
  "inject_core",
+ "mslnk",
  "reqwest 0.12.28",
  "rpfm_lib",
  "self-replace",
@@ -5288,6 +5316,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tempfile",
  "thiserror 1.0.69",

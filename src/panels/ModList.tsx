@@ -1,24 +1,42 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { askConfirm, askText } from "../components/Dialogs";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useStore, type SortKey } from "../state/store";
+import { updatedSince, useStore, type SortKey } from "../state/store";
 import type { ModEntry, ProfileEntry } from "../ipc/commands";
 import { comparePackNames, formatBytes, formatDate } from "../util/format";
 import ContextMenu, { type MenuItem } from "../components/ContextMenu";
+import { collapsedKeys, groupMembers, groupState, isSeparator } from "../state/separators";
 
-interface Row {
+interface ModRowData {
+  kind: "mod";
   key: string;
   entry: ProfileEntry;
   mod: ModEntry | undefined;
   title: string;
   /** Position in the profile's entries array (load order). */
   index: number;
+  /** 1-based position among pack entries (separators not counted). */
+  order: number;
   updated: number;
+  isUpdated: boolean;
   hidden: boolean;
   tags: string[];
 }
+
+interface SepRowData {
+  kind: "sep";
+  key: string;
+  entry: ProfileEntry;
+  index: number;
+  members: number;
+  enabledMembers: number;
+  state: "all" | "none" | "some" | "empty";
+}
+
+type Row = ModRowData | SepRowData;
 
 const COLUMNS: { key: SortKey; label: string; className: string }[] = [
   { key: "order", label: "#", className: "w-12 text-right" },
@@ -28,6 +46,8 @@ const COLUMNS: { key: SortKey; label: string; className: string }[] = [
   { key: "size", label: "Size", className: "w-20 text-right" },
   { key: "updated", label: "Updated", className: "w-28" },
 ];
+
+const SOURCE_LABEL: Record<ModEntry["source"], string> = { workshop: "Workshop", data: "data/", folder: "Folder" };
 
 export default function ModList() {
   const profile = useStore((s) => s.activeProfile());
@@ -43,32 +63,18 @@ export default function ModList() {
   const select = useStore((s) => s.select);
   const toggleMods = useStore((s) => s.toggleMods);
   const moveMods = useStore((s) => s.moveMods);
+  const moveBlock = useStore((s) => s.moveBlock);
   const sortProfileAlpha = useStore((s) => s.sortProfileAlpha);
   const enabledToTop = useStore((s) => s.enabledToTop);
   const gameRunning = useStore((s) => s.gameRunning);
   const setMeta = useStore((s) => s.setMeta);
+  const addSeparator = useStore((s) => s.addSeparator);
+  const renameSeparator = useStore((s) => s.renameSeparator);
+  const removeSeparator = useStore((s) => s.removeSeparator);
+  const toggleGroup = useStore((s) => s.toggleGroup);
+  const setCollapsed = useStore((s) => s.setCollapsed);
   const lastClicked = useRef<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; row: Row } | null>(null);
-
-  const menuItems = (row: Row): MenuItem[] => {
-    const keys = selected.includes(row.key) ? selected : [row.key];
-    const mm = meta.mods[row.key];
-    const n = keys.length > 1 ? ` (${keys.length})` : "";
-    return [
-      { label: `Enable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, true) },
-      { label: `Disable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, false) },
-      { separator: true, label: "" },
-      {
-        label: "Open in Workshop",
-        disabled: !row.mod?.workshopId,
-        onClick: () => void openUrl(`https://steamcommunity.com/sharedfiles/filedetails/?id=${row.mod?.workshopId}`),
-      },
-      { label: "Show file in Explorer", disabled: !row.mod, onClick: () => row.mod && void revealItemInDir(row.mod.path) },
-      { separator: true, label: "" },
-      { label: mm?.hidden ? "Unhide" : "Hide", onClick: () => void setMeta(row.key, { hidden: !mm?.hidden }) },
-      { label: "Copy key", onClick: () => void navigator.clipboard?.writeText(row.key) },
-    ];
-  };
 
   const allTags = useMemo(() => {
     const t = new Set<string>();
@@ -76,26 +82,63 @@ export default function ModList() {
     return [...t].sort();
   }, [meta]);
 
+  // Separators only make sense in load order with no search narrowing the list.
+  const groupsVisible = sort.key === "order" && !filters.search.trim();
+
   const rows: Row[] = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
+    const folded = groupsVisible ? collapsedKeys(profile.entries) : new Set<string>();
     const out: Row[] = [];
+    let order = 0;
     profile.entries.forEach((entry, index) => {
+      if (isSeparator(entry)) {
+        if (!groupsVisible) return;
+        const members = groupMembers(profile.entries, entry.key).filter((k) => modsByKey[k]);
+        const on = members.filter((k) => profile.entries.find((e) => e.key === k)?.enabled).length;
+        out.push({
+          kind: "sep",
+          key: entry.key,
+          entry,
+          index,
+          members: members.length,
+          enabledMembers: on,
+          state: groupState(profile.entries, entry.key, (k) => !!modsByKey[k]),
+        });
+        return;
+      }
       const mod = modsByKey[entry.key];
+      if (mod?.packType !== "movie") order += 1;
+      if (folded.has(entry.key) && mod?.packType !== "movie") return;
       const mm = meta.mods[entry.key];
       const hidden = !!mm?.hidden;
       if (hidden && !filters.showHidden) return;
       const ws = mod?.workshopId ? workshop[mod.workshopId] : undefined;
       const title = ws?.title || mod?.file.replace(/\.pack$/i, "") || entry.key;
+      const isUpdated = entry.enabled && updatedSince(profile.lastPlayed, mod, ws);
       if (filters.source !== "all" && mod && mod.source !== filters.source) return;
       if (filters.type !== "all" && mod && mod.packType !== filters.type) return;
       if (filters.enabled === "enabled" && !entry.enabled) return;
       if (filters.enabled === "disabled" && entry.enabled) return;
+      if (filters.enabled === "updated" && !isUpdated) return;
       if (filters.tag && !(mm?.tags ?? []).includes(filters.tag)) return;
       if (q && !title.toLowerCase().includes(q) && !(mod?.file ?? "").toLowerCase().includes(q) && !entry.key.toLowerCase().includes(q)) return;
-      out.push({ key: entry.key, entry, mod, title, index, updated: ws?.timeUpdated || mod?.mtime || 0, hidden, tags: mm?.tags ?? [] });
+      out.push({
+        kind: "mod",
+        key: entry.key,
+        entry,
+        mod,
+        title,
+        index,
+        order,
+        updated: ws?.timeUpdated || mod?.mtime || 0,
+        isUpdated,
+        hidden,
+        tags: mm?.tags ?? [],
+      });
     });
     if (sort.key !== "order") {
-      const cmp = (a: Row, b: Row): number => {
+      const mods = out.filter((r): r is ModRowData => r.kind === "mod");
+      const cmp = (a: ModRowData, b: ModRowData): number => {
         switch (sort.key) {
           case "title":
             return comparePackNames(a.title, b.title);
@@ -113,14 +156,15 @@ export default function ModList() {
             return 0;
         }
       };
-      out.sort((a, b) => cmp(a, b) * sort.dir || a.index - b.index);
+      return mods.sort((a, b) => cmp(a, b) * sort.dir || a.index - b.index);
     }
     return out;
-  }, [profile, modsByKey, workshop, meta, filters, sort]);
+  }, [profile, modsByKey, workshop, meta, filters, sort, groupsVisible]);
 
-  const modRows = rows.filter((r) => !r.mod || r.mod.packType !== "movie");
-  const movieRows = rows.filter((r) => r.mod?.packType === "movie");
+  const mainRows = rows.filter((r) => r.kind === "sep" || r.mod?.packType !== "movie");
+  const movieRows = rows.filter((r): r is ModRowData => r.kind === "mod" && r.mod?.packType === "movie");
   const canDrag = sort.key === "order" && !gameRunning;
+  const updatedCount = rows.filter((r) => r.kind === "mod" && r.isUpdated).length;
 
   const onRowClick = useCallback(
     (row: Row, e: React.MouseEvent) => {
@@ -130,7 +174,7 @@ export default function ModList() {
         const b = visible.indexOf(row.key);
         if (a >= 0 && b >= 0) {
           const [lo, hi] = a < b ? [a, b] : [b, a];
-          select(visible.slice(lo, hi + 1), row.key);
+          select(visible.slice(lo, hi + 1).filter((k) => !k.startsWith("sep:")), row.key);
           return;
         }
       }
@@ -146,18 +190,23 @@ export default function ModList() {
   );
 
   const onToggle = useCallback(
-    (row: Row, checked: boolean) => {
+    (row: ModRowData, checked: boolean) => {
       const keys = selected.includes(row.key) && selected.length > 1 ? selected : [row.key];
       void toggleMods(keys, checked);
     },
     [selected, toggleMods],
   );
 
-  /** Move the selection one step up/down in the load order (only mod packs move). */
+  const movable = useCallback(
+    (keys: string[]) => keys.filter((k) => k.startsWith("sep:") || modsByKey[k]?.packType !== "movie"),
+    [modsByKey],
+  );
+
+  /** Move the selection one step up/down in the load order. */
   const nudge = useCallback(
     (dir: -1 | 1) => {
       const entries = profile.entries;
-      const keys = selected.filter((k) => modsByKey[k]?.packType !== "movie");
+      const keys = movable(selected).filter((k) => !k.startsWith("sep:"));
       if (keys.length === 0) return;
       const ks = new Set(keys);
       const idx = entries.map((e, i) => (ks.has(e.key) ? i : -1)).filter((i) => i >= 0);
@@ -168,10 +217,11 @@ export default function ModList() {
       if (restIdx < 0) return;
       void moveMods(keys, dir < 0 ? restIdx : restIdx + 1);
     },
-    [profile, selected, modsByKey, moveMods],
+    [profile, selected, movable, moveMods],
   );
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).tagName === "INPUT") return;
     if (e.altKey && e.key === "ArrowUp") {
       e.preventDefault();
       nudge(-1);
@@ -184,7 +234,7 @@ export default function ModList() {
       void toggleMods(selected, !(first?.enabled ?? false));
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       e.preventDefault();
-      select(rows.map((r) => r.key), focused);
+      select(rows.filter((r) => r.kind === "mod").map((r) => r.key), focused);
     }
   };
 
@@ -193,23 +243,63 @@ export default function ModList() {
     const { active, over } = ev;
     if (!over || active.id === over.id) return;
     const activeKey = String(active.id);
-    const overKey = String(over.id);
-    const keys = selected.includes(activeKey) ? selected.filter((k) => modsByKey[k]?.packType !== "movie") : [activeKey];
-    const ks = new Set(keys);
-    if (ks.has(overKey)) return;
-    const entries = profile.entries;
-    const from = entries.findIndex((e) => e.key === activeKey);
-    const to = entries.findIndex((e) => e.key === overKey);
-    const rest = entries.filter((e) => !ks.has(e.key));
-    const restIdx = rest.findIndex((e) => e.key === overKey);
-    if (restIdx < 0) return;
-    void moveMods(keys, from < to ? restIdx + 1 : restIdx);
+    const keys = activeKey.startsWith("sep:") ? [activeKey] : selected.includes(activeKey) ? movable(selected) : [activeKey];
+    void moveBlock(keys, String(over.id));
   };
 
-  const enabledCount = profile.entries.filter((e) => e.enabled).length;
+  const newSeparator = async (beforeKey: string | null) => {
+    const label = await askText("Separator / group name:", "New group");
+    if (label?.trim()) void addSeparator(label.trim(), beforeKey);
+  };
+
+  const menuItems = (row: Row): MenuItem[] => {
+    if (row.kind === "sep") {
+      return [
+        { label: "Enable group", disabled: gameRunning, onClick: () => void toggleGroup(row.key, true) },
+        { label: "Disable group", disabled: gameRunning, onClick: () => void toggleGroup(row.key, false) },
+        { separator: true, label: "" },
+        {
+          label: "Rename…",
+          onClick: async () => {
+            const label = await askText("Group name:", row.entry.label ?? "");
+            if (label?.trim()) void renameSeparator(row.key, label.trim());
+          },
+        },
+        { label: "Add separator above…", onClick: () => void newSeparator(row.key) },
+        { label: "Remove separator (keeps its mods)", onClick: () => void removeSeparator(row.key) },
+      ];
+    }
+    const keys = selected.includes(row.key) ? selected : [row.key];
+    const mm = meta.mods[row.key];
+    const n = keys.length > 1 ? ` (${keys.length})` : "";
+    return [
+      { label: `Enable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, true) },
+      { label: `Disable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, false) },
+      { separator: true, label: "" },
+      { label: "Add separator above…", disabled: !groupsVisible, onClick: () => void newSeparator(row.key) },
+      { separator: true, label: "" },
+      {
+        label: "Open in Workshop",
+        disabled: !row.mod?.workshopId,
+        onClick: () => void openUrl(`https://steamcommunity.com/sharedfiles/filedetails/?id=${row.mod?.workshopId}`),
+      },
+      { label: "Show file in Explorer", disabled: !row.mod, onClick: () => row.mod && void revealItemInDir(row.mod.path) },
+      { separator: true, label: "" },
+      { label: mm?.hidden ? "Unhide" : "Hide", onClick: () => void setMeta(row.key, { hidden: !mm?.hidden }) },
+      { label: "Copy key", onClick: () => void navigator.clipboard?.writeText(row.key) },
+    ];
+  };
+
+  const openMenu = (r: Row, e: React.MouseEvent) => {
+    if (r.kind === "mod" && !selected.includes(r.key)) select([r.key], r.key);
+    setMenu({ x: e.clientX, y: e.clientY, row: r });
+  };
+
+  const enabledCount = profile.entries.filter((e) => e.enabled && !isSeparator(e)).length;
+  const packCount = profile.entries.filter((e) => !isSeparator(e)).length;
 
   return (
-    <section className="flex-1 min-w-0 flex flex-col" onKeyDown={onKeyDown} tabIndex={0}>
+    <section className="flex-1 min-w-0 flex flex-col outline-none" onKeyDown={onKeyDown} tabIndex={0}>
       <div className="flex items-center gap-2 px-2 py-1.5 border-b border-edge text-[12px] overflow-x-auto">
         <input
           value={filters.search}
@@ -221,6 +311,7 @@ export default function ModList() {
           <option value="all">All sources</option>
           <option value="workshop">Workshop</option>
           <option value="data">data/</option>
+          <option value="folder">Folders</option>
         </select>
         <select value={filters.type} onChange={(e) => setFilters({ type: e.target.value as typeof filters.type })}>
           <option value="all">Mods + movies</option>
@@ -231,6 +322,7 @@ export default function ModList() {
           <option value="all">Enabled + disabled</option>
           <option value="enabled">Enabled</option>
           <option value="disabled">Disabled</option>
+          <option value="updated">Updated since last played</option>
         </select>
         {allTags.length > 0 && (
           <select value={filters.tag ?? ""} onChange={(e) => setFilters({ tag: e.target.value || null })}>
@@ -247,23 +339,33 @@ export default function ModList() {
           hidden
         </label>
         <div className="flex-1" />
-        <span className="text-textMuted whitespace-nowrap" title={`${rows.length} shown of ${profile.entries.length}`}>
-          {enabledCount} enabled / {profile.entries.length}
+        {updatedCount > 0 && filters.enabled !== "updated" && (
+          <button className="badge border-ok text-ok whitespace-nowrap" onClick={() => setFilters({ enabled: "updated" })} title="Enabled mods changed since this profile was last played">
+            {updatedCount} updated
+          </button>
+        )}
+        <span className="text-textMuted whitespace-nowrap" title={`${rows.filter((r) => r.kind === "mod").length} shown of ${packCount}`}>
+          {enabledCount} enabled / {packCount}
         </span>
+        <button className="btn" disabled={!groupsVisible} title="Add a separator; the mods below it form a group you can toggle, fold and drag" onClick={() => void newSeparator(focused)}>
+          + Group
+        </button>
         <button
           className="btn"
           disabled={gameRunning}
-          title="Reorder the whole profile alphabetically by file name (the CA launcher's default order)"
-          onClick={() => confirm("Sort the entire load order alphabetically by pack file name?") && void sortProfileAlpha()}
+          title="Sort alphabetically by pack file name (the CA launcher's default order), inside each group"
+          onClick={async () => (await askConfirm("Sort the load order alphabetically by pack file name (within each group)?", "Sort")) && void sortProfileAlpha()}
         >
           Sort A→Z
         </button>
-        <button className="btn" disabled={gameRunning} title="Move every enabled mod above the disabled ones" onClick={() => void enabledToTop()}>
+        <button className="btn" disabled={gameRunning} title="Move enabled mods above disabled ones, inside each group" onClick={() => void enabledToTop()}>
           Enabled to top
         </button>
       </div>
 
       <div className="flex-1 overflow-auto">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={mainRows.map((r) => r.key)} strategy={verticalListSortingStrategy}>
         <table className="w-full border-collapse text-[12px]">
           <thead className="sticky top-0 bg-panelHeader z-10">
             <tr className="text-left text-textMuted">
@@ -278,28 +380,34 @@ export default function ModList() {
               ))}
             </tr>
           </thead>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={modRows.map((r) => r.key)} strategy={verticalListSortingStrategy}>
               <tbody>
-                {modRows.map((row) => (
-                  <ModRow
-                    key={row.key}
-                    row={row}
-                    selected={selected.includes(row.key)}
-                    focused={focused === row.key}
-                    canDrag={canDrag}
-                    disabled={gameRunning}
-                    onClick={onRowClick}
-                    onToggle={onToggle}
-                    onContextMenu={(r, e) => {
-                      if (!selected.includes(r.key)) select([r.key], r.key);
-                      setMenu({ x: e.clientX, y: e.clientY, row: r });
-                    }}
-                  />
-                ))}
+                {mainRows.map((row) =>
+                  row.kind === "sep" ? (
+                    <SeparatorRow
+                      key={row.key}
+                      row={row}
+                      canDrag={canDrag}
+                      disabled={gameRunning}
+                      onToggle={(on) => void toggleGroup(row.key, on)}
+                      onCollapse={() => void setCollapsed(row.key, !row.entry.collapsed)}
+                      onRename={(label) => void renameSeparator(row.key, label)}
+                      onContextMenu={openMenu}
+                    />
+                  ) : (
+                    <ModRow
+                      key={row.key}
+                      row={row}
+                      selected={selected.includes(row.key)}
+                      focused={focused === row.key}
+                      canDrag={canDrag}
+                      disabled={gameRunning}
+                      onClick={onRowClick}
+                      onToggle={onToggle}
+                      onContextMenu={openMenu}
+                    />
+                  ),
+                )}
               </tbody>
-            </SortableContext>
-          </DndContext>
           {movieRows.length > 0 && (
             <tbody>
               <tr>
@@ -317,19 +425,113 @@ export default function ModList() {
                   disabled={gameRunning}
                   onClick={onRowClick}
                   onToggle={onToggle}
-                  onContextMenu={(r, e) => {
-                    if (!selected.includes(r.key)) select([r.key], r.key);
-                    setMenu({ x: e.clientX, y: e.clientY, row: r });
-                  }}
+                  onContextMenu={openMenu}
                 />
               ))}
             </tbody>
           )}
         </table>
+        </SortableContext>
+        </DndContext>
         {rows.length === 0 && <div className="p-6 text-center text-textMuted text-[12px]">No packs match the current filters.</div>}
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
     </section>
+  );
+}
+
+function SeparatorRow({
+  row,
+  canDrag,
+  disabled,
+  onToggle,
+  onCollapse,
+  onRename,
+  onContextMenu,
+}: {
+  row: SepRowData;
+  canDrag: boolean;
+  disabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  onCollapse: () => void;
+  onRename: (label: string) => void;
+  onContextMenu: (row: Row, e: React.MouseEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.key, disabled: !canDrag });
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(row.entry.label ?? "");
+  const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : undefined };
+  const commit = () => {
+    setEditing(false);
+    if (text.trim() && text.trim() !== row.entry.label) onRename(text.trim());
+  };
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...(canDrag && !editing ? listeners : {})}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(row, e);
+      }}
+      className={`border-t border-edge bg-panelAlt ${canDrag ? "cursor-grab" : ""}`}
+    >
+      <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={row.state === "all"}
+          ref={(el) => {
+            if (el) el.indeterminate = row.state === "some";
+          }}
+          disabled={disabled || row.state === "empty"}
+          onChange={(e) => onToggle(e.target.checked)}
+          onPointerDown={(e) => e.stopPropagation()}
+          title="Enable / disable the whole group"
+        />
+      </td>
+      <td colSpan={COLUMNS.length} className="px-1 py-1">
+        <div className="flex items-center gap-2">
+          <button
+            className="w-5 text-textMuted hover:text-text"
+            onClick={onCollapse}
+            onPointerDown={(e) => e.stopPropagation()}
+            title={row.entry.collapsed ? "Expand" : "Collapse"}
+          >
+            {row.entry.collapsed ? "▸" : "▾"}
+          </button>
+          {editing ? (
+            <input
+              autoFocus
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commit();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="w-64"
+            />
+          ) : (
+            <span
+              className="font-semibold tracking-wide text-accent"
+              onDoubleClick={() => {
+                setText(row.entry.label ?? "");
+                setEditing(true);
+              }}
+              title="Double-click to rename; drag to move the whole group"
+            >
+              {row.entry.label || "Group"}
+            </span>
+          )}
+          <span className="text-textMuted">
+            {row.enabledMembers}/{row.members} enabled
+          </span>
+          <div className="flex-1 border-t border-edge/60" />
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -343,13 +545,13 @@ function ModRow({
   onToggle,
   onContextMenu,
 }: {
-  row: Row;
+  row: ModRowData;
   selected: boolean;
   focused: boolean;
   canDrag: boolean;
   disabled: boolean;
   onClick: (row: Row, e: React.MouseEvent) => void;
-  onToggle: (row: Row, checked: boolean) => void;
+  onToggle: (row: ModRowData, checked: boolean) => void;
   onContextMenu: (row: Row, e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.key, disabled: !canDrag });
@@ -384,13 +586,18 @@ function ModRow({
           onPointerDown={(e) => e.stopPropagation()}
         />
       </td>
-      <td className="px-2 py-0.5 text-right text-textMuted tabular-nums">{isMovie ? "" : row.index + 1}</td>
+      <td className="px-2 py-0.5 text-right text-textMuted tabular-nums">{isMovie ? "" : row.order}</td>
       <td className="px-2 py-0.5">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className={`truncate ${missing ? "line-through" : ""}`} title={row.mod?.file ?? row.key}>
             {row.title}
           </span>
           {missing && <span className="badge border-danger text-danger">missing</span>}
+          {row.isUpdated && (
+            <span className="badge border-ok text-ok" title="Changed since this profile was last played">
+              updated
+            </span>
+          )}
           {row.hidden && <span className="badge border-edge text-textMuted">hidden</span>}
           {row.tags.map((t) => (
             <span key={t} className="badge border-accent/50 text-accent">
@@ -404,8 +611,11 @@ function ModRow({
       </td>
       <td className="px-2 py-0.5">
         {row.mod && (
-          <span className={`badge ${row.mod.source === "workshop" ? "border-accent/50 text-accent" : "border-edge text-textMuted"}`}>
-            {row.mod.source === "workshop" ? "Workshop" : "data/"}
+          <span
+            className={`badge ${row.mod.source === "workshop" ? "border-accent/50 text-accent" : row.mod.source === "folder" ? "border-ok/60 text-ok" : "border-edge text-textMuted"}`}
+            title={row.mod.dir}
+          >
+            {SOURCE_LABEL[row.mod.source]}
           </span>
         )}
       </td>

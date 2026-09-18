@@ -2,9 +2,10 @@
 // both sides (serde rename_all), so these types mirror the Rust structs one-to-one.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { WorkshopItem } from "./workshop";
 
 export type PackType = "boot" | "release" | "patch" | "mod" | "movie" | "unknown";
-export type ModSource = "workshop" | "data";
+export type ModSource = "workshop" | "data" | "folder";
 
 export interface ModEntry {
   key: string;
@@ -37,11 +38,18 @@ export interface Settings {
   checkDllUpdates: boolean;
   steamApiKey: string;
   workshopCacheHours: number;
+  extraModDirs: string[];
+  autoInjectExternal: boolean;
+  dllChannel: "stable" | "prerelease";
+  minimizeToTray: boolean;
 }
 
+/** A pack entry, or a separator (`key` starts with "sep:") that heads a group. */
 export interface ProfileEntry {
   key: string;
   enabled: boolean;
+  label?: string;
+  collapsed?: boolean;
 }
 
 export interface Profile {
@@ -49,6 +57,7 @@ export interface Profile {
   entries: ProfileEntry[];
   dll: boolean;
   skipIntro: boolean;
+  lastPlayed?: number;
 }
 
 export interface ProfilesDoc {
@@ -115,15 +124,80 @@ export interface RemoteDll {
   installed: boolean;
 }
 
+export interface DllConfig {
+  buildNumber: string;
+  buildNumberShort: string;
+  buildModified: boolean | null;
+}
+
 export interface SaveGame {
   name: string;
   mtime: number;
 }
 
 export interface LaunchStatus {
-  phase: "idle" | "writing" | "spawned" | "menu" | "injected" | "verified" | "mismatch" | "failed" | "exited";
+  phase: "idle" | "writing" | "spawned" | "menu" | "injected" | "verified" | "mismatch" | "failed" | "exited" | "crashed";
   message: string;
   pid: number | null;
+  exitCode?: number | null;
+  historyId?: number | null;
+}
+
+export interface PackSnap {
+  key: string;
+  file: string;
+  size: number;
+  mtime: number;
+}
+
+export interface LaunchRecord {
+  id: number;
+  profile: string;
+  started: number;
+  ended: number | null;
+  exitCode: number | null;
+  packs: PackSnap[];
+}
+
+export interface LaunchDiff {
+  added: string[];
+  removed: string[];
+  changed: string[];
+  reordered: boolean;
+}
+
+export interface CrashReport {
+  record: LaunchRecord;
+  baseline: LaunchRecord | null;
+  diff: LaunchDiff | null;
+}
+
+export interface LogSource {
+  id: string;
+  label: string;
+  path: string;
+  size: number;
+  mtime: number;
+}
+
+export interface PackHash {
+  key: string;
+  file: string;
+  size: number;
+  sha256: string;
+}
+
+export interface StartupArgs {
+  profile: string | null;
+  launch: boolean;
+  minimized: boolean;
+}
+
+export interface CollectionResult {
+  id: string;
+  title: string;
+  children: string[];
+  items: Record<string, WorkshopItem>;
 }
 
 export const api = {
@@ -143,6 +217,13 @@ export const api = {
   gameRunning: () => invoke<boolean>("game_running"),
   launchGame: (profile: Profile, loadSave: string | null) => invoke<number>("launch_game", { profile, loadSave }),
   listSaves: () => invoke<SaveGame[]>("list_saves"),
+  launchHistory: () => invoke<LaunchRecord[]>("launch_history"),
+  crashReport: (id: number | null) => invoke<CrashReport | null>("crash_report", { id }),
+  logSources: () => invoke<LogSource[]>("log_sources"),
+  logTail: (path: string, maxBytes?: number) => invoke<string>("log_tail", { path, maxBytes }),
+  hashPacks: (keys: string[]) => invoke<PackHash[]>("hash_packs", { keys }),
+  startupArgs: () => invoke<StartupArgs | null>("startup_args"),
+  createProfileShortcut: (profile: string) => invoke<string>("create_profile_shortcut", { profile }),
   dllStatus: () => invoke<DllStatus>("dll_status"),
   dllCheckUpdate: () => invoke<RemoteDll>("dll_check_update"),
   dllInstall: (r: RemoteDll) =>
@@ -150,4 +231,7 @@ export const api = {
   dllImportLocal: (path: string, version: string) => invoke<InstalledDll>("dll_import_local", { path, version }),
   dllRemove: (version: string) => invoke<void>("dll_remove", { version }),
   dllReadLog: (dir: string) => invoke<string>("dll_read_log", { dir }),
+  dllReadCfg: () => invoke<DllConfig>("dll_read_cfg"),
+  dllWriteCfg: (config: DllConfig) => invoke<void>("dll_write_cfg", { config }),
+  workshopCollection: (input: string) => invoke<CollectionResult>("workshop_collection", { input }),
 };

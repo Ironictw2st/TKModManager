@@ -3,7 +3,7 @@
 //!
 //! Precedence model: vanilla < mod packs in list order < movie packs; the last pack wins.
 
-use crate::packs::{self, ModEntry, PackType};
+use crate::packs::{ModEntry, PackType};
 use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::Container;
 use rpfm_lib::games::supported_games::{SupportedGames, KEY_THREE_KINGDOMS};
@@ -101,8 +101,7 @@ pub fn report(cache: &ConflictCache, ordered: &[ModEntry]) -> ConflictReport {
 /// `keys` = enabled pack keys in profile order. Movie packs are moved last (engine order).
 #[tauri::command]
 pub fn conflicts_for(state: State<crate::state::AppState>, cache: State<ConflictCache>, keys: Vec<String>) -> ConflictReport {
-    let p = state.game_paths();
-    let scan = packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new));
+    let scan = state.scan();
     let by_key: HashMap<&str, &ModEntry> = scan.iter().map(|m| (m.key.as_str(), m)).collect();
     let mut ordered: Vec<ModEntry> = keys.iter().filter_map(|k| by_key.get(k.as_str()).map(|m| (*m).clone())).collect();
     let (mut mods, mut movies): (Vec<ModEntry>, Vec<ModEntry>) =

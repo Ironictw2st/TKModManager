@@ -53,6 +53,17 @@ impl AppState {
         resolved
     }
 
+    /// Every user pack: data/, Workshop, and the extra folders from the settings.
+    pub fn scan(&self) -> Vec<crate::packs::ModEntry> {
+        let p = self.game_paths();
+        let extra: Vec<PathBuf> = self.settings().extra_mod_dirs.iter().map(PathBuf::from).collect();
+        crate::packs::scan(
+            p.data_dir.as_deref().map(std::path::Path::new),
+            p.workshop_dir.as_deref().map(std::path::Path::new),
+            &extra,
+        )
+    }
+
     /// Forget the cached paths (settings changed).
     pub fn invalidate_paths(&self) {
         if let Ok(mut cache) = self.paths_cache.lock() {

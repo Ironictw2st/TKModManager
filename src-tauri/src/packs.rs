@@ -60,6 +60,8 @@ pub fn pack_type_from_header(head: &[u8]) -> Result<PackType, String> {
 pub enum ModSource {
     Workshop,
     Data,
+    /// A user-registered extra folder (loaded in place through add_working_directory).
+    Folder,
 }
 
 /// One user pack on disk. `key` is the stable identity used by profiles:
@@ -85,8 +87,16 @@ pub fn make_key(source: ModSource, workshop_id: Option<&str>, file: &str) -> Str
     match source {
         ModSource::Workshop => format!("ws:{}/{}", workshop_id.unwrap_or(""), file),
         ModSource::Data => format!("data:{file}"),
+        ModSource::Folder => format!("ext:{}/{}", workshop_id.unwrap_or(""), file),
     }
 }
+
+/// Normalised folder identity used in `ext:` keys and for folder comparisons.
+pub fn norm_dir(dir: &str) -> String {
+    dir.replace(BACKSLASH, "/").trim_end_matches('/').to_ascii_lowercase()
+}
+
+const BACKSLASH: char = 0x5c as char;
 
 fn file_meta(path: &Path) -> (u64, u64) {
     match std::fs::metadata(path) {
@@ -112,7 +122,7 @@ fn is_pack(p: &Path) -> bool {
 
 /// Scan both locations. Vanilla packs (boot/release/patch) are skipped; unreadable files are
 /// logged and skipped. Order is unspecified (the UI sorts).
-pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>) -> Vec<ModEntry> {
+pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>, extra_dirs: &[PathBuf]) -> Vec<ModEntry> {
     let mut out = Vec::new();
     if let Some(data) = data_dir {
         if let Ok(rd) = std::fs::read_dir(data) {
@@ -151,6 +161,25 @@ pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>) -> Vec<ModEntr
             }
         }
     }
+    let data_norm = data_dir.map(|d| norm_dir(&d.to_string_lossy()));
+    let mut seen: Vec<String> = Vec::new();
+    for dir in extra_dirs {
+        let id = norm_dir(&dir.to_string_lossy());
+        if Some(&id) == data_norm.as_ref() || seen.contains(&id) {
+            continue;
+        }
+        seen.push(id.clone());
+        let Ok(files) = std::fs::read_dir(dir) else { continue };
+        for f in files.flatten() {
+            let p = f.path();
+            if !p.is_file() || !is_pack(&p) {
+                continue;
+            }
+            if let Some(entry) = entry_for(&p, ModSource::Folder, Some(&id)) {
+                out.push(entry);
+            }
+        }
+    }
     out
 }
 
@@ -177,7 +206,7 @@ fn entry_for(path: &Path, source: ModSource, workshop_id: Option<&str>) -> Optio
         path: path.to_string_lossy().into_owned(),
         dir: path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
         source,
-        workshop_id: workshop_id.map(str::to_owned),
+        workshop_id: if source == ModSource::Workshop { workshop_id.map(str::to_owned) } else { None },
         pack_type,
         size,
         mtime,
@@ -217,5 +246,22 @@ mod tests {
     fn keys() {
         assert_eq!(make_key(ModSource::Workshop, Some("42"), "a.pack"), "ws:42/a.pack");
         assert_eq!(make_key(ModSource::Data, None, "a.pack"), "data:a.pack");
+        assert_eq!(make_key(ModSource::Folder, Some("z:/my mods"), "a.pack"), "ext:z:/my mods/a.pack");
+        assert_eq!(norm_dir(r"Z:\My Mods\"), "z:/my mods");
+    }
+
+    #[test]
+    fn scans_extra_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut bytes = b"PFH5".to_vec();
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 20]);
+        std::fs::write(tmp.path().join("dev.pack"), &bytes).unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), b"x").unwrap();
+        let found = scan(None, None, &[tmp.path().to_path_buf(), tmp.path().to_path_buf()]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].source, ModSource::Folder);
+        assert!(found[0].key.starts_with("ext:") && found[0].key.ends_with("/dev.pack"));
+        assert!(found[0].workshop_id.is_none());
     }
 }

@@ -20,6 +20,14 @@ pub struct Settings {
     pub steam_api_key: String,
     /// Hours before cached Workshop metadata is refreshed.
     pub workshop_cache_hours: u32,
+    /// Extra folders whose `*.pack` files are listed and loaded in place (e.g. RPFM MyMods).
+    pub extra_mod_dirs: Vec<String>,
+    /// Inject the script extender into a game that was started outside the manager.
+    pub auto_inject_external: bool,
+    /// "stable" | "prerelease": which script-extender releases are offered.
+    pub dll_channel: String,
+    /// Closing the window hides it to the tray instead of quitting.
+    pub minimize_to_tray: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +41,10 @@ impl Default for Settings {
             check_dll_updates: true,
             steam_api_key: String::new(),
             workshop_cache_hours: 24,
+            extra_mod_dirs: Vec::new(),
+            auto_inject_external: false,
+            dll_channel: "stable".into(),
+            minimize_to_tray: false,
         }
     }
 }

@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { askConfirm, showMessage } from "../components/Dialogs";
 import { useStore } from "../state/store";
+import { api } from "../ipc/commands";
+import { isSeparator } from "../state/separators";
 
 /** Profile picker with new / duplicate / rename / delete. */
 export default function ProfileBar() {
@@ -34,11 +37,11 @@ export default function ProfileBar() {
   };
 
   const del = async () => {
-    if (!confirm(`Delete profile "${profiles.active}"?`)) return;
+    if (!(await askConfirm(`Delete profile "${profiles.active}"?`, "Delete"))) return;
     try {
       await remove(profiles.active);
     } catch (e) {
-      alert(String(e instanceof Error ? e.message : e));
+      void showMessage(String(e instanceof Error ? e.message : e));
     }
   };
 
@@ -71,7 +74,7 @@ export default function ProfileBar() {
           <select value={profiles.active} onChange={(e) => void setActive(e.target.value)} disabled={gameRunning} className="min-w-40">
             {profiles.profiles.map((p) => (
               <option key={p.name} value={p.name}>
-                {p.name} ({p.entries.filter((e) => e.enabled).length})
+                {p.name} ({p.entries.filter((e) => e.enabled && !isSeparator(e)).length})
               </option>
             ))}
           </select>
@@ -86,6 +89,19 @@ export default function ProfileBar() {
           </button>
           <button className="btn" onClick={del} title="Delete the active profile" disabled={profiles.profiles.length <= 1}>
             Delete
+          </button>
+          <button
+            className="btn"
+            title="Create a desktop shortcut that launches the game with this profile"
+            onClick={async () => {
+              try {
+                void showMessage(`Shortcut created:\n${await api.createProfileShortcut(profiles.active)}`);
+              } catch (e) {
+                void showMessage(String(e));
+              }
+            }}
+          >
+            Shortcut
           </button>
         </>
       )}

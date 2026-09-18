@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type SaveGame } from "../ipc/commands";
 import { useStore } from "../state/store";
+import { isSeparator } from "../state/separators";
 import { formatDate } from "../util/format";
 
 const PHASE_STYLE: Record<string, string> = {
@@ -12,6 +13,7 @@ const PHASE_STYLE: Record<string, string> = {
   verified: "text-ok",
   mismatch: "text-danger",
   failed: "text-danger",
+  crashed: "text-danger",
   exited: "text-textMuted",
 };
 
@@ -21,16 +23,17 @@ export default function LaunchBar() {
   const profiles = useStore((s) => s.profiles);
   const updateProfile = useStore((s) => s.updateProfile);
   const launch = useStore((s) => s.launch);
-  const setLaunch = useStore((s) => s.setLaunch);
+  const launchProfile = useStore((s) => s.launchProfile);
   const gameRunning = useStore((s) => s.gameRunning);
   const dll = useStore((s) => s.dll);
   const paths = useStore((s) => s.paths);
   const setPanel = useStore((s) => s.setPanel);
+  const loadSave = useStore((s) => s.loadSave);
+  const setLoadSave = useStore((s) => s.setLoadSave);
   const [busy, setBusy] = useState(false);
   const [saves, setSaves] = useState<SaveGame[]>([]);
-  const [loadSave, setLoadSave] = useState<string>("");
   const profile = activeProfile();
-  const enabledCount = profile.entries.filter((e) => e.enabled).length;
+  const enabledCount = profile.entries.filter((e) => e.enabled && !isSeparator(e)).length;
   const dllOk = !!dll?.selected;
 
   useEffect(() => {
@@ -41,10 +44,7 @@ export default function LaunchBar() {
   const play = async () => {
     setBusy(true);
     try {
-      setLaunch({ phase: "writing", message: "Starting…", pid: null });
-      await api.launchGame(profile, loadSave || null);
-    } catch (e) {
-      setLaunch({ phase: "failed", message: String(e), pid: null });
+      await launchProfile(null);
     } finally {
       setBusy(false);
     }
@@ -104,9 +104,13 @@ export default function LaunchBar() {
         </label>
       )}
       <div className="flex-1" />
-      <span className={`truncate ${PHASE_STYLE[launch.phase] ?? ""}`} title={launch.pid ? `pid ${launch.pid}` : launch.message}>
+      <button
+        className={`truncate text-left ${PHASE_STYLE[launch.phase] ?? ""}`}
+        title={launch.pid ? `pid ${launch.pid} — open the Logs tab` : "Open the Logs tab"}
+        onClick={() => setPanel("logs")}
+      >
         {launch.message}
-      </span>
+      </button>
     </footer>
   );
 }

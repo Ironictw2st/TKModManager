@@ -29,8 +29,9 @@ pub fn get_settings(state: State<AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), String> {
+pub fn set_settings(app: tauri::AppHandle, state: State<AppState>, settings: Settings) -> Result<(), String> {
     json_store::save(&state::settings_path(), &settings)?;
+    crate::tray::set_visible(&app, settings.minimize_to_tray);
     if let Ok(mut s) = state.settings.lock() {
         *s = settings;
     }
@@ -45,8 +46,7 @@ pub fn get_paths(state: State<AppState>) -> GamePaths {
 
 #[tauri::command]
 pub fn scan_mods(state: State<AppState>) -> Vec<ModEntry> {
-    let p = state.game_paths();
-    packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new))
+    state.scan()
 }
 
 #[tauri::command]
@@ -55,8 +55,10 @@ pub fn load_profiles() -> Result<ProfilesDoc, String> {
 }
 
 #[tauri::command]
-pub fn save_profiles(doc: ProfilesDoc) -> Result<(), String> {
-    json_store::save(&state::profiles_path(), &doc)
+pub fn save_profiles(app: tauri::AppHandle, doc: ProfilesDoc) -> Result<(), String> {
+    json_store::save(&state::profiles_path(), &doc)?;
+    crate::tray::refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -90,8 +92,7 @@ pub struct ImportedEntry {
 pub fn import_mod_list(state: State<AppState>, path: String) -> Result<Vec<ImportedEntry>, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let parsed = modlist::parse(&text);
-    let p = state.game_paths();
-    let scan = packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new));
+    let scan = state.scan();
     Ok(resolve_import(&parsed, &scan))
 }
 
@@ -119,20 +120,29 @@ pub fn resolve_import(parsed: &ParsedList, scan: &[ModEntry]) -> Vec<ImportedEnt
 pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
     let by_key: HashMap<&str, &ModEntry> = scan.iter().map(|m| (m.key.as_str(), m)).collect();
     let mut input = ListInput::default();
-    for e in profile.entries.iter().filter(|e| e.enabled) {
+    for e in profile.entries.iter().filter(|e| e.enabled && !e.is_separator()) {
         if let Some(m) = by_key.get(e.key.as_str()) {
             input.enabled.push(ListMod {
                 file: m.file.clone(),
-                dir: (m.source == ModSource::Workshop).then(|| m.dir.clone()),
+                dir: (m.source != ModSource::Data).then(|| m.dir.clone()),
                 is_movie: m.pack_type == PackType::Movie,
             });
         }
     }
     let enabled_keys: std::collections::HashSet<&str> =
         profile.entries.iter().filter(|e| e.enabled).map(|e| e.key.as_str()).collect();
+    // Folders that end up as working directories expose every movie pack inside them, so a
+    // disabled movie pack sharing an extra folder with an enabled pack must be excluded too.
+    let added_dirs: std::collections::HashSet<String> =
+        input.enabled.iter().filter_map(|m| m.dir.as_deref()).map(packs::norm_dir).collect();
     let mut excluded: Vec<String> = scan
         .iter()
-        .filter(|m| m.source == ModSource::Data && m.pack_type == PackType::Movie)
+        .filter(|m| m.pack_type == PackType::Movie)
+        .filter(|m| match m.source {
+            ModSource::Data => true,
+            ModSource::Folder => added_dirs.contains(&packs::norm_dir(&m.dir)),
+            ModSource::Workshop => false,
+        })
         .filter(|m| !enabled_keys.contains(m.key.as_str()))
         .map(|m| m.file.clone())
         .collect();
@@ -144,8 +154,7 @@ pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
 /// The exact text that would be written for this profile (without launch-time extras).
 #[tauri::command]
 pub fn preview_mod_list(state: State<AppState>, profile: Profile) -> String {
-    let p = state.game_paths();
-    let scan = packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new));
+    let scan = state.scan();
     modlist::build(&list_input_for(&profile, &scan))
 }
 
@@ -158,6 +167,10 @@ pub fn list_file_path(game_root: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use crate::profiles::ProfileEntry;
+
+    fn pe(key: &str) -> ProfileEntry {
+        ProfileEntry { key: key.into(), enabled: true, label: None, collapsed: false }
+    }
 
     fn entry(key: &str, file: &str, dir: &str, source: ModSource, t: PackType) -> ModEntry {
         ModEntry {
@@ -203,13 +216,15 @@ mod tests {
         let profile = Profile {
             name: "p".into(),
             entries: vec![
-                ProfileEntry { key: "ws:3/x.pack".into(), enabled: true },
-                ProfileEntry { key: "data:on.pack".into(), enabled: true },
-                ProfileEntry { key: "ws:2/m2.pack".into(), enabled: true },
-                ProfileEntry { key: "gone:none".into(), enabled: true },
+                pe("ws:3/x.pack"),
+                pe("data:on.pack"),
+                pe("ws:2/m2.pack"),
+                pe("gone:none"),
+                pe("sep:1234"),
             ],
             dll: false,
             skip_intro: false,
+            last_played: None,
         };
         let input = list_input_for(&profile, &scan);
         assert_eq!(input.enabled.len(), 3);

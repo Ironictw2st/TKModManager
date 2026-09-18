@@ -3,32 +3,64 @@
 //!
 //! Flow: write `tkmm_mods.txt` → spawn `Three_Kingdoms.exe tkmm_mods.txt;` (cwd = game root,
 //! Steam running) → (if the child exits at once, Steam relaunched it: find the new PID) →
-//! wait for a visible main window → inject → watch the DLL log for the verified/mismatch lines.
+//! wait for a visible main window → inject (never twice) → watch the DLL log → wait for exit
+//! and record the exit code in the launch history.
 
 use crate::commands::{list_file_path, list_input_for};
 use crate::dll;
+use crate::history;
 use crate::modlist;
 use crate::options_pack;
-use crate::packs;
 use crate::paths;
 use crate::profiles::Profile;
 use crate::state::AppState;
+use crate::winproc::{self, ProcHandle};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchStatus {
-    /// idle | writing | spawned | menu | injected | verified | mismatch | failed | exited
+    /// idle | writing | spawned | menu | injected | verified | mismatch | failed | exited | crashed
     pub phase: String,
     pub message: String,
     pub pid: Option<u32>,
+    /// Process exit code (phases `exited` / `crashed`).
+    pub exit_code: Option<u32>,
+    /// Launch history record for this run (for the crash details).
+    pub history_id: Option<u64>,
 }
 
 fn emit(app: &AppHandle, phase: &str, message: impl Into<String>, pid: Option<u32>) {
-    let _ = app.emit("launch-status", LaunchStatus { phase: phase.into(), message: message.into(), pid });
+    emit_full(app, phase, message, pid, None, None);
+}
+
+fn emit_full(app: &AppHandle, phase: &str, message: impl Into<String>, pid: Option<u32>, exit_code: Option<u32>, history_id: Option<u64>) {
+    let _ = app.emit(
+        "launch-status",
+        LaunchStatus { phase: phase.into(), message: message.into(), pid, exit_code, history_id },
+    );
+}
+
+/// Game processes this app is already following (launched here or picked up by the watcher).
+#[derive(Default)]
+pub struct LaunchTracker {
+    managed: Mutex<HashSet<u32>>,
+}
+
+impl LaunchTracker {
+    fn claim(&self, pid: u32) -> bool {
+        self.managed.lock().map(|mut s| s.insert(pid)).unwrap_or(false)
+    }
+    fn release(&self, pid: u32) {
+        if let Ok(mut s) = self.managed.lock() {
+            s.remove(&pid);
+        }
+    }
 }
 
 #[tauri::command]
@@ -74,13 +106,17 @@ pub fn list_saves() -> Vec<SaveGame> {
 /// list file with its trailing semicolon attached.
 pub fn game_args(load_save: Option<&str>) -> String {
     match load_save.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(save) => format!("game_startup_mode campaign_load \"{}\" ; {};", save.replace('"', ""), paths::LIST_FILE_NAME),
+        Some(save) => format!(
+            "game_startup_mode campaign_load \"{}\" ; {};",
+            save.replace('\u{22}', ""),
+            paths::LIST_FILE_NAME
+        ),
         None => format!("{};", paths::LIST_FILE_NAME),
     }
 }
 
 /// Write the list file and spawn the game. Returns as soon as the process is started; the DLL
-/// phase continues on a background thread.
+/// phase and the exit tracking continue on a background thread.
 #[tauri::command]
 pub fn launch_game(app: AppHandle, profile: Profile, load_save: Option<String>) -> Result<u32, String> {
     if game_running() {
@@ -92,7 +128,7 @@ pub fn launch_game(app: AppHandle, profile: Profile, load_save: Option<String>) 
     let exe = root.join(paths::EXE_NAME);
 
     emit(&app, "writing", "Writing mod list", None);
-    let scan = packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new));
+    let scan = state.scan();
     let mut input = list_input_for(&profile, &scan);
     if profile.skip_intro {
         let (dir, name) = options_pack::build(true)?;
@@ -120,18 +156,33 @@ pub fn launch_game(app: AppHandle, profile: Profile, load_save: Option<String>) 
         None
     };
 
+    let enabled: Vec<&crate::packs::ModEntry> = profile
+        .entries
+        .iter()
+        .filter(|e| e.enabled)
+        .filter_map(|e| scan.iter().find(|m| m.key == e.key))
+        .collect();
+    let history_id = history::begin(&profile.name, history::snapshot(&enabled));
+
     let args = game_args(load_save.as_deref());
-    let (pid, handle) = inject_core::spawn_game(&exe, &args, &root)?;
+    let (pid, handle) = match inject_core::spawn_game(&exe, &args, &root) {
+        Ok(v) => v,
+        Err(e) => {
+            history::finish(history_id, None);
+            return Err(e);
+        }
+    };
     inject_core::close_handle(handle);
-    emit(&app, "spawned", format!("Game started (pid {pid})"), Some(pid));
+    app.state::<LaunchTracker>().claim(pid);
+    emit_full(&app, "spawned", format!("Game started (pid {pid})"), Some(pid), None, Some(history_id));
 
     let app2 = app.clone();
-    std::thread::spawn(move || follow(app2, pid, dll_path));
+    std::thread::spawn(move || follow(app2, pid, dll_path, Some(history_id)));
     Ok(pid)
 }
 
-/// Background: track the process, inject when the menu is up, then report from the DLL log.
-fn follow(app: AppHandle, first_pid: u32, dll_path: Option<PathBuf>) {
+/// Background: track the process, inject when the menu is up, then wait for the exit.
+fn follow(app: AppHandle, first_pid: u32, dll_path: Option<PathBuf>, history_id: Option<u64>) {
     let mut pid = first_pid;
     // Steam may restart the game under its own launcher wrapper; recover the live PID.
     std::thread::sleep(Duration::from_secs(3));
@@ -140,88 +191,157 @@ fn follow(app: AppHandle, first_pid: u32, dll_path: Option<PathBuf>) {
         loop {
             let pids = inject_core::find_pids(paths::EXE_NAME);
             if let Some(&np) = pids.first() {
+                app.state::<LaunchTracker>().release(pid);
                 pid = np;
-                emit(&app, "spawned", format!("Game relaunched by Steam (pid {pid})"), Some(pid));
+                app.state::<LaunchTracker>().claim(pid);
+                emit_full(&app, "spawned", format!("Game relaunched by Steam (pid {pid})"), Some(pid), None, history_id);
                 break;
             }
             if Instant::now() >= deadline {
-                emit(&app, "failed", "The game exited immediately (is Steam running?)", None);
+                emit_full(&app, "failed", "The game exited immediately (is Steam running?)", None, None, history_id);
+                if let Some(id) = history_id {
+                    history::finish(id, None);
+                }
+                app.state::<LaunchTracker>().release(first_pid);
                 return;
             }
             std::thread::sleep(Duration::from_millis(500));
         }
     }
 
-    let Some(dll) = dll_path else {
-        wait_exit(&app, pid);
-        return;
-    };
+    // Opened before injecting so the exit code is readable even if the game dies early.
+    let handle = ProcHandle::open(pid);
+    if let Some(dll) = dll_path {
+        if handle.as_ref().map(ProcHandle::is_running).unwrap_or(true) {
+            inject_flow(&app, pid, &dll, false);
+        }
+    }
+    finish(&app, pid, handle, history_id);
+}
 
-    emit(&app, "spawned", "Waiting for the main menu…", Some(pid));
+/// Wait for the menu, inject once, and report what the DLL log says. `external` = the game
+/// was not started by us, so an unreadable module list means "do not touch".
+fn inject_flow(app: &AppHandle, pid: u32, dll: &Path, external: bool) {
+    emit(app, "spawned", "Waiting for the main menu…", Some(pid));
     let ready = inject_core::wait_for_main_window(pid, Duration::from_secs(240));
     if !pid_alive(pid) {
-        emit(&app, "exited", "Game exited before the menu", Some(pid));
         return;
     }
     if !ready {
-        emit(&app, "failed", "Timed out waiting for the game window; DLL not injected", Some(pid));
-        wait_exit(&app, pid);
+        emit(app, "failed", "Timed out waiting for the game window; DLL not injected", Some(pid));
         return;
     }
-    emit(&app, "menu", "Main menu up; injecting DLL", Some(pid));
-
-    // The log is truncated by the DLL on load; remember the pre-inject state to detect that.
-    let log_path = dll.parent().map(|d| d.join(dll::LOG_NAME));
-    match inject_core::inject(pid, &dll) {
-        Ok(_) => emit(&app, "injected", "DLL loaded; waiting for verification", Some(pid)),
+    // Never stack a second copy on a process that already has the hook (HANDOFF rule).
+    match winproc::has_module(pid, dll::DLL_NAME) {
+        Some(true) => {
+            emit(app, "verified", "Script extender already loaded in this game; not injecting again", Some(pid));
+            return;
+        }
+        None if external => {
+            emit(app, "failed", "Could not inspect the game process; DLL not injected", Some(pid));
+            return;
+        }
+        _ => {}
+    }
+    emit(app, "menu", "Main menu up; injecting DLL", Some(pid));
+    match inject_core::inject(pid, dll) {
+        Ok(_) => emit(app, "injected", "DLL loaded; waiting for verification", Some(pid)),
         Err(e) => {
-            emit(&app, "failed", format!("Injection failed: {e}"), Some(pid));
-            wait_exit(&app, pid);
+            emit(app, "failed", format!("Injection failed: {e}"), Some(pid));
             return;
         }
     }
-
-    if let Some(log) = log_path {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&log) {
-                if text.contains("hook installed") || text.contains("bootstrap complete") {
-                    emit(&app, "verified", "Script extender active", Some(pid));
-                    break;
-                }
-                if text.contains("fingerprint mismatch") || text.contains("refusing to run") {
-                    emit(&app, "mismatch", "DLL refused this game build (see DLL log)", Some(pid));
-                    break;
-                }
-            }
-            if !pid_alive(pid) {
-                emit(&app, "exited", "Game exited", Some(pid));
+    let Some(log) = dll.parent().map(|d| d.join(dll::LOG_NAME)) else { return };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&log) {
+            if text.contains("hook installed") || text.contains("bootstrap complete") {
+                emit(app, "verified", "Script extender active", Some(pid));
                 return;
             }
-            if Instant::now() >= deadline {
-                emit(&app, "injected", "DLL loaded, no verification line in the log yet", Some(pid));
-                break;
+            if text.contains("fingerprint mismatch") || text.contains("refusing to run") {
+                emit(app, "mismatch", "DLL refused this game build (see the Logs tab)", Some(pid));
+                return;
             }
-            std::thread::sleep(Duration::from_millis(500));
         }
+        if !pid_alive(pid) {
+            return;
+        }
+        if Instant::now() >= deadline {
+            emit(app, "injected", "DLL loaded, no verification line in the log yet", Some(pid));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(500));
     }
-    wait_exit(&app, pid);
+}
+
+/// Block until the game ends, then record and report how it ended.
+fn finish(app: &AppHandle, pid: u32, handle: Option<ProcHandle>, history_id: Option<u64>) {
+    let exit_code = match handle {
+        Some(h) => h.wait_exit(),
+        None => {
+            while pid_alive(pid) {
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            None
+        }
+    };
+    if let Some(id) = history_id {
+        history::finish(id, exit_code);
+    }
+    app.state::<LaunchTracker>().release(pid);
+    match exit_code {
+        Some(code) if code != 0 => emit_full(
+            app,
+            "crashed",
+            format!("Game ended abnormally (exit code 0x{code:X})"),
+            Some(pid),
+            exit_code,
+            history_id,
+        ),
+        _ => emit_full(app, "exited", "Game exited", Some(pid), exit_code, history_id),
+    }
 }
 
 fn pid_alive(pid: u32) -> bool {
     inject_core::enumerate_processes().iter().any(|p| p.pid == pid)
 }
 
-fn wait_exit(app: &AppHandle, pid: u32) {
-    while pid_alive(pid) {
-        std::thread::sleep(Duration::from_secs(2));
-    }
-    emit(app, "exited", "Game exited", Some(pid));
+/// Watch for games started outside the manager and inject into them when the user enabled
+/// `auto_inject_external`. Runs for the life of the app.
+pub fn start_external_watcher(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(3));
+        let state = app.state::<AppState>();
+        if !state.settings().auto_inject_external {
+            continue;
+        }
+        for pid in inject_core::find_pids(paths::EXE_NAME) {
+            if !app.state::<LaunchTracker>().claim(pid) {
+                continue; // already followed (ours, or picked up earlier)
+            }
+            let exe = state.game_paths().exe.map(PathBuf::from);
+            let selected = dll::status_for(exe.as_deref()).selected;
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                let handle = ProcHandle::open(pid);
+                match selected {
+                    Some(d) if winproc::has_module(pid, dll::DLL_NAME) == Some(false) => {
+                        emit(&app2, "spawned", format!("Game started outside the manager (pid {pid})"), Some(pid));
+                        inject_flow(&app2, pid, Path::new(&d.path), true);
+                    }
+                    Some(_) => {}
+                    None => emit(&app2, "failed", "Game detected, but no DLL matches this game build", Some(pid)),
+                }
+                finish(&app2, pid, handle, None);
+            });
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::game_args;
+    use super::*;
 
     #[test]
     fn args_with_and_without_save() {
@@ -231,5 +351,14 @@ mod tests {
             game_args(Some("Cao Cao turn 12")),
             "game_startup_mode campaign_load \"Cao Cao turn 12\" ; tkmm_mods.txt;"
         );
+    }
+
+    #[test]
+    fn tracker_claims_once() {
+        let t = LaunchTracker::default();
+        assert!(t.claim(42));
+        assert!(!t.claim(42));
+        t.release(42);
+        assert!(t.claim(42));
     }
 }

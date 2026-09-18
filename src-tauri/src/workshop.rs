@@ -206,9 +206,81 @@ fn launcher_cache_items() -> Vec<(String, WorkshopItem)> {
         .collect()
 }
 
+const COLLECTION_URL: &str = "https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/";
+
+/// A Workshop collection id from a URL (`...?id=123`) or a bare number.
+pub fn parse_collection_id(input: &str) -> Option<String> {
+    let t = input.trim();
+    if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+        return Some(t.to_string());
+    }
+    let idx = t.find("id=")? + 3;
+    let digits: String = t[idx..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    (!digits.is_empty()).then_some(digits)
+}
+
+pub fn parse_collection_children(json: &serde_json::Value) -> Vec<String> {
+    let Some(children) = json["response"]["collectiondetails"][0]["children"].as_array() else { return vec![] };
+    let mut rows: Vec<(u64, String)> = children
+        .iter()
+        .filter_map(|c| Some((c["sortorder"].as_u64().unwrap_or(0), c["publishedfileid"].as_str()?.to_string())))
+        .collect();
+    rows.sort_by_key(|r| r.0);
+    rows.into_iter().map(|r| r.1).collect()
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionResult {
+    pub id: String,
+    pub title: String,
+    /// Item ids in the collection's own order.
+    pub children: Vec<String>,
+    /// Details for the children (titles for the ones that are not installed).
+    pub items: HashMap<String, WorkshopItem>,
+}
+
+/// Resolve a Workshop collection (keyless Web API) into its items.
+#[tauri::command]
+pub async fn workshop_collection(input: String) -> Result<CollectionResult, String> {
+    let id = parse_collection_id(&input).ok_or("that does not look like a Workshop collection link or id")?;
+    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+    let form = [("collectioncount".to_string(), "1".to_string()), ("publishedfileids[0]".to_string(), id.clone())];
+    let resp = client.post(COLLECTION_URL).form(&form).send().await.map_err(|e| format!("Steam API: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Steam API returned {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Steam API JSON: {e}"))?;
+    let children = parse_collection_children(&json);
+    if children.is_empty() {
+        return Err("the collection is empty, private, or not a collection".into());
+    }
+    let title = fetch_details(&client, std::slice::from_ref(&id)).await.ok().and_then(|v| v.into_iter().next()).map(|i| i.title).unwrap_or_default();
+    let mut items = HashMap::new();
+    for chunk in children.chunks(50) {
+        for item in fetch_details(&client, chunk).await? {
+            items.insert(item.id.clone(), item);
+        }
+    }
+    Ok(CollectionResult { id, title, children, items })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collection_ids_and_children() {
+        assert_eq!(parse_collection_id("https://steamcommunity.com/sharedfiles/filedetails/?id=2875547086&x=1").as_deref(), Some("2875547086"));
+        assert_eq!(parse_collection_id(" 12345 ").as_deref(), Some("12345"));
+        assert!(parse_collection_id("hello").is_none());
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"response":{"collectiondetails":[{"children":[
+                {"publishedfileid":"2","sortorder":2},{"publishedfileid":"1","sortorder":1}]}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_collection_children(&json), vec!["1", "2"]);
+    }
 
     #[test]
     fn parses_details_response() {

@@ -26,6 +26,58 @@ pub struct Release {
     pub version: String,
     pub notes: String,
     pub assets: Vec<(String, String)>,
+    pub prerelease: bool,
+}
+
+fn release_from_json(json: &serde_json::Value) -> Option<Release> {
+    let version = json["tag_name"].as_str()?.trim_start_matches('v').to_string();
+    if version.is_empty() {
+        return None;
+    }
+    let assets = json["assets"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| Some((a["name"].as_str()?.to_string(), a["browser_download_url"].as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Release {
+        version,
+        notes: json["body"].as_str().unwrap_or("").to_string(),
+        assets,
+        prerelease: json["prerelease"].as_bool().unwrap_or(false),
+    })
+}
+
+/// The most recent releases of a repo (drafts excluded), newest first as GitHub returns them.
+pub async fn fetch_releases(owner: &str, repo: &str) -> Result<Vec<Release>, String> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=15");
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header(reqwest::header::USER_AGENT, USER_AGENT)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("network error: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("bad response JSON: {e}"))?;
+    Ok(json
+        .as_array()
+        .map(|arr| arr.iter().filter(|r| !r["draft"].as_bool().unwrap_or(false)).filter_map(release_from_json).collect())
+        .unwrap_or_default())
+}
+
+/// Highest semver among `releases`; pre-releases only when `allow_prerelease`.
+pub fn pick_release(releases: Vec<Release>, allow_prerelease: bool) -> Option<Release> {
+    releases
+        .into_iter()
+        .filter_map(|r| semver::Version::parse(&r.version).ok().map(|v| (v, r)))
+        .filter(|(v, r)| allow_prerelease || (!r.prerelease && v.pre.is_empty()))
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, r)| r)
 }
 
 /// Fetch `releases/latest` for a repo.
@@ -45,22 +97,7 @@ pub async fn fetch_latest_release(owner: &str, repo: &str) -> Result<Release, St
         return Err(format!("GitHub API returned {}", resp.status()));
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| format!("bad response JSON: {e}"))?;
-    let version = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
-    if version.is_empty() {
-        return Err("latest release has no tag_name".into());
-    }
-    let notes = json["body"].as_str().unwrap_or("").to_string();
-    let assets = json["assets"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|a| {
-                    Some((a["name"].as_str()?.to_string(), a["browser_download_url"].as_str()?.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok(Release { version, notes, assets })
+    release_from_json(&json).ok_or_else(|| "latest release has no tag_name".to_string())
 }
 
 impl Release {
@@ -126,4 +163,21 @@ pub async fn install_update(app: AppHandle, asset_url: String) -> Result<(), Str
     self_replace::self_replace(&tmp).map_err(|e| format!("could not replace executable: {e}"))?;
     let _ = std::fs::remove_file(&tmp);
     app.restart()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(v: &str, pre: bool) -> Release {
+        Release { version: v.into(), notes: String::new(), assets: vec![], prerelease: pre }
+    }
+
+    #[test]
+    fn picks_by_channel() {
+        let all = || vec![r("0.23.2", false), r("0.24.0-beta.1", true), r("0.9.0", false), r("junk", false)];
+        assert_eq!(pick_release(all(), false).unwrap().version, "0.23.2");
+        assert_eq!(pick_release(all(), true).unwrap().version, "0.24.0-beta.1");
+        assert!(pick_release(vec![r("1.0.0-rc.1", false)], false).is_none());
+    }
 }
