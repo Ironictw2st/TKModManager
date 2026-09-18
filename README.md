@@ -25,21 +25,29 @@ script extender, and it turns red when the current launch would not provide it.
 
 ### Declaring that your mod needs the script extender
 
-Add an empty text file at this path inside your pack:
+Ship this file inside your pack:
 
 ```
-script/tkmm/requires_script_extender
+SE/script_extender.json
 ```
 
-To require a minimum version, put a line like this in the file:
+Its contents look like this:
 
-```
-min_version=0.24.0
+```json
+{
+    "author": "Ironic",
+    "minimum_version": 0.28,
+    "maximum_version": 0.28,
+    "notes": ""
+}
 ```
 
-The game never loads that folder, so the file is harmless. Packs whose Lua calls `se.modify.*`,
-`se.query.*`, `se.version()` or `type(se)` are also detected automatically. Any mod can be
-overridden by hand in its details pane.
+A pack needs the script extender exactly when it contains this file. Every field is optional,
+and a trailing comma is tolerated. Versions may be numbers or strings, such as `"0.28.1"`. They
+compare as dotted versions, so `0.30` is newer than `0.28`. A maximum of `0.28` allows every
+0.28.x release. The manager warns before launch when the installed DLL falls outside the range.
+You can still override any mod by hand in its details pane. The game never loads the `SE/`
+folder, so the file is harmless.
 
 ## Development
 

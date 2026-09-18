@@ -3,7 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useStore } from "../state/store";
 import { formatBytes, formatDate } from "../util/format";
-import { modStatus, seRequirement, seSourceText, STATUS_LABEL, versionLess, type ModStatusKind } from "../util/status";
+import { modStatus, seRequirement, seSourceText, seUnmet as seUnmetOf, seUnmetText, STATUS_LABEL, type ModStatusKind } from "../util/status";
 
 const STATUS_BOX: Record<ModStatusKind, string> = {
   pending: "border-danger bg-danger/10 text-danger",
@@ -64,7 +64,8 @@ export default function ModDetails() {
   const se = seRequirement(seScan, meta);
   const entry = profile.entries.find((e) => e.key === mod.key);
   const have = dll?.selected?.version;
-  const seUnmet = se.required && !!entry?.enabled && (!profile.dll || !have || (!!se.minVersion && versionLess(have, se.minVersion)));
+  const unmet = seUnmetOf(se, profile.dll, have);
+  const seUnmet = !!entry?.enabled && unmet !== null;
   const overrideValue = meta?.seOverride === true ? "yes" : meta?.seOverride === false ? "no" : "auto";
   const enabledKeys = new Set(profile.entries.filter((e) => e.enabled).map((e) => e.key));
   const required = (ws?.requiredItems ?? []).map((id) => {
@@ -102,9 +103,12 @@ export default function ModDetails() {
             </span>
           </div>
           <div className="text-[11px] text-textMuted break-words">{seSourceText(se)}</div>
-          {seUnmet && (
-            <div className="text-[11px] text-danger">
-              {!profile.dll ? "The script extender is off for this profile." : !have ? "No DLL matches this game build." : `Needs v${se.minVersion}; v${have} is installed.`}
+          {se.notes && <div className="text-[11px] break-words whitespace-pre-wrap select-text">{se.notes}</div>}
+          {se.error && <div className="text-[11px] text-warn break-words">{se.error}</div>}
+          {unmet && (
+            <div className={`text-[11px] ${seUnmet ? "text-danger" : "text-textMuted"}`}>
+              {seUnmetText(unmet, se, have)}
+              {!seUnmet && " (applies once this mod is enabled)"}
             </div>
           )}
           <label className="flex items-center gap-2 text-[11px]">

@@ -4,7 +4,7 @@
 //   ok       green  up to date
 //   unknown  grey   Workshop item without any update data yet
 //   local    grey   data/ or folder pack: nothing to compare against
-// Plus the script-extender requirement (manual override > marker file > Lua scan).
+// Plus the script-extender requirement: manual override > the pack's SE/script_extender.json.
 
 import type { DllStatus, ModEntry, ModMeta, Profile } from "../ipc/commands";
 import type { WorkshopItem } from "../ipc/workshop";
@@ -61,80 +61,139 @@ export function modStatus(mod: ModEntry | undefined, ws: WorkshopItem | undefine
   return { kind: "ok", text: `Up to date (updated ${formatDate(published)})`, latest, installed };
 }
 
+/** What the backend read from a pack's `SE/script_extender.json` (see se_scan.rs). */
 export interface SeInfo {
   required: boolean;
-  source: string;
-  detail: string;
+  path: string;
+  author: string | null;
   minVersion: string | null;
+  maxVersion: string | null;
+  notes: string | null;
+  error: string | null;
 }
 
 export interface SeRequirement {
   required: boolean;
-  /** "manual" | "marker" | "lua" | "" */
+  /** "manual" | "manifest" | "" */
   source: string;
-  detail: string;
+  author: string | null;
   minVersion: string | null;
+  maxVersion: string | null;
+  notes: string | null;
+  error: string | null;
 }
 
+const NONE: SeRequirement = { required: false, source: "", author: null, minVersion: null, maxVersion: null, notes: null, error: null };
+
+/** Manual override wins; otherwise the pack's manifest decides. The manifest's version range
+ *  still applies when the user forces "requires". */
 export function seRequirement(scan: SeInfo | undefined, meta: ModMeta | undefined): SeRequirement {
-  if (meta?.seOverride !== undefined && meta?.seOverride !== null) {
-    return { required: meta.seOverride, source: "manual", detail: "", minVersion: scan?.minVersion ?? null };
-  }
-  if (scan?.required) return { required: true, source: scan.source, detail: scan.detail, minVersion: scan.minVersion };
-  return { required: false, source: "", detail: "", minVersion: null };
+  const fromScan: SeRequirement = scan?.required
+    ? { required: true, source: "manifest", author: scan.author, minVersion: scan.minVersion, maxVersion: scan.maxVersion, notes: scan.notes, error: scan.error }
+    : NONE;
+  if (meta?.seOverride === true) return { ...fromScan, required: true, source: "manual" };
+  if (meta?.seOverride === false) return { ...NONE, source: "manual" };
+  return fromScan;
+}
+
+/** "0.28", "0.28 or newer", "up to 0.28", "0.26 – 0.28", or "" */
+export function seRangeText(r: Pick<SeRequirement, "minVersion" | "maxVersion">): string {
+  const { minVersion: lo, maxVersion: hi } = r;
+  if (lo && hi) return lo === hi ? lo : `${lo} – ${hi}`;
+  if (lo) return `${lo} or newer`;
+  if (hi) return `up to ${hi}`;
+  return "";
 }
 
 export function seSourceText(r: SeRequirement): string {
   if (!r.required) return r.source === "manual" ? "Marked by you as not needing the script extender" : "Does not use the script extender";
-  switch (r.source) {
-    case "manual":
-      return "Marked by you as requiring the script extender";
-    case "marker":
-      return `Declares it in ${r.detail}${r.minVersion ? ` (needs v${r.minVersion} or newer)` : ""}`;
-    case "lua":
-      return `Calls the script extender API in ${r.detail}`;
-    default:
-      return "Requires the script extender";
-  }
+  const range = seRangeText(r);
+  const bits = [r.source === "manual" ? "Marked by you as requiring it" : "Declared in SE/script_extender.json"];
+  if (r.author) bits.push(`by ${r.author}`);
+  if (range) bits.push(`version ${range}`);
+  return bits.join(" · ");
 }
 
-/** Compare dotted versions ("0.23.2" vs "0.24.0"); non-numeric parts count as 0. */
-export function versionLess(a: string, b: string): boolean {
-  const pa = a.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  const pb = b.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+function parts(v: string): number[] {
+  return v
+    .trim()
+    .replace(/^v/i, "")
+    .split(/[.-]/)
+    .map((x) => parseInt(x, 10) || 0);
+}
+
+/** Dotted numeric compare; missing parts count as 0 (0.28 == 0.28.0). */
+export function compareVersions(a: string, b: string): number {
+  const pa = parts(a);
+  const pb = parts(b);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d < 0;
+    if (d !== 0) return d < 0 ? -1 : 1;
   }
-  return false;
+  return 0;
 }
 
-export type SeProblem =
-  | { kind: "off"; mods: string[] }
-  | { kind: "no-dll"; mods: string[] }
-  | { kind: "too-old"; mods: string[]; need: string; have: string };
+export function versionLess(a: string, b: string): boolean {
+  return compareVersions(a, b) < 0;
+}
 
-/** What stops the enabled mods that need the extender from working with this launch. */
+/** Is `have` newer than `max`, compared at the maximum's own precision (max 0.28 allows 0.28.x)? */
+export function versionAboveMax(have: string, max: string): boolean {
+  const n = parts(max).length;
+  const h = parts(have).slice(0, n).join(".");
+  return compareVersions(h, max) > 0;
+}
+
+export type SeUnmet = "off" | "no-dll" | "too-old" | "too-new" | null;
+
+/** Why this launch would not satisfy the requirement (null = satisfied or not required). */
+export function seUnmet(r: SeRequirement, profileDll: boolean, dllVersion: string | null | undefined): SeUnmet {
+  if (!r.required) return null;
+  if (!profileDll) return "off";
+  if (!dllVersion) return "no-dll";
+  if (r.minVersion && versionLess(dllVersion, r.minVersion)) return "too-old";
+  if (r.maxVersion && versionAboveMax(dllVersion, r.maxVersion)) return "too-new";
+  return null;
+}
+
+export function seUnmetText(u: SeUnmet, r: SeRequirement, have: string | null | undefined): string {
+  switch (u) {
+    case "off":
+      return "The script extender is off for this profile.";
+    case "no-dll":
+      return "No script extender DLL matches this game build.";
+    case "too-old":
+      return `Needs script extender ${seRangeText(r)}; v${have} is installed.`;
+    case "too-new":
+      return `Supports script extender ${seRangeText(r)} only; v${have} is installed.`;
+    default:
+      return "";
+  }
+}
+
+export type SeProblem = { kind: Exclude<SeUnmet, null>; mods: string[]; text: string };
+
+/** What stops the enabled mods that need the extender, grouped by reason, for the launch panel. */
 export function seProblems(
   profile: Profile,
   requirement: (key: string) => SeRequirement,
   title: (key: string) => string,
   dll: DllStatus | null,
 ): SeProblem[] {
-  const needing = profile.entries.filter((e) => e.enabled && !e.key.startsWith("sep:") && requirement(e.key).required).map((e) => e.key);
-  if (needing.length === 0) return [];
-  const names = needing.map(title);
-  if (!profile.dll) return [{ kind: "off", mods: names }];
-  const have = dll?.selected?.version;
-  if (!have) return [{ kind: "no-dll", mods: names }];
-  let need: string | null = null;
-  const tooOld: string[] = [];
-  for (const k of needing) {
-    const min = requirement(k).minVersion;
-    if (min && versionLess(have, min)) {
-      tooOld.push(title(k));
-      if (!need || versionLess(need, min)) need = min;
-    }
+  const have = dll?.selected?.version ?? null;
+  const groups = new Map<Exclude<SeUnmet, null>, { mods: string[]; text: string }>();
+  for (const e of profile.entries) {
+    if (!e.enabled || e.key.startsWith("sep:")) continue;
+    const r = requirement(e.key);
+    const u = seUnmet(r, profile.dll, have);
+    if (!u) continue;
+    const g = groups.get(u) ?? { mods: [], text: "" };
+    g.mods.push(title(e.key));
+    // For version problems name the range when every mod agrees, else a generic line.
+    const t = seUnmetText(u, r, have);
+    g.text = g.text && g.text !== t ? (u === "too-old" ? `Some mods need a newer script extender than v${have}.` : `Some mods do not support script extender v${have}.`) : t;
+    groups.set(u, g);
   }
-  return need ? [{ kind: "too-old", mods: tooOld, need, have }] : [];
+  const order: Exclude<SeUnmet, null>[] = ["off", "no-dll", "too-old", "too-new"];
+  return order.filter((k) => groups.has(k)).map((k) => ({ kind: k, ...groups.get(k)! }));
 }

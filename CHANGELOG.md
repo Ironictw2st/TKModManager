@@ -4,6 +4,15 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-18
+
+### Changed
+- Script-extender mods are now declared by one file in the pack, `SE/script_extender.json`
+  (`author`, `minimum_version`, `maximum_version`, `notes`). The v0.3.0 marker file and the Lua
+  scan are gone. The manual override in the details pane stays.
+- The launch panel warns when the installed DLL is newer than a mod's `maximum_version`, as well
+  as when it is older than `minimum_version`. The details pane shows the author and notes.
+
 ## [0.3.0] - 2026-09-18
 
 ### Added

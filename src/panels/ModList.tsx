@@ -9,7 +9,7 @@ import type { ModEntry, ProfileEntry } from "../ipc/commands";
 import { comparePackNames, formatBytes, formatDate } from "../util/format";
 import ContextMenu, { type MenuItem } from "../components/ContextMenu";
 import { collapsedKeys, groupMembers, groupState, isSeparator } from "../state/separators";
-import { modStatus, seRequirement, seSourceText, STATUS_LABEL, STATUS_RANK, versionLess, type ModStatus, type SeRequirement } from "../util/status";
+import { modStatus, seRequirement, seSourceText, seUnmet as seUnmetOf, seUnmetText, STATUS_LABEL, STATUS_RANK, type ModStatus, type SeRequirement } from "../util/status";
 
 interface ModRowData {
   kind: "mod";
@@ -27,8 +27,8 @@ interface ModRowData {
   tags: string[];
   status: ModStatus;
   se: SeRequirement;
-  /** Enabled, needs the extender, and this launch would not provide it. */
-  seUnmet: boolean;
+  /** Enabled, needs the extender, and this launch would not provide it: the reason. */
+  seUnmet: string;
 }
 
 interface SepRowData {
@@ -143,7 +143,7 @@ export default function ModList() {
       const status = modStatus(mod, ws, cutoff);
       const se = seRequirement(seScan[entry.key], mm);
       const have = dll?.selected?.version;
-      const seUnmet = se.required && entry.enabled && (!profile.dll || !have || (!!se.minVersion && versionLess(have, se.minVersion)));
+      const seUnmet = entry.enabled ? seUnmetText(seUnmetOf(se, profile.dll, have), se, have) : "";
       if (filters.status === "pending" && status.kind !== "pending") return;
       if (filters.status === "old" && status.kind !== "old") return;
       if (filters.status === "se" && !se.required) return;
@@ -640,7 +640,7 @@ function ModRow({
           {row.se.required && (
             <span
               className={`text-[9px] leading-3 px-1 rounded border font-semibold ${row.seUnmet ? "border-danger bg-danger/20 text-danger" : "border-se/70 text-se"}`}
-              title={`${seSourceText(row.se)}${row.seUnmet ? "\nNot available for this launch: turn on the script extender (right panel)" : ""}`}
+              title={`${seSourceText(row.se)}${row.se.error ? `\n${row.se.error}` : ""}${row.seUnmet ? `\n${row.seUnmet}` : ""}`}
             >
               SE
             </span>

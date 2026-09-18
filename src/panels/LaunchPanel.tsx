@@ -90,8 +90,7 @@ export default function LaunchPanel() {
         <div key={p.kind} className={`rounded border px-2 py-1.5 ${p.kind === "off" ? "border-warn bg-warn/10" : "border-danger bg-danger/10"}`}>
           <div className={p.kind === "off" ? "text-warn" : "text-danger"}>
             {p.kind === "off" && `${p.mods.length} enabled mod${p.mods.length > 1 ? "s" : ""} need${p.mods.length > 1 ? "" : "s"} the script extender.`}
-            {p.kind === "no-dll" && "No script extender DLL matches this game build."}
-            {p.kind === "too-old" && `Needs script extender v${p.need}; v${p.have} is installed.`}
+            {p.kind !== "off" && p.text}
           </div>
           <div className="text-textMuted truncate" title={p.mods.join("\n")}>
             {p.mods.slice(0, 3).join(", ")}

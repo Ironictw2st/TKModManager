@@ -1,9 +1,14 @@
-//! Does a pack need the script extender? Two automatic signals:
-//!   1. a marker file `script/tkmm/requires_script_extender` (optional `min_version=X.Y.Z` line);
-//!      it is outside every mod-loader folder, so the game never runs it;
-//!   2. Lua under `script/` that calls the extender API (`se.modify.`, `se.query.`, ...).
-//! Results are cached by (path, size, mtime) in `se_scan.cache.json`. The manual override lives
-//! in the per-mod metadata and is applied by the frontend.
+//! Does a pack need the script extender? A pack declares it by shipping
+//! `SE/script_extender.json`:
+//!
+//! ```text
+//! { "author": "Ironic", "minimum_version": 0.28, "maximum_version": 0.28, "notes": "" }
+//! ```
+//!
+//! Every field is optional. The file is read tolerantly (trailing commas, BOM) and version
+//! numbers keep their source text, so `0.30` is minor version 30, never `0.3`. Results are
+//! cached by (path, size, mtime) in `se_manifest.cache.json`. The manual override lives in the
+//! per-mod metadata and is applied by the frontend.
 
 use crate::json_store;
 use crate::packs::ModEntry;
@@ -17,20 +22,155 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-pub const MARKER_PATH: &str = "script/tkmm/requires_script_extender";
+pub const MANIFEST_PATH: &str = "SE/script_extender.json";
 
-/// Patterns that only appear in code using the extender's public Lua API.
-const LUA_PATTERNS: [&str; 5] = ["se.modify.", "se.query.", "se.version(", "type(se)", "se.available("];
+/// Keys whose numeric values are versions (kept as text).
+const VERSION_KEYS: [&str; 2] = ["minimum_version", "maximum_version"];
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SeInfo {
     pub required: bool,
-    /// "marker" | "lua" | "" (not required)
-    pub source: String,
-    /// Which file triggered it (marker path or the first matching Lua file).
-    pub detail: String,
+    /// Path of the manifest inside the pack, as stored.
+    pub path: String,
+    pub author: Option<String>,
     pub min_version: Option<String>,
+    pub max_version: Option<String>,
+    pub notes: Option<String>,
+    /// Set when the manifest exists but could not be read.
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawManifest {
+    #[serde(default)]
+    author: Option<serde_json::Value>,
+    #[serde(default)]
+    minimum_version: Option<serde_json::Value>,
+    #[serde(default)]
+    maximum_version: Option<serde_json::Value>,
+    #[serde(default)]
+    notes: Option<serde_json::Value>,
+}
+
+/// Make the manifest acceptable to strict JSON: drop a BOM and trailing commas, and turn the bare
+/// numbers of the version keys into strings so their exact text survives (`0.30` != `0.3`).
+pub fn normalize(text: &str) -> String {
+    let chars: Vec<char> = text.trim_start_matches('\u{feff}').chars().collect();
+    let mut out = String::with_capacity(chars.len() + 8);
+    let mut i = 0;
+    let mut last_key: Option<String> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            // Copy the whole string literal, remembering it as a potential key.
+            let start = i;
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i = (i + 1).min(chars.len());
+            let lit: String = chars[start..i].iter().collect();
+            last_key = Some(lit.trim_matches('"').to_string());
+            out.push_str(&lit);
+            continue;
+        }
+        if c == ':' {
+            out.push(c);
+            i += 1;
+            let is_version = last_key.as_deref().map(|k| VERSION_KEYS.contains(&k)).unwrap_or(false);
+            if is_version {
+                while i < chars.len() && chars[i].is_whitespace() {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                    let start = i;
+                    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                        i += 1;
+                    }
+                    let num: String = chars[start..i].iter().collect();
+                    out.push('"');
+                    out.push_str(&num);
+                    out.push('"');
+                }
+            }
+            continue;
+        }
+        if c == ',' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == '}' || chars[j] == ']') {
+                i += 1; // trailing comma
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+fn as_text(v: Option<serde_json::Value>) -> Option<String> {
+    let s = match v? {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let s = s.trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+fn as_version(v: Option<serde_json::Value>) -> Option<String> {
+    as_text(v).map(|s| s.trim_start_matches(['v', 'V']).to_string()).filter(|s| !s.is_empty())
+}
+
+/// Parse the manifest text. A broken file still means "requires the extender".
+pub fn parse_manifest(text: &str, path: &str) -> SeInfo {
+    let mut info = SeInfo { required: true, path: path.to_string(), ..Default::default() };
+    match serde_json::from_str::<RawManifest>(&normalize(text)) {
+        Ok(m) => {
+            info.author = as_text(m.author);
+            info.min_version = as_version(m.minimum_version);
+            info.max_version = as_version(m.maximum_version);
+            info.notes = as_text(m.notes);
+        }
+        Err(e) => info.error = Some(format!("{MANIFEST_PATH} is not valid JSON: {e}")),
+    }
+    info
+}
+
+pub fn scan_pack(path: &Path) -> Result<SeInfo, String> {
+    let games = SupportedGames::default();
+    let game = games.game(KEY_THREE_KINGDOMS).ok_or("rpfm: unknown game key")?;
+    let pack = Pack::read_and_merge(&[path.to_path_buf()], game, true, false, false).map_err(|e| e.to_string())?;
+    let found = pack
+        .paths_raw()
+        .into_iter()
+        .find(|p| p.replace('\\', "/").eq_ignore_ascii_case(MANIFEST_PATH))
+        .map(str::to_string);
+    let Some(inner) = found else { return Ok(SeInfo::default()) };
+    let text = pack
+        .file(&inner, true)
+        .cloned()
+        .and_then(|mut f| {
+            f.load().ok()?;
+            f.cached().ok().map(|b| String::from_utf8_lossy(b).into_owned())
+        });
+    Ok(match text {
+        Some(t) => parse_manifest(&t, &inner.replace('\\', "/")),
+        None => SeInfo {
+            required: true,
+            path: inner.replace('\\', "/"),
+            error: Some(format!("could not read {MANIFEST_PATH} from the pack")),
+            ..Default::default()
+        },
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -47,56 +187,11 @@ struct CacheDoc {
 }
 
 fn cache_path() -> PathBuf {
-    paths::app_data_dir().join("se_scan.cache.json")
+    paths::app_data_dir().join("se_manifest.cache.json")
 }
 
-/// `min_version=0.23.0` anywhere in the marker text.
-pub fn parse_marker(text: &str) -> Option<String> {
-    text.lines().find_map(|l| {
-        let (k, v) = l.split_once('=')?;
-        (k.trim() == "min_version").then(|| v.trim().trim_start_matches('v').to_string()).filter(|v| !v.is_empty())
-    })
-}
-
-/// Strip `--` comments so commented-out calls do not count.
-pub fn lua_uses_extender(source: &str) -> bool {
-    source.lines().any(|line| {
-        let code = line.split("--").next().unwrap_or("");
-        LUA_PATTERNS.iter().any(|p| code.contains(p))
-    })
-}
-
-fn file_text(pack: &mut Pack, path: &str) -> Option<String> {
-    let mut rfile = pack.file(path, true)?.clone();
-    rfile.load().ok()?;
-    let bytes = rfile.cached().ok()?;
-    Some(String::from_utf8_lossy(bytes).into_owned())
-}
-
-pub fn scan_pack(path: &Path) -> Result<SeInfo, String> {
-    let games = SupportedGames::default();
-    let game = games.game(KEY_THREE_KINGDOMS).ok_or("rpfm: unknown game key")?;
-    let mut pack = Pack::read_and_merge(&[path.to_path_buf()], game, true, false, false).map_err(|e| e.to_string())?;
-    let paths: Vec<String> = pack.paths_raw().into_iter().map(|p| p.replace('\\', "/")).collect();
-
-    if let Some(marker) = paths.iter().find(|p| p.eq_ignore_ascii_case(MARKER_PATH)) {
-        let text = file_text(&mut pack, marker).unwrap_or_default();
-        return Ok(SeInfo { required: true, source: "marker".into(), detail: marker.clone(), min_version: parse_marker(&text) });
-    }
-    for p in paths.iter().filter(|p| {
-        let l = p.to_ascii_lowercase();
-        l.starts_with("script/") && l.ends_with(".lua")
-    }) {
-        if let Some(text) = file_text(&mut pack, p) {
-            if lua_uses_extender(&text) {
-                return Ok(SeInfo { required: true, source: "lua".into(), detail: p.clone(), min_version: None });
-            }
-        }
-    }
-    Ok(SeInfo::default())
-}
-
-/// Scan the packs with these keys (all packs when empty). Unreadable packs count as "not required".
+/// Read the manifests of the packs with these keys (all packs when empty). Unreadable packs
+/// count as "not required".
 #[tauri::command]
 pub async fn se_requirements(app: AppHandle, keys: Vec<String>) -> Result<HashMap<String, SeInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -138,18 +233,39 @@ mod tests {
     use rpfm_lib::games::pfh_version::PFHVersion;
 
     #[test]
-    fn marker_min_version() {
-        assert_eq!(parse_marker("# needs SE\nmin_version = v0.23.0\n").as_deref(), Some("0.23.0"));
-        assert_eq!(parse_marker(""), None);
-        assert_eq!(parse_marker("min_version="), None);
+    fn parses_the_documented_sample_with_trailing_comma() {
+        let text = "{    \"author\": \"Ironic\",    \"minimum_version\": 0.28,    \"maximum_version\": 0.28,    \"notes\": \"\",}";
+        let info = parse_manifest(text, MANIFEST_PATH);
+        assert!(info.required);
+        assert_eq!(info.author.as_deref(), Some("Ironic"));
+        assert_eq!(info.min_version.as_deref(), Some("0.28"));
+        assert_eq!(info.max_version.as_deref(), Some("0.28"));
+        assert_eq!(info.notes, None);
+        assert_eq!(info.error, None);
     }
 
     #[test]
-    fn lua_detection_ignores_comments() {
-        assert!(lua_uses_extender("local ok = se.modify.recruit(cqi, key)"));
-        assert!(lua_uses_extender("if type(se) == \"table\" then"));
-        assert!(!lua_uses_extender("-- se.modify.recruit(cqi, key)\nlocal base = 1"));
-        assert!(!lua_uses_extender("local house = 3 -- nothing here"));
+    fn keeps_version_text_exactly() {
+        let info = parse_manifest("{\"minimum_version\": 0.30, \"maximum_version\": \"v0.31.2\"}", MANIFEST_PATH);
+        assert_eq!(info.min_version.as_deref(), Some("0.30"));
+        assert_eq!(info.max_version.as_deref(), Some("0.31.2"));
+    }
+
+    #[test]
+    fn optional_fields_bom_and_strings_with_commas() {
+        let info = parse_manifest("\u{feff}{ \"notes\": \"needs SE, v1 era\", }", MANIFEST_PATH);
+        assert!(info.required && info.error.is_none());
+        assert_eq!(info.notes.as_deref(), Some("needs SE, v1 era"));
+        assert_eq!(info.min_version, None);
+        let empty = parse_manifest("{}", MANIFEST_PATH);
+        assert!(empty.required && empty.error.is_none());
+    }
+
+    #[test]
+    fn broken_json_still_requires_with_error() {
+        let info = parse_manifest("{ author: Ironic }", MANIFEST_PATH);
+        assert!(info.required);
+        assert!(info.error.is_some());
     }
 
     fn write_pack(dir: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -165,20 +281,58 @@ mod tests {
         out
     }
 
+    /// Minimal PFH5 mod pack written by hand (no rpfm), like third-party tools produce.
+    fn raw_pack(dir: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let mut index = Vec::new();
+        let mut data = Vec::new();
+        for (p, body) in files {
+            index.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            index.push(0); // not compressed
+            index.extend_from_slice(p.replace('/', "\\").as_bytes());
+            index.push(0);
+            data.extend_from_slice(body.as_bytes());
+        }
+        let mut out = b"PFH5".to_vec();
+        for v in [3u32, 0, 0, files.len() as u32, index.len() as u32, 0x7fff_ffff] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&index);
+        out.extend_from_slice(&data);
+        let path = dir.join(name);
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    #[test]
+    fn scans_hand_written_packs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sample = "{    \"author\": \"Ironic\",    \"minimum_version\": 0.28,    \"maximum_version\": 0.28,    \"notes\": \"\",}";
+        let info = scan_pack(&raw_pack(tmp.path(), "s.pack", &[(MANIFEST_PATH, sample)])).unwrap();
+        assert_eq!((info.required, info.author.as_deref(), info.min_version.as_deref(), info.max_version.as_deref()), (true, Some("Ironic"), Some("0.28"), Some("0.28")));
+        assert_eq!(info.path, MANIFEST_PATH);
+
+        let upper = scan_pack(&raw_pack(tmp.path(), "u.pack", &[("se/SCRIPT_EXTENDER.JSON", "{\"maximum_version\":0.20}")])).unwrap();
+        assert!(upper.required);
+        assert_eq!(upper.max_version.as_deref(), Some("0.20"));
+
+        let broken = scan_pack(&raw_pack(tmp.path(), "b.pack", &[(MANIFEST_PATH, "{ author: Ironic ")])).unwrap();
+        assert!(broken.required && broken.error.is_some());
+
+        let lua = scan_pack(&raw_pack(tmp.path(), "l.pack", &[("script/campaign/mod/x.lua", "se.query.character(1)")])).unwrap();
+        assert!(!lua.required);
+    }
+
     #[test]
     fn scans_real_packs() {
         let tmp = tempfile::tempdir().unwrap();
-        let marker = write_pack(tmp.path(), "m.pack", &[(MARKER_PATH, "min_version=0.23.0")]);
-        let info = scan_pack(&marker).unwrap();
-        assert!(info.required && info.source == "marker");
-        assert_eq!(info.min_version.as_deref(), Some("0.23.0"));
+        let declared = write_pack(tmp.path(), "d.pack", &[(MANIFEST_PATH, "{\"author\":\"Ironic\",\"minimum_version\":0.28,}")]);
+        let info = scan_pack(&declared).unwrap();
+        assert!(info.required);
+        assert_eq!(info.author.as_deref(), Some("Ironic"));
+        assert_eq!(info.min_version.as_deref(), Some("0.28"));
 
+        // Lua that calls the API is no longer a signal on its own.
         let lua = write_pack(tmp.path(), "l.pack", &[("script/campaign/mod/x.lua", "se.query.character(1)")]);
-        let info = scan_pack(&lua).unwrap();
-        assert!(info.required && info.source == "lua");
-        assert_eq!(info.detail, "script/campaign/mod/x.lua");
-
-        let plain = write_pack(tmp.path(), "p.pack", &[("script/campaign/mod/y.lua", "cm:callback(f, 1)")]);
-        assert_eq!(scan_pack(&plain).unwrap(), SeInfo::default());
+        assert_eq!(scan_pack(&lua).unwrap(), SeInfo::default());
     }
 }
