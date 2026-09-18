@@ -34,6 +34,7 @@ pub fn set_settings(state: State<AppState>, settings: Settings) -> Result<(), St
     if let Ok(mut s) = state.settings.lock() {
         *s = settings;
     }
+    state.invalidate_paths();
     Ok(())
 }
 

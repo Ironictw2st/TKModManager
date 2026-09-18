@@ -16,3 +16,6 @@ Thumbs.db
 
 # Dev screenshots
 /scripts/*.png
+
+# Local release copies
+/release

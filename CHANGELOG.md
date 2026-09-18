@@ -4,6 +4,13 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-18
+
+### Fixed
+- No more command prompt windows flashing on every action: the Steam registry lookup now runs
+  hidden, and the detected game paths are cached instead of being re-detected per command
+  (which also makes every action faster).
+
 ## [0.1.0] - 2026-09-17
 
 ### Added

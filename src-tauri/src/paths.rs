@@ -97,8 +97,12 @@ fn steam_roots() -> Vec<PathBuf> {
 
 /// `HKCU\Software\Valve\Steam\SteamPath` via `reg.exe` (no registry crate needed).
 fn registry_steam_path() -> Option<PathBuf> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: a console child of a GUI app would otherwise flash a command prompt.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let out = std::process::Command::new("reg")
         .args(["query", r"HKCU\Software\Valve\Steam", "/v", "SteamPath"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
