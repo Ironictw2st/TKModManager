@@ -36,10 +36,53 @@ pub fn game_running() -> bool {
     !inject_core::find_pids(paths::EXE_NAME).is_empty()
 }
 
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveGame {
+    /// File stem, which is what `game_startup_mode campaign_load` expects.
+    pub name: String,
+    pub mtime: u64,
+}
+
+/// Campaign saves in `%APPDATA%\The Creative Assembly\ThreeKingdoms\save_games`, newest first.
+#[tauri::command]
+pub fn list_saves() -> Vec<SaveGame> {
+    let Some(base) = directories::BaseDirs::new() else { return vec![] };
+    let dir = base.data_dir().join("The Creative Assembly").join("ThreeKingdoms").join("save_games");
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut out: Vec<SaveGame> = rd
+        .flatten()
+        .filter(|e| e.path().extension().map(|x| x.eq_ignore_ascii_case("save")).unwrap_or(false))
+        .filter_map(|e| {
+            let name = e.path().file_stem()?.to_string_lossy().into_owned();
+            let mtime = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            Some(SaveGame { name, mtime })
+        })
+        .collect();
+    out.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    out
+}
+
+/// Command-line tail after the exe: optional `game_startup_mode campaign_load "<save>" ;`
+/// (the save argument is separate from the semicolon, as WH3 Mod Manager passes it), then the
+/// list file with its trailing semicolon attached.
+pub fn game_args(load_save: Option<&str>) -> String {
+    match load_save.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(save) => format!("game_startup_mode campaign_load \"{}\" ; {};", save.replace('"', ""), paths::LIST_FILE_NAME),
+        None => format!("{};", paths::LIST_FILE_NAME),
+    }
+}
+
 /// Write the list file and spawn the game. Returns as soon as the process is started; the DLL
 /// phase continues on a background thread.
 #[tauri::command]
-pub fn launch_game(app: AppHandle, profile: Profile) -> Result<u32, String> {
+pub fn launch_game(app: AppHandle, profile: Profile, load_save: Option<String>) -> Result<u32, String> {
     if game_running() {
         return Err("Three_Kingdoms.exe is already running".into());
     }
@@ -77,7 +120,7 @@ pub fn launch_game(app: AppHandle, profile: Profile) -> Result<u32, String> {
         None
     };
 
-    let args = format!("{};", paths::LIST_FILE_NAME);
+    let args = game_args(load_save.as_deref());
     let (pid, handle) = inject_core::spawn_game(&exe, &args, &root)?;
     inject_core::close_handle(handle);
     emit(&app, "spawned", format!("Game started (pid {pid})"), Some(pid));
@@ -174,4 +217,19 @@ fn wait_exit(app: &AppHandle, pid: u32) {
         std::thread::sleep(Duration::from_secs(2));
     }
     emit(app, "exited", "Game exited", Some(pid));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::game_args;
+
+    #[test]
+    fn args_with_and_without_save() {
+        assert_eq!(game_args(None), "tkmm_mods.txt;");
+        assert_eq!(game_args(Some("  ")), "tkmm_mods.txt;");
+        assert_eq!(
+            game_args(Some("Cao Cao turn 12")),
+            "game_startup_mode campaign_load \"Cao Cao turn 12\" ; tkmm_mods.txt;"
+        );
+    }
 }

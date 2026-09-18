@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { api } from "../ipc/commands";
+import { useEffect, useState } from "react";
+import { api, type SaveGame } from "../ipc/commands";
 import { useStore } from "../state/store";
+import { formatDate } from "../util/format";
 
 const PHASE_STYLE: Record<string, string> = {
   idle: "text-textMuted",
@@ -14,7 +15,7 @@ const PHASE_STYLE: Record<string, string> = {
   exited: "text-textMuted",
 };
 
-/** Play button, per-profile launch options and live launch status. */
+/** Play button, per-profile launch options, optional save to load, and live launch status. */
 export default function LaunchBar() {
   const activeProfile = useStore((s) => s.activeProfile);
   const profiles = useStore((s) => s.profiles);
@@ -26,15 +27,22 @@ export default function LaunchBar() {
   const paths = useStore((s) => s.paths);
   const setPanel = useStore((s) => s.setPanel);
   const [busy, setBusy] = useState(false);
+  const [saves, setSaves] = useState<SaveGame[]>([]);
+  const [loadSave, setLoadSave] = useState<string>("");
   const profile = activeProfile();
   const enabledCount = profile.entries.filter((e) => e.enabled).length;
   const dllOk = !!dll?.selected;
+
+  useEffect(() => {
+    if (gameRunning) return;
+    api.listSaves().then(setSaves).catch(() => setSaves([]));
+  }, [gameRunning]);
 
   const play = async () => {
     setBusy(true);
     try {
       setLaunch({ phase: "writing", message: "Starting…", pid: null });
-      await api.launchGame(profile);
+      await api.launchGame(profile, loadSave || null);
     } catch (e) {
       setLaunch({ phase: "failed", message: String(e), pid: null });
     } finally {
@@ -52,10 +60,10 @@ export default function LaunchBar() {
       >
         {gameRunning ? "Running…" : "▶ Play"}
       </button>
-      <span className="text-textMuted">
+      <span className="text-textMuted whitespace-nowrap">
         {profiles.active} · {enabledCount} enabled
       </span>
-      <label className="flex items-center gap-1.5 cursor-pointer" title="Inject the script extender DLL once the main menu is up">
+      <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Inject the script extender DLL once the main menu is up">
         <input
           type="checkbox"
           checked={profile.dll}
@@ -73,7 +81,7 @@ export default function LaunchBar() {
           </button>
         )}
       </label>
-      <label className="flex items-center gap-1.5 cursor-pointer" title="Skip the two startup videos (generated options pack)">
+      <label className="flex items-center gap-1.5 cursor-pointer whitespace-nowrap" title="Skip the two startup videos (generated options pack)">
         <input
           type="checkbox"
           checked={profile.skipIntro}
@@ -82,8 +90,21 @@ export default function LaunchBar() {
         />
         Skip intro
       </label>
+      {saves.length > 0 && (
+        <label className="flex items-center gap-1.5 whitespace-nowrap" title="Load this campaign save straight away (game_startup_mode campaign_load)">
+          <span className="text-textMuted">Load save</span>
+          <select value={loadSave} onChange={(e) => setLoadSave(e.target.value)} disabled={gameRunning} className="max-w-56">
+            <option value="">(main menu)</option>
+            {saves.slice(0, 40).map((s) => (
+              <option key={s.name} value={s.name}>
+                {s.name} · {formatDate(s.mtime)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="flex-1" />
-      <span className={PHASE_STYLE[launch.phase] ?? ""} title={launch.pid ? `pid ${launch.pid}` : ""}>
+      <span className={`truncate ${PHASE_STYLE[launch.phase] ?? ""}`} title={launch.pid ? `pid ${launch.pid}` : launch.message}>
         {launch.message}
       </span>
     </footer>

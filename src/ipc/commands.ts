@@ -115,6 +115,11 @@ export interface RemoteDll {
   installed: boolean;
 }
 
+export interface SaveGame {
+  name: string;
+  mtime: number;
+}
+
 export interface LaunchStatus {
   phase: "idle" | "writing" | "spawned" | "menu" | "injected" | "verified" | "mismatch" | "failed" | "exited";
   message: string;
@@ -136,7 +141,8 @@ export const api = {
   importModList: (path: string) => invoke<ImportedEntry[]>("import_mod_list", { path }),
   previewModList: (profile: Profile) => invoke<string>("preview_mod_list", { profile }),
   gameRunning: () => invoke<boolean>("game_running"),
-  launchGame: (profile: Profile) => invoke<number>("launch_game", { profile }),
+  launchGame: (profile: Profile, loadSave: string | null) => invoke<number>("launch_game", { profile, loadSave }),
+  listSaves: () => invoke<SaveGame[]>("list_saves"),
   dllStatus: () => invoke<DllStatus>("dll_status"),
   dllCheckUpdate: () => invoke<RemoteDll>("dll_check_update"),
   dllInstall: (r: RemoteDll) =>

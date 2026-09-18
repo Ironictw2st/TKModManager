@@ -1,10 +1,12 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useStore, type SortKey } from "../state/store";
 import type { ModEntry, ProfileEntry } from "../ipc/commands";
 import { comparePackNames, formatBytes, formatDate } from "../util/format";
+import ContextMenu, { type MenuItem } from "../components/ContextMenu";
 
 interface Row {
   key: string;
@@ -44,7 +46,29 @@ export default function ModList() {
   const sortProfileAlpha = useStore((s) => s.sortProfileAlpha);
   const enabledToTop = useStore((s) => s.enabledToTop);
   const gameRunning = useStore((s) => s.gameRunning);
+  const setMeta = useStore((s) => s.setMeta);
   const lastClicked = useRef<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; row: Row } | null>(null);
+
+  const menuItems = (row: Row): MenuItem[] => {
+    const keys = selected.includes(row.key) ? selected : [row.key];
+    const mm = meta.mods[row.key];
+    const n = keys.length > 1 ? ` (${keys.length})` : "";
+    return [
+      { label: `Enable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, true) },
+      { label: `Disable${n}`, disabled: gameRunning, onClick: () => void toggleMods(keys, false) },
+      { separator: true, label: "" },
+      {
+        label: "Open in Workshop",
+        disabled: !row.mod?.workshopId,
+        onClick: () => void openUrl(`https://steamcommunity.com/sharedfiles/filedetails/?id=${row.mod?.workshopId}`),
+      },
+      { label: "Show file in Explorer", disabled: !row.mod, onClick: () => row.mod && void revealItemInDir(row.mod.path) },
+      { separator: true, label: "" },
+      { label: mm?.hidden ? "Unhide" : "Hide", onClick: () => void setMeta(row.key, { hidden: !mm?.hidden }) },
+      { label: "Copy key", onClick: () => void navigator.clipboard?.writeText(row.key) },
+    ];
+  };
 
   const allTags = useMemo(() => {
     const t = new Set<string>();
@@ -186,12 +210,12 @@ export default function ModList() {
 
   return (
     <section className="flex-1 min-w-0 flex flex-col" onKeyDown={onKeyDown} tabIndex={0}>
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-edge text-[12px] flex-wrap">
+      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-edge text-[12px] overflow-x-auto">
         <input
           value={filters.search}
           onChange={(e) => setFilters({ search: e.target.value })}
           placeholder="Search title / file"
-          className="w-56"
+          className="w-44 shrink-0"
         />
         <select value={filters.source} onChange={(e) => setFilters({ source: e.target.value as typeof filters.source })}>
           <option value="all">All sources</option>
@@ -218,13 +242,13 @@ export default function ModList() {
             ))}
           </select>
         )}
-        <label className="flex items-center gap-1 cursor-pointer">
+        <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
           <input type="checkbox" checked={filters.showHidden} onChange={(e) => setFilters({ showHidden: e.target.checked })} />
-          show hidden
+          hidden
         </label>
         <div className="flex-1" />
-        <span className="text-textMuted">
-          {rows.length} shown · {enabledCount} enabled · {profile.entries.length} total
+        <span className="text-textMuted whitespace-nowrap" title={`${rows.length} shown of ${profile.entries.length}`}>
+          {enabledCount} enabled / {profile.entries.length}
         </span>
         <button
           className="btn"
@@ -267,6 +291,10 @@ export default function ModList() {
                     disabled={gameRunning}
                     onClick={onRowClick}
                     onToggle={onToggle}
+                    onContextMenu={(r, e) => {
+                      if (!selected.includes(r.key)) select([r.key], r.key);
+                      setMenu({ x: e.clientX, y: e.clientY, row: r });
+                    }}
                   />
                 ))}
               </tbody>
@@ -289,6 +317,10 @@ export default function ModList() {
                   disabled={gameRunning}
                   onClick={onRowClick}
                   onToggle={onToggle}
+                  onContextMenu={(r, e) => {
+                    if (!selected.includes(r.key)) select([r.key], r.key);
+                    setMenu({ x: e.clientX, y: e.clientY, row: r });
+                  }}
                 />
               ))}
             </tbody>
@@ -296,6 +328,7 @@ export default function ModList() {
         </table>
         {rows.length === 0 && <div className="p-6 text-center text-textMuted text-[12px]">No packs match the current filters.</div>}
       </div>
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
     </section>
   );
 }
@@ -308,6 +341,7 @@ function ModRow({
   disabled,
   onClick,
   onToggle,
+  onContextMenu,
 }: {
   row: Row;
   selected: boolean;
@@ -316,6 +350,7 @@ function ModRow({
   disabled: boolean;
   onClick: (row: Row, e: React.MouseEvent) => void;
   onToggle: (row: Row, checked: boolean) => void;
+  onContextMenu: (row: Row, e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.key, disabled: !canDrag });
   const style: React.CSSProperties = {
@@ -332,6 +367,10 @@ function ModRow({
       {...attributes}
       {...(canDrag ? listeners : {})}
       onClick={(e) => onClick(row, e)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContextMenu(row, e);
+      }}
       className={`border-t border-edge/40 ${selected ? "bg-selected" : "hover:bg-hover"} ${focused ? "outline outline-1 outline-accent/60 -outline-offset-1" : ""} ${
         canDrag ? "cursor-grab" : ""
       } ${row.entry.enabled ? "" : "text-textMuted"}`}

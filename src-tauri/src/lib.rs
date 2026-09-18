@@ -42,6 +42,7 @@ pub fn run() {
             commands::preview_mod_list,
             launch::game_running,
             launch::launch_game,
+            launch::list_saves,
             dll::dll_status,
             dll::dll_check_update,
             dll::dll_install,

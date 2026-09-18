@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useStore } from "./state/store";
 import { applyTheme } from "./theme";
 import { workshopApi } from "./ipc/workshop";
-import type { LaunchStatus } from "./ipc/commands";
+import { api, type LaunchStatus } from "./ipc/commands";
 import ProfileBar from "./panels/ProfileBar";
 import ModList from "./panels/ModList";
 import ModDetails from "./panels/ModDetails";
@@ -31,6 +31,20 @@ export default function App() {
   }, []);
 
   useEffect(() => applyTheme(settings), [settings.themeMode, settings.accent]);
+
+  // The launch thread reports exits for games it started; poll for games started elsewhere
+  // (or before an app restart) so the Play button comes back once the game closes.
+  const gameRunning = useStore((s) => s.gameRunning);
+  useEffect(() => {
+    if (!ready) return;
+    const id = window.setInterval(async () => {
+      const running = await api.gameRunning().catch(() => gameRunning);
+      if (running !== useStore.getState().gameRunning) {
+        useStore.setState({ gameRunning: running, launch: running ? useStore.getState().launch : { phase: "idle", message: "", pid: null } });
+      }
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [ready, gameRunning]);
 
   // Workshop metadata: cached first, then a background refresh for installed items.
   useEffect(() => {
