@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { WorkshopItem } from "./workshop";
+import type { SeInfo } from "../util/status";
 
 export type PackType = "boot" | "release" | "patch" | "mod" | "movie" | "unknown";
 export type ModSource = "workshop" | "data" | "folder";
@@ -18,6 +19,10 @@ export interface ModEntry {
   size: number;
   mtime: number;
   previewPath: string | null;
+  /** Workshop only: publish time of the installed version (Steam's workshop manifest). */
+  installedUpdated: number | null;
+  /** Workshop only: newest publish time Steam knows of. */
+  latestUpdated: number | null;
 }
 
 export interface GamePaths {
@@ -42,6 +47,8 @@ export interface Settings {
   autoInjectExternal: boolean;
   dllChannel: "stable" | "prerelease";
   minimizeToTray: boolean;
+  /** Unix seconds; null = the game exe's build date. */
+  outdatedBefore: number | null;
 }
 
 /** A pack entry, or a separator (`key` starts with "sep:") that heads a group. */
@@ -70,6 +77,8 @@ export interface ModMeta {
   tags: string[];
   notes: string;
   hidden: boolean;
+  /** Manual script-extender requirement; undefined/null = automatic. */
+  seOverride?: boolean | null;
 }
 
 export interface MetaDoc {
@@ -233,5 +242,6 @@ export const api = {
   dllReadLog: (dir: string) => invoke<string>("dll_read_log", { dir }),
   dllReadCfg: () => invoke<DllConfig>("dll_read_cfg"),
   dllWriteCfg: (config: DllConfig) => invoke<void>("dll_write_cfg", { config }),
+  seRequirements: (keys: string[]) => invoke<Record<string, SeInfo>>("se_requirements", { keys }),
   workshopCollection: (input: string) => invoke<CollectionResult>("workshop_collection", { input }),
 };

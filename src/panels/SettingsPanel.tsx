@@ -46,6 +46,8 @@ function GamePaths() {
   const mods = useStore((s) => s.mods);
   const setSettings = useStore((s) => s.setSettings);
   const refreshMods = useStore((s) => s.refreshMods);
+  const refreshSeScan = useStore((s) => s.refreshSeScan);
+  const cutoff = useStore((s) => s.outdatedCutoff());
   const pick = async (key: "gameRoot" | "workshopDir") => {
     const dir = await open({
       directory: true,
@@ -96,9 +98,31 @@ function GamePaths() {
             Open folder
           </button>
         )}
-        <button className="btn" onClick={() => void refreshMods()} title="Rescan data/, the Workshop and the extra folders">
+        <button
+          className="btn"
+          onClick={() => void refreshMods().then(() => refreshSeScan())}
+          title="Rescan data/, the Workshop and the extra folders, and re-check which mods need the script extender"
+        >
           Refresh mods
         </button>
+      </Field>
+      <Field label="Older than patch">
+        <input
+          type="date"
+          value={cutoff ? new Date(cutoff * 1000).toISOString().slice(0, 10) : ""}
+          onChange={(e) => {
+            const t = e.target.value ? Math.floor(Date.parse(`${e.target.value}T00:00:00Z`) / 1000) : null;
+            void setSettings({ outdatedBefore: t });
+          }}
+          title="Workshop mods last updated before this date get the amber dot"
+        />
+        {settings.outdatedBefore !== null ? (
+          <button className="btn" onClick={() => void setSettings({ outdatedBefore: null })} title="Use the game exe's build date">
+            Reset
+          </button>
+        ) : (
+          <span className="text-textMuted">(game build date)</span>
+        )}
       </Field>
       <div>
         <div className="flex items-center gap-2 mb-1">

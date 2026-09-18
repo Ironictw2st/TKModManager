@@ -6,9 +6,9 @@ import { formatDate } from "../util/format";
 /** Details for an abnormal game exit: what changed since the last clean launch + log tail. */
 export default function CrashDialog() {
   const crash = useStore((s) => s.crash);
-  const clearCrash = useStore((s) => s.clearCrash);
   const setPanel = useStore((s) => s.setPanel);
-  const [open, setOpen] = useState(false);
+  const open = useStore((s) => s.crashOpen);
+  const setOpen = useStore((s) => s.setCrashOpen);
   const [report, setReport] = useState<CrashReport | null>(null);
   const [logTail, setLogTail] = useState("");
 
@@ -37,20 +37,7 @@ export default function CrashDialog() {
 
   if (!crash) return null;
 
-  if (!open) {
-    return (
-      <div className="fixed z-40 left-3 bottom-14 rounded border border-danger bg-sunken shadow-xl text-[12px] px-3 py-2 flex items-center gap-2">
-        <span className="text-danger font-semibold">The game ended abnormally</span>
-        <span className="text-textMuted">exit code {crash.exitCode != null ? `0x${crash.exitCode.toString(16).toUpperCase()}` : "?"}</span>
-        <button className="btn" onClick={() => setOpen(true)}>
-          Details
-        </button>
-        <button className="text-textMuted hover:text-text" onClick={clearCrash} title="Dismiss">
-          ✕
-        </button>
-      </div>
-    );
-  }
+  if (!open) return null;
 
   const d = report?.diff;
   const nothing = d && !d.added.length && !d.removed.length && !d.changed.length && !d.reordered;

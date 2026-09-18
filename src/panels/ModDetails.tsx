@@ -3,6 +3,15 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useStore } from "../state/store";
 import { formatBytes, formatDate } from "../util/format";
+import { modStatus, seRequirement, seSourceText, STATUS_LABEL, versionLess, type ModStatusKind } from "../util/status";
+
+const STATUS_BOX: Record<ModStatusKind, string> = {
+  pending: "border-danger bg-danger/10 text-danger",
+  old: "border-warn bg-warn/10 text-warn",
+  ok: "border-ok bg-ok/10 text-ok",
+  unknown: "border-edge text-textMuted",
+  local: "border-edge text-textMuted",
+};
 
 /** Right-hand pane: preview, description, Workshop link, dependencies, tags and notes. */
 export default function ModDetails() {
@@ -14,7 +23,10 @@ export default function ModDetails() {
   const profile = useStore((s) => s.activeProfile());
   const mods = useStore((s) => s.mods);
   const toggleMods = useStore((s) => s.toggleMods);
-  const gameBuildTime = useStore((s) => s.dll?.gameFingerprint?.timestamp ?? 0);
+  const cutoff = useStore((s) => s.outdatedCutoff());
+  const seScan = useStore((s) => (focused ? s.seScan[focused] : undefined));
+  const setSeOverride = useStore((s) => s.setSeOverride);
+  const dll = useStore((s) => s.dll);
   const [notes, setNotes] = useState("");
   const [tagInput, setTagInput] = useState("");
 
@@ -25,26 +37,35 @@ export default function ModDetails() {
 
   if (!focused) {
     return (
-      <aside className="w-80 shrink-0 border-l border-edge bg-panel p-3 text-textMuted text-[12px]">
-        Select a mod to see its details.
-      </aside>
+      <div className="p-3 text-textMuted text-[12px] space-y-2">
+        <div>Select a mod to see its details.</div>
+        <div className="text-[11px]">
+          The dot next to each mod shows its status: green up to date, amber last updated before the current game build, red update pending
+          on Steam, grey local file. <b>SE</b> marks mods that need the script extender.
+        </div>
+      </div>
     );
   }
   if (!mod) {
     return (
-      <aside className="w-80 shrink-0 border-l border-edge bg-panel p-3 text-[12px]">
+      <div className="p-3 text-[12px]">
         <div className="font-semibold mb-1">Missing pack</div>
         <div className="text-textMuted break-all">{focused}</div>
         <div className="text-textMuted mt-2">
           This profile entry points at a pack that is no longer installed (unsubscribed or deleted). It is skipped at launch.
         </div>
-      </aside>
+      </div>
     );
   }
   const ws = mod.workshopId ? workshop[mod.workshopId] : undefined;
   const title = ws?.title || mod.file.replace(/\.pack$/i, "");
   const tags = meta?.tags ?? [];
-  const olderThanGame = !!ws?.timeUpdated && !ws.fromLauncherCache && gameBuildTime > 0 && ws.timeUpdated < gameBuildTime;
+  const status = modStatus(mod, ws, cutoff);
+  const se = seRequirement(seScan, meta);
+  const entry = profile.entries.find((e) => e.key === mod.key);
+  const have = dll?.selected?.version;
+  const seUnmet = se.required && !!entry?.enabled && (!profile.dll || !have || (!!se.minVersion && versionLess(have, se.minVersion)));
+  const overrideValue = meta?.seOverride === true ? "yes" : meta?.seOverride === false ? "no" : "auto";
   const enabledKeys = new Set(profile.entries.filter((e) => e.enabled).map((e) => e.key));
   const required = (ws?.requiredItems ?? []).map((id) => {
     const installed = mods.find((m) => m.workshopId === id);
@@ -59,14 +80,45 @@ export default function ModDetails() {
   };
 
   return (
-    <aside className="w-80 shrink-0 border-l border-edge bg-panel overflow-auto text-[12px]">
+    <div className="text-[12px]">
       {mod.previewPath && (
-        <img src={convertFileSrc(mod.previewPath)} alt="" className="w-full aspect-square object-cover bg-sunken" draggable={false} />
+        <img src={convertFileSrc(mod.previewPath)} alt="" className="w-full h-40 object-cover bg-sunken" draggable={false} />
       )}
       <div className="p-3 space-y-3">
         <div>
           <div className="font-semibold text-[13px] leading-tight select-text">{title}</div>
           <div className="text-textMuted break-all select-text">{mod.file}</div>
+        </div>
+
+        <div className={`rounded border px-2 py-1.5 ${STATUS_BOX[status.kind]}`}>
+          <div className="font-semibold">{STATUS_LABEL[status.kind]}</div>
+          <div className="text-[11px] text-textMuted">{status.text}</div>
+        </div>
+
+        <div className={`rounded border px-2 py-1.5 space-y-1 ${se.required ? (seUnmet ? "border-danger bg-danger/10" : "border-se/60 bg-se/10") : "border-edge"}`}>
+          <div className="flex items-center gap-2">
+            <span className={`font-semibold ${se.required ? (seUnmet ? "text-danger" : "text-se") : "text-textMuted"}`}>
+              {se.required ? "Needs the script extender" : "No script extender needed"}
+            </span>
+          </div>
+          <div className="text-[11px] text-textMuted break-words">{seSourceText(se)}</div>
+          {seUnmet && (
+            <div className="text-[11px] text-danger">
+              {!profile.dll ? "The script extender is off for this profile." : !have ? "No DLL matches this game build." : `Needs v${se.minVersion}; v${have} is installed.`}
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-[11px]">
+            <span className="text-textMuted">Requirement</span>
+            <select
+              value={overrideValue}
+              onChange={(e) => void setSeOverride(mod.key, e.target.value === "auto" ? null : e.target.value === "yes")}
+              className="flex-1"
+            >
+              <option value="auto">Automatic{seScan?.required ? " (detected)" : ""}</option>
+              <option value="yes">Requires the script extender</option>
+              <option value="no">Does not require it</option>
+            </select>
+          </label>
         </div>
         <div className="flex flex-wrap gap-1">
           <span className={`badge ${mod.source === "workshop" ? "border-accent/60 text-accent" : "border-edge text-textMuted"}`} title={mod.dir}>
@@ -101,12 +153,6 @@ export default function ModDetails() {
             Show file
           </button>
         </div>
-
-        {olderThanGame && (
-          <div className="text-[11px] text-textMuted">
-            Last updated on the Workshop before the current game build ({formatDate(gameBuildTime)}). Most mods keep working; worth a look if it misbehaves.
-          </div>
-        )}
 
         {required.length > 0 && (
           <div>
@@ -185,7 +231,7 @@ export default function ModDetails() {
           </div>
         )}
       </div>
-    </aside>
+    </div>
   );
 }
 

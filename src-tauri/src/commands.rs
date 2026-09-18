@@ -184,6 +184,8 @@ mod tests {
             size: 0,
             mtime: 0,
             preview_path: None,
+            installed_updated: None,
+            latest_updated: None,
         }
     }
 

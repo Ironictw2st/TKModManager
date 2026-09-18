@@ -1,6 +1,6 @@
 [package]
 name = "tk-mod-manager"
-version = "0.2.0"
+version = "0.3.0"
 description = "Mod manager and launcher for Total War: THREE KINGDOMS"
 authors = ["Ironictw2st"]
 edition = "2021"

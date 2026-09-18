@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { askConfirm, showMessage } from "../components/Dialogs";
+import { askConfirm, askText, showMessage } from "../components/Dialogs";
+import ContextMenu, { type MenuItem } from "../components/ContextMenu";
 import { useStore } from "../state/store";
 import { api } from "../ipc/commands";
 import { isSeparator } from "../state/separators";
 
-/** Profile picker with new / duplicate / rename / delete. */
+/** Compact profile picker; profile actions live in the "⋯" menu. */
 export default function ProfileBar() {
   const profiles = useStore((s) => s.profiles);
   const setActive = useStore((s) => s.setActiveProfile);
@@ -13,98 +14,86 @@ export default function ProfileBar() {
   const remove = useStore((s) => s.deleteProfile);
   const activeProfile = useStore((s) => s.activeProfile);
   const gameRunning = useStore((s) => s.gameRunning);
-  const [mode, setMode] = useState<null | "new" | "dup" | "rename">(null);
-  const [name, setName] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
-  const start = (m: NonNullable<typeof mode>) => {
-    setMode(m);
-    setName(m === "rename" ? profiles.active : m === "dup" ? `${profiles.active} copy` : "");
-    setErr(null);
-  };
-
-  const commit = async () => {
-    const n = name.trim();
-    if (!n) return;
+  const run = async (fn: () => Promise<void>) => {
     try {
-      if (mode === "new") await create(n);
-      else if (mode === "dup") await create(n, activeProfile());
-      else if (mode === "rename") await rename(profiles.active, n);
-      setMode(null);
-    } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
-    }
-  };
-
-  const del = async () => {
-    if (!(await askConfirm(`Delete profile "${profiles.active}"?`, "Delete"))) return;
-    try {
-      await remove(profiles.active);
+      await fn();
     } catch (e) {
       void showMessage(String(e instanceof Error ? e.message : e));
     }
   };
 
+  const items: MenuItem[] = [
+    {
+      label: "New profile…",
+      onClick: () =>
+        void run(async () => {
+          const n = (await askText("Name for the new profile:"))?.trim();
+          if (n) await create(n);
+        }),
+    },
+    {
+      label: "Duplicate…",
+      onClick: () =>
+        void run(async () => {
+          const n = (await askText("Name for the copy:", `${profiles.active} copy`))?.trim();
+          if (n) await create(n, activeProfile());
+        }),
+    },
+    {
+      label: "Rename…",
+      onClick: () =>
+        void run(async () => {
+          const n = (await askText("New name:", profiles.active))?.trim();
+          if (n && n !== profiles.active) await rename(profiles.active, n);
+        }),
+    },
+    {
+      label: "Delete",
+      disabled: profiles.profiles.length <= 1,
+      onClick: () =>
+        void run(async () => {
+          if (await askConfirm(`Delete profile "${profiles.active}"?`, "Delete")) await remove(profiles.active);
+        }),
+    },
+    { separator: true, label: "" },
+    {
+      label: "Create desktop shortcut",
+      onClick: () =>
+        void run(async () => {
+          await showMessage(`Shortcut created:\n${await api.createProfileShortcut(profiles.active)}`);
+        }),
+    },
+  ];
+
   return (
-    <div className="flex items-center gap-1.5 text-[12px]">
+    <div className="flex items-center gap-1.5 text-[12px] min-w-0">
       <span className="text-textMuted">Profile</span>
-      {mode ? (
-        <>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void commit();
-              if (e.key === "Escape") setMode(null);
-            }}
-            className="w-44"
-            placeholder="Profile name"
-          />
-          <button className="btn-accent" onClick={commit}>
-            {mode === "rename" ? "Rename" : "Create"}
-          </button>
-          <button className="btn" onClick={() => setMode(null)}>
-            Cancel
-          </button>
-          {err && <span className="text-danger">{err}</span>}
-        </>
-      ) : (
-        <>
-          <select value={profiles.active} onChange={(e) => void setActive(e.target.value)} disabled={gameRunning} className="min-w-40">
-            {profiles.profiles.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.name} ({p.entries.filter((e) => e.enabled && !isSeparator(e)).length})
-              </option>
-            ))}
-          </select>
-          <button className="btn" onClick={() => start("new")} title="New empty profile">
-            New
-          </button>
-          <button className="btn" onClick={() => start("dup")} title="Duplicate the active profile">
-            Duplicate
-          </button>
-          <button className="btn" onClick={() => start("rename")} title="Rename the active profile">
-            Rename
-          </button>
-          <button className="btn" onClick={del} title="Delete the active profile" disabled={profiles.profiles.length <= 1}>
-            Delete
-          </button>
-          <button
-            className="btn"
-            title="Create a desktop shortcut that launches the game with this profile"
-            onClick={async () => {
-              try {
-                void showMessage(`Shortcut created:\n${await api.createProfileShortcut(profiles.active)}`);
-              } catch (e) {
-                void showMessage(String(e));
-              }
-            }}
-          >
-            Shortcut
-          </button>
-        </>
-      )}
+      <select
+        value={profiles.active}
+        onChange={(e) => void setActive(e.target.value)}
+        disabled={gameRunning}
+        className="min-w-0 flex-1 max-w-72"
+        title="Active profile (enabled mods + load order)"
+      >
+        {profiles.profiles.map((p) => (
+          <option key={p.name} value={p.name}>
+            {p.name} ({p.entries.filter((e) => e.enabled && !isSeparator(e)).length})
+          </option>
+        ))}
+      </select>
+      <button
+        className="btn px-2"
+        title="Profile actions"
+        onClick={(e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setMenu({ x: r.left, y: r.bottom + 2 });
+        }}
+      >
+        ⋯
+      </button>
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
     </div>
   );
 }

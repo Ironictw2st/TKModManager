@@ -28,6 +28,9 @@ pub struct Settings {
     pub dll_channel: String,
     /// Closing the window hides it to the tray instead of quitting.
     pub minimize_to_tray: bool,
+    /// Unix seconds: Workshop mods last updated before this count as "older than the game
+    /// patch". None = the game exe's build date.
+    pub outdated_before: Option<u64>,
 }
 
 impl Default for Settings {
@@ -45,6 +48,7 @@ impl Default for Settings {
             auto_inject_external: false,
             dll_channel: "stable".into(),
             minimize_to_tray: false,
+            outdated_before: None,
         }
     }
 }

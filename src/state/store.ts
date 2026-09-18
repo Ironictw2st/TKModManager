@@ -19,8 +19,9 @@ import {
 import { comparePackNames } from "../util/format";
 import type { WorkshopItem } from "../ipc/workshop";
 import * as sep from "./separators";
+import type { SeInfo } from "../util/status";
 
-export type SortKey = "order" | "title" | "file" | "source" | "type" | "size" | "updated";
+export type SortKey = "order" | "status" | "title" | "file" | "source" | "type" | "size" | "updated";
 export type Panel = "mods" | "conflicts" | "logs" | "settings";
 
 export interface Filters {
@@ -30,6 +31,8 @@ export interface Filters {
   enabled: "all" | "enabled" | "disabled" | "updated";
   tag: string | null;
   showHidden: boolean;
+  /** Status filter: update pending / older than patch / needs the script extender. */
+  status: "all" | "pending" | "old" | "se";
 }
 
 export interface AppStore {
@@ -53,6 +56,9 @@ export interface AppStore {
   loadSave: string;
   /** Last abnormal exit, for the "Details" button. */
   crash: { historyId: number | null; exitCode: number | null } | null;
+  crashOpen: boolean;
+  /** Script-extender scan per pack key (marker file / Lua usage). */
+  seScan: Record<string, SeInfo>;
 
   // ui
   filters: Filters;
@@ -72,6 +78,11 @@ export interface AppStore {
   select(keys: string[], focused?: string | null): void;
   setLoadSave(name: string): void;
   clearCrash(): void;
+  setCrashOpen(open: boolean): void;
+  refreshSeScan(): Promise<void>;
+  setSeOverride(key: string, value: boolean | null): Promise<void>;
+  /** Unix seconds before which a Workshop mod counts as older than the game patch. */
+  outdatedCutoff(): number;
 
   activeProfile(): Profile;
   updateProfile(name: string, fn: (p: Profile) => Profile): Promise<void>;
@@ -106,6 +117,7 @@ const DEFAULT_FILTERS: Filters = {
   enabled: "all",
   tag: null,
   showHidden: false,
+  status: "all",
 };
 
 const EMPTY_PROFILE: Profile = { name: "Default", entries: [], dll: false, skipIntro: false };
@@ -159,6 +171,7 @@ export const useStore = create<AppStore>((set, get) => ({
     autoInjectExternal: false,
     dllChannel: "stable",
     minimizeToTray: false,
+    outdatedBefore: null,
   },
   paths: null,
   mods: [],
@@ -173,6 +186,8 @@ export const useStore = create<AppStore>((set, get) => ({
   gameRunning: false,
   loadSave: "",
   crash: null,
+  crashOpen: false,
+  seScan: {},
   filters: DEFAULT_FILTERS,
   sort: { key: "order", dir: 1 },
   selected: [],
@@ -205,6 +220,7 @@ export const useStore = create<AppStore>((set, get) => ({
       }
       set({ ready: true, gameRunning: await api.gameRunning() });
       void get().refreshDll();
+      void get().refreshSeScan();
     } catch (e) {
       set({ error: String(e), ready: true });
     }
@@ -238,6 +254,7 @@ export const useStore = create<AppStore>((set, get) => ({
     if ("gameRoot" in patch || "workshopDir" in patch || "extraModDirs" in patch) {
       await get().refreshMods();
       await get().refreshDll();
+      void get().refreshSeScan();
     }
   },
 
@@ -258,7 +275,24 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ loadSave: name });
   },
   clearCrash() {
-    set({ crash: null });
+    set({ crash: null, crashOpen: false });
+  },
+  setCrashOpen(open) {
+    set({ crashOpen: open });
+  },
+  async refreshSeScan() {
+    try {
+      set({ seScan: await api.seRequirements([]) });
+    } catch (e) {
+      console.warn("script extender scan", e);
+    }
+  },
+  async setSeOverride(key, value) {
+    await get().setMeta(key, { seOverride: value });
+  },
+  outdatedCutoff() {
+    const s = get();
+    return s.settings.outdatedBefore ?? s.dll?.gameFingerprint?.timestamp ?? 0;
   },
 
   activeProfile() {
@@ -404,7 +438,9 @@ export const useStore = create<AppStore>((set, get) => ({
   async setMeta(key, patch) {
     const doc = get().meta;
     const cur = doc.mods[key] ?? { tags: [], notes: "", hidden: false };
-    const next = { mods: { ...doc.mods, [key]: { ...cur, ...patch } } };
+    const merged = { ...cur, ...patch };
+    if (merged.seOverride === null) delete merged.seOverride;
+    const next = { mods: { ...doc.mods, [key]: merged } };
     set({ meta: next });
     await api.saveMeta(next);
   },

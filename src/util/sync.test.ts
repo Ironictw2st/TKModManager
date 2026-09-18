@@ -13,6 +13,8 @@ const mod = (key: string, file: string, size: number, source: ModEntry["source"]
   size,
   mtime: 0,
   previewPath: null,
+  installedUpdated: null,
+  latestUpdated: null,
 });
 
 const H = (c: string) => c.repeat(64);

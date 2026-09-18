@@ -12,9 +12,34 @@ directly with that file (Steam must be running). Workshop packs load from where 
 via `add_working_directory`; nothing is copied into `data/`. Movie-type packs in `data/` that
 you turn off are excluded with `exclude_pack_file`; files are never renamed or moved.
 
-Script extender: enable it in the launch bar. After the game reaches the main menu the DLL is
-injected once; the DLL verifies the game build itself and the launch bar shows the result.
+Script extender: enable it in the launch panel (right column). After the game reaches the main menu the DLL is
+injected once; the DLL verifies the game build itself and the launch panel shows the result.
 A DLL built for another game build is never injected.
+
+## Mod status
+
+Each mod has a status dot. Green means up to date. Amber means it was last updated before
+the current game build, which is informational. Red means Steam has a newer version than the
+installed one. Grey means a local pack or no data. An **SE** chip marks mods that need the
+script extender, and it turns red when the current launch would not provide it.
+
+### Declaring that your mod needs the script extender
+
+Add an empty text file at this path inside your pack:
+
+```
+script/tkmm/requires_script_extender
+```
+
+To require a minimum version, put a line like this in the file:
+
+```
+min_version=0.24.0
+```
+
+The game never loads that folder, so the file is harmless. Packs whose Lua calls `se.modify.*`,
+`se.query.*`, `se.version()` or `type(se)` are also detected automatically. Any mod can be
+overridden by hand in its details pane.
 
 ## Development
 

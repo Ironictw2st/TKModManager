@@ -13,6 +13,8 @@ const mod = (key: string, file: string, mtime = 0): ModEntry => ({
   size: 0,
   mtime,
   previewPath: null,
+  installedUpdated: null,
+  latestUpdated: null,
 });
 
 describe("reconcile", () => {

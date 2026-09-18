@@ -81,6 +81,10 @@ pub struct ModEntry {
     /// Last-modified time, unix seconds.
     pub mtime: u64,
     pub preview_path: Option<String>,
+    /// Workshop only: when the installed version was published (Steam's workshop manifest).
+    pub installed_updated: Option<u64>,
+    /// Workshop only: the newest version Steam knows of (same manifest).
+    pub latest_updated: Option<u64>,
 }
 
 pub fn make_key(source: ModSource, workshop_id: Option<&str>, file: &str) -> String {
@@ -138,6 +142,7 @@ pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>, extra_dirs: &[
         }
     }
     if let Some(ws) = workshop_dir {
+        let acf = crate::steam_acf::workshop_items(ws);
         if let Ok(rd) = std::fs::read_dir(ws) {
             for item in rd.flatten() {
                 let dir = item.path();
@@ -154,7 +159,11 @@ pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>, extra_dirs: &[
                     if !p.is_file() || !is_pack(&p) {
                         continue;
                     }
-                    if let Some(entry) = entry_for(&p, ModSource::Workshop, Some(&id)) {
+                    if let Some(mut entry) = entry_for(&p, ModSource::Workshop, Some(&id)) {
+                        if let Some(a) = acf.get(&id) {
+                            entry.installed_updated = a.installed;
+                            entry.latest_updated = a.latest;
+                        }
                         out.push(entry);
                     }
                 }
@@ -211,6 +220,8 @@ fn entry_for(path: &Path, source: ModSource, workshop_id: Option<&str>) -> Optio
         size,
         mtime,
         preview_path: preview,
+        installed_updated: None,
+        latest_updated: None,
     })
 }
 

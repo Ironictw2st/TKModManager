@@ -23,6 +23,7 @@
   --ok: 94 184 120;
   --warn: 226 170 60;
   --danger: 224 92 92;
+  --se: 96 165 250;
   font-size: 16px;
 }
 
@@ -43,6 +44,7 @@
   --ok: 40 140 70;
   --warn: 190 130 20;
   --danger: 190 50 50;
+  --se: 37 99 235;
 }
 
 html, body, #root { height: 100%; margin: 0; }

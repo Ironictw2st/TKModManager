@@ -8,7 +8,7 @@ import { api, type LaunchStatus, type StartupArgs } from "./ipc/commands";
 import ProfileBar from "./panels/ProfileBar";
 import ModList from "./panels/ModList";
 import ModDetails from "./panels/ModDetails";
-import LaunchBar from "./panels/LaunchBar";
+import LaunchPanel from "./panels/LaunchPanel";
 import SettingsPanel from "./panels/SettingsPanel";
 import ConflictsPanel from "./panels/ConflictsPanel";
 import LogsPanel from "./panels/LogsPanel";
@@ -23,6 +23,12 @@ async function applyArgs(args: StartupArgs | null) {
   else if (args.profile && s.profiles.profiles.some((p) => p.name === args.profile)) await s.setActiveProfile(args.profile);
 }
 
+const TABS: { id: Exclude<Panel, "settings">; label: string }[] = [
+  { id: "mods", label: "Mods" },
+  { id: "conflicts", label: "Conflicts" },
+  { id: "logs", label: "Logs" },
+];
+
 export default function App() {
   const ready = useStore((s) => s.ready);
   const error = useStore((s) => s.error);
@@ -30,7 +36,6 @@ export default function App() {
   const panel = useStore((s) => s.panel);
   const setPanel = useStore((s) => s.setPanel);
   const paths = useStore((s) => s.paths);
-  const version = useStore((s) => s.version);
   const mods = useStore((s) => s.mods);
   const gameRunning = useStore((s) => s.gameRunning);
 
@@ -89,59 +94,64 @@ export default function App() {
     return <div className="h-full flex items-center justify-center text-textMuted">Loading…</div>;
   }
 
-  const tabs: { id: Panel; label: string }[] = [
-    { id: "mods", label: "Mods" },
-    { id: "conflicts", label: "Conflicts" },
-    { id: "logs", label: "Logs" },
-    { id: "settings", label: "Settings" },
-  ];
-
   return (
-    <div className="h-full flex flex-col">
-      <header className="flex items-center gap-3 px-3 py-2 border-b border-edge bg-panelHeader">
-        <div className="font-semibold text-[14px] tracking-wide whitespace-nowrap">
-          TK <span className="text-accent">Mod Manager</span>
-        </div>
-        <nav className="flex gap-1 ml-2">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setPanel(t.id)}
-              className={`px-2.5 py-1 rounded text-[12px] ${
-                panel === t.id ? "bg-accent/25 border border-accent text-text" : "border border-transparent text-textMuted hover:text-text hover:bg-hover"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <div className="flex-1" />
-        <ProfileBar />
-        <div className="text-[10px] text-textMuted ml-2 whitespace-nowrap" title={paths?.gameRoot ?? ""}>
-          {paths?.gameRoot ? `game ${paths.exeVersion ?? "found"}` : "game not found"} · v{version}
-        </div>
-      </header>
+    <div className="h-full flex">
+      {/* Left: header (tabs · profile · settings) over the main content. */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        <header className="flex items-center gap-3 px-3 py-2 border-b border-edge bg-panelHeader">
+          <div className="font-semibold text-[14px] tracking-wide whitespace-nowrap">
+            TK <span className="text-accent">Mod Manager</span>
+          </div>
+          <nav className="flex gap-1">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setPanel(t.id)}
+                className={`px-2.5 py-1 rounded text-[12px] ${
+                  panel === t.id ? "bg-accent/25 border border-accent text-text" : "border border-transparent text-textMuted hover:text-text hover:bg-hover"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <div className="flex-1 min-w-0 flex justify-center">
+            <ProfileBar />
+          </div>
+          <button
+            onClick={() => setPanel(panel === "settings" ? "mods" : "settings")}
+            className={`px-2.5 py-1 rounded text-[12px] whitespace-nowrap ${
+              panel === "settings" ? "bg-accent/25 border border-accent text-text" : "border border-edge text-textMuted hover:text-text hover:bg-hover"
+            }`}
+            title={panel === "settings" ? "Back to the mod list" : "Settings"}
+          >
+            ⚙ Settings
+          </button>
+        </header>
 
-      {error && <div className="px-3 py-1 text-[12px] bg-danger/20 border-b border-danger">{error}</div>}
-      {!paths?.gameRoot && (
-        <div className="px-3 py-1 text-[12px] bg-warn/20 border-b border-warn">
-          Three Kingdoms was not found through Steam. Set the game folder in Settings.
-        </div>
-      )}
-
-      <main className="flex-1 min-h-0 flex">
-        {panel === "mods" && (
-          <>
-            <ModList />
-            <ModDetails />
-          </>
+        {error && <div className="px-3 py-1 text-[12px] bg-danger/20 border-b border-danger">{error}</div>}
+        {!paths?.gameRoot && (
+          <div className="px-3 py-1 text-[12px] bg-warn/20 border-b border-warn">
+            Three Kingdoms was not found through Steam. Set the game folder in Settings.
+          </div>
         )}
-        {panel === "conflicts" && <ConflictsPanel />}
-        {panel === "logs" && <LogsPanel />}
-        {panel === "settings" && <SettingsPanel />}
-      </main>
 
-      <LaunchBar />
+        <main className="flex-1 min-h-0 flex">
+          {panel === "mods" && <ModList />}
+          {panel === "conflicts" && <ConflictsPanel />}
+          {panel === "logs" && <LogsPanel />}
+          {panel === "settings" && <SettingsPanel />}
+        </main>
+      </div>
+
+      {/* Right: mod details above the launch controls, full height. */}
+      <aside className="w-80 shrink-0 flex flex-col border-l border-edge bg-panel">
+        <div className="flex-1 min-h-0 overflow-auto">
+          <ModDetails />
+        </div>
+        <LaunchPanel />
+      </aside>
+
       <CrashDialog />
       <DialogHost />
       <UpdateBanner enabled={settings.checkAppUpdates} />

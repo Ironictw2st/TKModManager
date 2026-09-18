@@ -9,6 +9,7 @@ import type { ModEntry, ProfileEntry } from "../ipc/commands";
 import { comparePackNames, formatBytes, formatDate } from "../util/format";
 import ContextMenu, { type MenuItem } from "../components/ContextMenu";
 import { collapsedKeys, groupMembers, groupState, isSeparator } from "../state/separators";
+import { modStatus, seRequirement, seSourceText, STATUS_LABEL, STATUS_RANK, versionLess, type ModStatus, type SeRequirement } from "../util/status";
 
 interface ModRowData {
   kind: "mod";
@@ -24,6 +25,10 @@ interface ModRowData {
   isUpdated: boolean;
   hidden: boolean;
   tags: string[];
+  status: ModStatus;
+  se: SeRequirement;
+  /** Enabled, needs the extender, and this launch would not provide it. */
+  seUnmet: boolean;
 }
 
 interface SepRowData {
@@ -49,6 +54,23 @@ const COLUMNS: { key: SortKey; label: string; className: string }[] = [
 
 const SOURCE_LABEL: Record<ModEntry["source"], string> = { workshop: "Workshop", data: "data/", folder: "Folder" };
 
+const DOT_STYLE: Record<ModStatus["kind"], string> = {
+  pending: "bg-danger",
+  old: "bg-warn",
+  ok: "bg-ok",
+  unknown: "border border-textMuted",
+  local: "border border-textMuted",
+};
+
+const LEGEND = [
+  "Status",
+  "● green: up to date",
+  "● amber: last updated before the current game build",
+  "● red: update pending (Steam has a newer version)",
+  "○ grey: local file or no update data",
+  "SE: needs the script extender (red when this launch would not provide it)",
+].join("\n");
+
 export default function ModList() {
   const profile = useStore((s) => s.activeProfile());
   const modsByKey = useStore((s) => s.modsByKey);
@@ -73,6 +95,9 @@ export default function ModList() {
   const removeSeparator = useStore((s) => s.removeSeparator);
   const toggleGroup = useStore((s) => s.toggleGroup);
   const setCollapsed = useStore((s) => s.setCollapsed);
+  const seScan = useStore((s) => s.seScan);
+  const dll = useStore((s) => s.dll);
+  const cutoff = useStore((s) => s.outdatedCutoff());
   const lastClicked = useRef<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; row: Row } | null>(null);
 
@@ -115,6 +140,13 @@ export default function ModList() {
       const ws = mod?.workshopId ? workshop[mod.workshopId] : undefined;
       const title = ws?.title || mod?.file.replace(/\.pack$/i, "") || entry.key;
       const isUpdated = entry.enabled && updatedSince(profile.lastPlayed, mod, ws);
+      const status = modStatus(mod, ws, cutoff);
+      const se = seRequirement(seScan[entry.key], mm);
+      const have = dll?.selected?.version;
+      const seUnmet = se.required && entry.enabled && (!profile.dll || !have || (!!se.minVersion && versionLess(have, se.minVersion)));
+      if (filters.status === "pending" && status.kind !== "pending") return;
+      if (filters.status === "old" && status.kind !== "old") return;
+      if (filters.status === "se" && !se.required) return;
       if (filters.source !== "all" && mod && mod.source !== filters.source) return;
       if (filters.type !== "all" && mod && mod.packType !== filters.type) return;
       if (filters.enabled === "enabled" && !entry.enabled) return;
@@ -134,12 +166,17 @@ export default function ModList() {
         isUpdated,
         hidden,
         tags: mm?.tags ?? [],
+        status,
+        se,
+        seUnmet,
       });
     });
     if (sort.key !== "order") {
       const mods = out.filter((r): r is ModRowData => r.kind === "mod");
       const cmp = (a: ModRowData, b: ModRowData): number => {
         switch (sort.key) {
+          case "status":
+            return STATUS_RANK[a.status.kind] - STATUS_RANK[b.status.kind] || Number(b.se.required) - Number(a.se.required);
           case "title":
             return comparePackNames(a.title, b.title);
           case "file":
@@ -159,7 +196,7 @@ export default function ModList() {
       return mods.sort((a, b) => cmp(a, b) * sort.dir || a.index - b.index);
     }
     return out;
-  }, [profile, modsByKey, workshop, meta, filters, sort, groupsVisible]);
+  }, [profile, modsByKey, workshop, meta, filters, sort, groupsVisible, seScan, dll, cutoff]);
 
   const mainRows = rows.filter((r) => r.kind === "sep" || r.mod?.packType !== "movie");
   const movieRows = rows.filter((r): r is ModRowData => r.kind === "mod" && r.mod?.packType === "movie");
@@ -300,7 +337,7 @@ export default function ModList() {
 
   return (
     <section className="flex-1 min-w-0 flex flex-col outline-none" onKeyDown={onKeyDown} tabIndex={0}>
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-edge text-[12px] overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5 border-b border-edge text-[12px]">
         <input
           value={filters.search}
           onChange={(e) => setFilters({ search: e.target.value })}
@@ -323,6 +360,12 @@ export default function ModList() {
           <option value="enabled">Enabled</option>
           <option value="disabled">Disabled</option>
           <option value="updated">Updated since last played</option>
+        </select>
+        <select value={filters.status} onChange={(e) => setFilters({ status: e.target.value as typeof filters.status })} title={LEGEND}>
+          <option value="all">Any status</option>
+          <option value="pending">Update pending</option>
+          <option value="old">Older than game patch</option>
+          <option value="se">Needs script extender</option>
         </select>
         {allTags.length > 0 && (
           <select value={filters.tag ?? ""} onChange={(e) => setFilters({ tag: e.target.value || null })}>
@@ -370,6 +413,11 @@ export default function ModList() {
           <thead className="sticky top-0 bg-panelHeader z-10">
             <tr className="text-left text-textMuted">
               <th className="w-8 px-2 py-1 font-normal" />
+              <th className="w-12 px-1 py-1 font-normal text-left" title={LEGEND}>
+                <button className="hover:text-text" onClick={() => setSort("status")}>
+                  ●{sort.key === "status" ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+                </button>
+              </th>
               {COLUMNS.map((c) => (
                 <th key={c.key} className={`px-2 py-1 font-normal ${c.className}`}>
                   <button className="hover:text-text" onClick={() => setSort(c.key)}>
@@ -411,7 +459,7 @@ export default function ModList() {
           {movieRows.length > 0 && (
             <tbody>
               <tr>
-                <td colSpan={COLUMNS.length + 1} className="px-2 pt-3 pb-1 text-[11px] text-warn border-t border-edge">
+                <td colSpan={COLUMNS.length + 2} className="px-2 pt-3 pb-1 text-[11px] text-warn border-t border-edge">
                   Movie packs — always load after every mod pack; order between them is fixed by the engine.
                 </td>
               </tr>
@@ -490,7 +538,7 @@ function SeparatorRow({
           title="Enable / disable the whole group"
         />
       </td>
-      <td colSpan={COLUMNS.length} className="px-1 py-1">
+      <td colSpan={COLUMNS.length + 1} className="px-1 py-1">
         <div className="flex items-center gap-2">
           <button
             className="w-5 text-textMuted hover:text-text"
@@ -585,6 +633,19 @@ function ModRow({
           onChange={(e) => onToggle(row, e.target.checked)}
           onPointerDown={(e) => e.stopPropagation()}
         />
+      </td>
+      <td className="px-1 py-0.5 whitespace-nowrap">
+        <span className="inline-flex items-center gap-1">
+          <span className={`inline-block w-2.5 h-2.5 rounded-full ${DOT_STYLE[row.status.kind]}`} title={`${STATUS_LABEL[row.status.kind]}: ${row.status.text}`} />
+          {row.se.required && (
+            <span
+              className={`text-[9px] leading-3 px-1 rounded border font-semibold ${row.seUnmet ? "border-danger bg-danger/20 text-danger" : "border-se/70 text-se"}`}
+              title={`${seSourceText(row.se)}${row.seUnmet ? "\nNot available for this launch: turn on the script extender (right panel)" : ""}`}
+            >
+              SE
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-2 py-0.5 text-right text-textMuted tabular-nums">{isMovie ? "" : row.order}</td>
       <td className="px-2 py-0.5">

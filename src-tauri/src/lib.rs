@@ -15,8 +15,10 @@ mod options_pack;
 mod packs;
 mod paths;
 mod profiles;
+mod se_scan;
 mod settings;
 mod state;
+mod steam_acf;
 mod tray;
 mod update;
 mod winproc;
@@ -101,6 +103,7 @@ pub fn run() {
             workshop::workshop_fetch,
             workshop::workshop_collection,
             conflicts::conflicts_for,
+            se_scan::se_requirements,
             update::check_update,
             update::install_update,
         ])

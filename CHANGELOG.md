@@ -4,6 +4,26 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-18
+
+### Added
+- **Mod status at a glance**: a status dot next to every mod. Green = up to date, amber = last
+  updated before the current game build, red = update pending (Steam has a newer version than the
+  one installed, read from Steam's own Workshop manifest, so it works offline), grey = local file
+  or no data. Filter and sort by status; the details pane explains each state.
+- **Script extender requirement**: an "SE" chip on mods that need the script extender. Detected
+  from a marker file (`script/tkmm/requires_script_extender`, optional `min_version=`) or from
+  Lua that calls the `se.*` API; override per mod in the details pane. The chip turns red when
+  this launch would not provide it.
+- **Launch warnings**: the launch panel lists enabled mods whose script-extender need is unmet
+  (turned off, no DLL for this game build, or DLL older than required) with a one-click fix.
+- Setting for the "older than game patch" date (defaults to the game exe's build date).
+
+### Changed
+- New layout: tabs, profile and a Settings button above the mod list; mod details and the launch
+  controls (Play, Script extender, Skip intro, Load save) share the right-hand column.
+- Profile actions moved into a compact "..." menu; the filter toolbar wraps instead of scrolling.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added

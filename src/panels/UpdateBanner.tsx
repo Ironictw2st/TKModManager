@@ -32,7 +32,7 @@ export default function UpdateBanner({ enabled }: { enabled: boolean }) {
   };
 
   return (
-    <div className="fixed z-50 right-3 bottom-3 w-80 rounded-lg bg-sunken border border-accent/60 shadow-xl text-[12px] p-3">
+    <div className="fixed z-50 left-3 bottom-3 w-80 rounded-lg bg-sunken border border-accent/60 shadow-xl text-[12px] p-3">
       <div className="flex items-center gap-2 mb-1">
         <span className="font-semibold text-accent">Update available</span>
         <span className="text-textMuted">v{info.version}</span>

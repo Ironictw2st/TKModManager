@@ -20,6 +20,7 @@ export default {
         ok: "rgb(var(--ok) / <alpha-value>)",
         warn: "rgb(var(--warn) / <alpha-value>)",
         danger: "rgb(var(--danger) / <alpha-value>)",
+        se: "rgb(var(--se) / <alpha-value>)",
       },
     },
   },
