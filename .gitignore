@@ -1,0 +1,18 @@
+# Dependencies
+/node_modules
+
+# Build output
+/dist
+/src-tauri/target
+/src-tauri/gen/schemas
+*.tsbuildinfo
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Dev screenshots
+/scripts/*.png
