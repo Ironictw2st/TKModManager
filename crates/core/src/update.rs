@@ -35,6 +35,8 @@ pub struct Release {
     pub notes: String,
     pub assets: Vec<(String, String)>,
     pub prerelease: bool,
+    /// `YYYY-MM-DD` from `published_at`; empty when missing.
+    pub published: String,
 }
 
 impl Release {
@@ -69,6 +71,7 @@ fn release_from_json(json: &serde_json::Value) -> Option<Release> {
         notes: json["body"].as_str().unwrap_or("").to_string(),
         assets,
         prerelease: json["prerelease"].as_bool().unwrap_or(false),
+        published: json["published_at"].as_str().and_then(|s| s.get(..10)).unwrap_or("").to_string(),
     })
 }
 
@@ -87,9 +90,9 @@ fn get_json(url: &str) -> Result<serde_json::Value, String> {
     resp.json().map_err(|e| format!("bad response JSON: {e}"))
 }
 
-/// The most recent releases of a repo (drafts excluded). Blocking.
+/// The most recent 100 releases of a repo (drafts excluded). Blocking.
 pub fn fetch_releases(owner: &str, repo: &str) -> Result<Vec<Release>, String> {
-    let json = get_json(&format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=15"))?;
+    let json = get_json(&format!("https://api.github.com/repos/{owner}/{repo}/releases?per_page=100"))?;
     Ok(json
         .as_array()
         .map(|arr| arr.iter().filter(|r| !r["draft"].as_bool().unwrap_or(false)).filter_map(release_from_json).collect())
@@ -110,6 +113,15 @@ pub fn pick_release(releases: Vec<Release>, allow_prerelease: bool) -> Option<Re
         .filter(|(v, r)| allow_prerelease || (!r.prerelease && v.pre.is_empty()))
         .max_by(|a, b| a.0.cmp(&b.0))
         .map(|(_, r)| r)
+}
+
+/// Fetch a small file (e.g. a release's manifest.json) into memory. Blocking.
+pub fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let resp = client()?.get(url).send().map_err(|e| format!("download failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("download returned {}", resp.status()));
+    }
+    resp.bytes().map(|b| b.to_vec()).map_err(|e| format!("download error: {e}"))
 }
 
 /// Stream `url` to `path`, reporting a 0..1 fraction. Blocking.
@@ -137,13 +149,19 @@ pub fn download_to(url: &str, path: &Path, progress: &dyn Fn(f64)) -> Result<(),
     Ok(())
 }
 
-/// Update info when the latest release is newer than this build, else None. Debug builds never
+/// Update info when the newest offered release is newer than this build, else None.
+/// `allow_prerelease` = the user opted into pre-releases; otherwise only the stable release
+/// (GitHub's `releases/latest`, which skips pre-releases) is considered. Debug builds never
 /// report an update, so development never replaces its own binaries. Blocking.
-pub fn check_update() -> Result<Option<UpdateMeta>, String> {
+pub fn check_update(allow_prerelease: bool) -> Result<Option<UpdateMeta>, String> {
     if cfg!(debug_assertions) {
         return Ok(None);
     }
-    let latest = fetch_latest_release(OWNER, REPO)?;
+    let latest = if allow_prerelease {
+        pick_release(fetch_releases(OWNER, REPO)?, true).ok_or("no release published yet")?
+    } else {
+        fetch_latest_release(OWNER, REPO)?
+    };
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(|e| format!("bad current version: {e}"))?;
     let remote = semver::Version::parse(&latest.version).map_err(|e| format!("bad release version '{}': {e}", latest.version))?;
     if remote <= current {
@@ -286,7 +304,7 @@ mod tests {
     use super::*;
 
     fn r(v: &str, pre: bool) -> Release {
-        Release { version: v.into(), notes: String::new(), assets: vec![], prerelease: pre }
+        Release { version: v.into(), notes: String::new(), assets: vec![], prerelease: pre, published: String::new() }
     }
 
     #[test]

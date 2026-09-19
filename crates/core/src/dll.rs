@@ -7,7 +7,7 @@
 use crate::fingerprint::{self, ExeFingerprint};
 use crate::paths;
 use crate::context::AppContext;
-use crate::update::{download_to, fetch_releases, pick_release};
+use crate::update::{download_bytes, download_to, fetch_releases, pick_release, Release};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -27,12 +27,30 @@ pub struct Manifest {
     pub exe_size_of_image: String,
     #[serde(default)]
     pub sha256: String,
+    /// Further game builds the DLL supports (e.g. Epic); the top-level fields stay the Steam
+    /// build so older manager versions keep working.
+    #[serde(default)]
+    pub builds: Vec<ManifestBuild>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ManifestBuild {
+    #[serde(default)]
+    pub store: String,
+    #[serde(default)]
+    pub game_exe_version: String,
+    pub exe_timestamp: String,
+    pub exe_size_of_image: String,
+}
+
+fn fp_equals(ts: &str, soi: &str, fp: &ExeFingerprint) -> bool {
+    fingerprint::parse_hex(ts) == Some(fp.timestamp) && fingerprint::parse_hex(soi) == Some(fp.size_of_image)
 }
 
 impl Manifest {
     pub fn matches(&self, fp: &ExeFingerprint) -> bool {
-        fingerprint::parse_hex(&self.exe_timestamp) == Some(fp.timestamp)
-            && fingerprint::parse_hex(&self.exe_size_of_image) == Some(fp.size_of_image)
+        fp_equals(&self.exe_timestamp, &self.exe_size_of_image, fp)
+            || self.builds.iter().any(|b| fp_equals(&b.exe_timestamp, &b.exe_size_of_image, fp))
     }
 }
 
@@ -54,8 +72,11 @@ pub struct DllStatus {
     pub game_timestamp_hex: Option<String>,
     pub game_size_hex: Option<String>,
     pub installed: Vec<InstalledDll>,
-    /// Highest installed version whose manifest matches the game; what a launch would inject.
+    /// What a launch would inject: the pinned version when it is installed and matches the
+    /// game, else the highest installed version that matches.
     pub selected: Option<InstalledDll>,
+    /// Version the user pinned ("Use this version"), if any. May be missing or not match.
+    pub pinned: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -67,7 +88,23 @@ pub struct RemoteDll {
     pub manifest_url: String,
     /// Already installed locally.
     pub installed: bool,
+    pub prerelease: bool,
+    /// `YYYY-MM-DD`, may be empty.
+    pub published: String,
 }
+
+/// One published release in the version catalog, with its manifest when it could be fetched.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogEntry {
+    pub remote: RemoteDll,
+    pub manifest: Option<Manifest>,
+    /// Manifest fingerprint equals the installed exe's; None when either is unknown.
+    pub compatible: Option<bool>,
+}
+
+/// `dll\pinned.txt`: the version the user chose to always inject (rollback).
+pub const PIN_NAME: &str = "pinned.txt";
 
 pub fn dll_root() -> PathBuf {
     paths::app_data_dir().join("dll")
@@ -109,13 +146,45 @@ pub fn list_installed(fp: Option<&ExeFingerprint>) -> Vec<InstalledDll> {
 pub fn status_for(exe: Option<&Path>) -> DllStatus {
     let fp = exe.and_then(|e| fingerprint::read(e).ok());
     let installed = list_installed(fp.as_ref());
-    let selected = installed.iter().find(|d| d.compatible).cloned();
+    let pinned = pinned_version();
+    let selected = select(&installed, pinned.as_deref());
     DllStatus {
         game_timestamp_hex: fp.map(|f| f.timestamp_hex()),
         game_size_hex: fp.map(|f| f.size_hex()),
         game_fingerprint: fp,
         installed,
         selected,
+        pinned,
+    }
+}
+
+/// Pinned version if installed and matching, else the newest matching one (`installed` is
+/// sorted newest first).
+fn select(installed: &[InstalledDll], pinned: Option<&str>) -> Option<InstalledDll> {
+    pinned
+        .and_then(|p| installed.iter().find(|d| d.version == p && d.compatible))
+        .or_else(|| installed.iter().find(|d| d.compatible))
+        .cloned()
+}
+
+pub fn pinned_version() -> Option<String> {
+    let text = std::fs::read_to_string(dll_root().join(PIN_NAME)).ok()?;
+    let v = text.trim().trim_start_matches('v').to_string();
+    (!v.is_empty()).then_some(v)
+}
+
+/// Pin a version (`Some`) or go back to "newest that matches" (`None`).
+pub fn dll_set_pin(version: Option<&str>) -> Result<(), String> {
+    let path = dll_root().join(PIN_NAME);
+    match version {
+        Some(v) => {
+            std::fs::create_dir_all(dll_root()).map_err(|e| e.to_string())?;
+            std::fs::write(&path, v.trim_start_matches('v')).map_err(|e| format!("{}: {e}", path.display()))
+        }
+        None => match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        },
     }
 }
 
@@ -129,11 +198,54 @@ pub fn dll_status(ctx: &AppContext) -> DllStatus {
 pub fn dll_check_update(ctx: &AppContext) -> Result<RemoteDll, String> {
     let allow_pre = ctx.settings().dll_channel == "prerelease";
     let rel = pick_release(fetch_releases(OWNER, REPO)?, allow_pre).ok_or("no release published yet")?;
+    remote_from(rel)
+}
+
+fn remote_from(rel: Release) -> Result<RemoteDll, String> {
     let dll_url = rel.asset_url(DLL_NAME).ok_or_else(|| format!("release has no {DLL_NAME}"))?.to_string();
     let manifest_url =
         rel.asset_url(MANIFEST_NAME).ok_or_else(|| format!("release has no {MANIFEST_NAME}"))?.to_string();
     let installed = dll_root().join(&rel.version).join(DLL_NAME).is_file();
-    Ok(RemoteDll { version: rel.version, notes: rel.notes, dll_url, manifest_url, installed })
+    Ok(RemoteDll {
+        version: rel.version,
+        notes: rel.notes,
+        dll_url,
+        manifest_url,
+        installed,
+        prerelease: rel.prerelease,
+        published: rel.published,
+    })
+}
+
+/// Every published release that has both assets, newest first, each with its manifest so
+/// the catalog can show which game build it was made for. Blocking (network).
+pub fn dll_catalog(ctx: &AppContext) -> Result<Vec<CatalogEntry>, String> {
+    let mut remotes: Vec<RemoteDll> = fetch_releases(OWNER, REPO)?.into_iter().filter_map(|r| remote_from(r).ok()).collect();
+    if remotes.is_empty() {
+        return Err("no release published yet".into());
+    }
+    remotes.sort_by(|a, b| version_key(&b.version).cmp(&version_key(&a.version)));
+    let p = ctx.game_paths();
+    let fp = p.exe.as_deref().and_then(|e| fingerprint::read(Path::new(e)).ok());
+    // Manifests are tiny; fetch them side by side.
+    let manifests: Vec<Option<Manifest>> = std::thread::scope(|s| {
+        let handles: Vec<_> = remotes
+            .iter()
+            .map(|r| s.spawn(|| download_bytes(&r.manifest_url).ok().and_then(|b| serde_json::from_slice::<Manifest>(&b).ok())))
+            .collect();
+        handles.into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
+    Ok(remotes
+        .into_iter()
+        .zip(manifests)
+        .map(|(remote, manifest)| {
+            let compatible = match (&manifest, &fp) {
+                (Some(m), Some(fp)) => Some(m.matches(fp)),
+                _ => None,
+            };
+            CatalogEntry { remote, manifest, compatible }
+        })
+        .collect())
 }
 
 fn sha256_of(path: &Path) -> Result<String, String> {
@@ -211,6 +323,7 @@ pub fn dll_import_local(ctx: &AppContext, path: &str, version: &str) -> Result<I
         exe_timestamp: fp.timestamp_hex(),
         exe_size_of_image: fp.size_hex(),
         sha256: sha256_of(&dir.join(DLL_NAME))?,
+        builds: vec![],
     };
     crate::json_store::save(&dir.join(MANIFEST_NAME), &manifest)?;
     list_installed(Some(&fp))
@@ -228,7 +341,11 @@ pub fn dll_remove(version: String) -> Result<(), String> {
     if !dir.join(DLL_NAME).is_file() {
         return Err("no such version".into());
     }
-    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    if pinned_version().as_deref() == Some(version.trim_start_matches('v')) {
+        dll_set_pin(None)?;
+    }
+    Ok(())
 }
 
 /// Read the DLL's own log (next to the DLL), if any.
@@ -315,9 +432,35 @@ mod tests {
     }
 
     #[test]
+    fn pinned_version_wins_only_when_it_matches() {
+        let d = |v: &str, compatible: bool| InstalledDll { version: v.into(), path: String::new(), dir: String::new(), manifest: None, compatible };
+        let installed = vec![d("0.32.0", false), d("0.31.0", true), d("0.30.1", true)];
+        assert_eq!(select(&installed, None).unwrap().version, "0.31.0");
+        assert_eq!(select(&installed, Some("0.30.1")).unwrap().version, "0.30.1");
+        // Pinned but built for another game build, or not installed: newest match instead.
+        assert_eq!(select(&installed, Some("0.32.0")).unwrap().version, "0.31.0");
+        assert_eq!(select(&installed, Some("0.1.0")).unwrap().version, "0.31.0");
+    }
+
+    #[test]
     fn manifest_matches_fingerprint() {
-        let m = Manifest { version: "1.0.0".into(), game_exe_version: String::new(), exe_timestamp: "0x69ce4c84".into(), exe_size_of_image: "0x4836000".into(), sha256: String::new() };
+        let m = Manifest { version: "1.0.0".into(), game_exe_version: String::new(), exe_timestamp: "0x69ce4c84".into(), exe_size_of_image: "0x4836000".into(), sha256: String::new(), builds: vec![] };
         assert!(m.matches(&ExeFingerprint { timestamp: 0x69ce4c84, size_of_image: 0x4836000 }));
         assert!(!m.matches(&ExeFingerprint { timestamp: 1, size_of_image: 0x4836000 }));
+    }
+
+    #[test]
+    fn manifest_matches_any_listed_build() {
+        // An old manifest (no `builds`) still parses; a new one also matches the Epic exe.
+        let old: Manifest = serde_json::from_str(r#"{"version":"0.35.0","exe_timestamp":"0x69ce4c84","exe_size_of_image":"0x4836000"}"#).unwrap();
+        let epic = ExeFingerprint { timestamp: 0x693ae6af, size_of_image: 0x4832000 };
+        assert!(!old.matches(&epic));
+        let new: Manifest = serde_json::from_str(
+            r#"{"version":"0.36.0","exe_timestamp":"0x69ce4c84","exe_size_of_image":"0x4836000",
+                "builds":[{"store":"epic","game_exe_version":"1.7.2.0","exe_timestamp":"0x693ae6af","exe_size_of_image":"0x4832000"}]}"#,
+        )
+        .unwrap();
+        assert!(new.matches(&epic));
+        assert!(new.matches(&ExeFingerprint { timestamp: 0x69ce4c84, size_of_image: 0x4836000 }));
     }
 }

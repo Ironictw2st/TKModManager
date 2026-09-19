@@ -26,11 +26,19 @@ pub struct Settings {
     pub auto_inject_external: bool,
     /// "stable" | "prerelease": which script-extender releases are offered.
     pub dll_channel: String,
+    /// Same for the app itself. Pre-releases are only offered when the user opts in.
+    pub app_channel: String,
     /// Closing the window hides it to the tray instead of quitting.
     pub minimize_to_tray: bool,
     /// Unix seconds: Workshop mods last updated before this count as "older than the game
     /// patch". None = the game exe's build date.
     pub outdated_before: Option<u64>,
+    /// App release the user chose "Skip this version" for; not offered again at startup.
+    pub skipped_app_version: String,
+    /// Same for the script-extender DLL.
+    pub skipped_dll_version: String,
+    /// Mod list row size: "compact" | "normal" | "large".
+    pub list_density: String,
 }
 
 impl Default for Settings {
@@ -47,8 +55,12 @@ impl Default for Settings {
             extra_mod_dirs: Vec::new(),
             auto_inject_external: false,
             dll_channel: "stable".into(),
+            app_channel: "stable".into(),
             minimize_to_tray: false,
             outdated_before: None,
+            skipped_app_version: String::new(),
+            skipped_dll_version: String::new(),
+            list_density: "normal".into(),
         }
     }
 }

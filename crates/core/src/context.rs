@@ -76,10 +76,16 @@ impl AppContext {
         resolved
     }
 
-    /// Every user pack: data/, Workshop, and the extra folders from the settings.
+    /// Every user pack: data/, Workshop, the game's own `mods\` folder (where the Epic and
+    /// Game Pass builds keep downloaded mods), and the extra folders from the settings.
     pub fn scan(&self) -> Vec<ModEntry> {
         let p = self.game_paths();
-        let extra: Vec<PathBuf> = self.settings().extra_mod_dirs.iter().map(PathBuf::from).collect();
+        let mut extra: Vec<PathBuf> = self.settings().extra_mod_dirs.iter().map(PathBuf::from).collect();
+        if let Some(mods) = p.mods_dir.as_deref().map(PathBuf::from) {
+            if !extra.iter().any(|d| d == &mods) {
+                extra.push(mods);
+            }
+        }
         crate::packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new), &extra)
     }
 
@@ -93,8 +99,16 @@ impl AppContext {
 pub fn settings_path() -> PathBuf {
     paths::app_data_dir().join("settings.json")
 }
-pub fn profiles_path() -> PathBuf {
-    paths::app_data_dir().join("profiles.json")
+/// Profiles are per copy of the game: a Steam profile's Workshop packs do not exist in an
+/// Epic install, so each store keeps its own file. Steam (and an unrecognised folder) keep
+/// the original name, so existing profiles are untouched.
+pub fn profiles_path(store: paths::GameStore) -> PathBuf {
+    let name = match store {
+        paths::GameStore::Epic => "profiles-epic.json",
+        paths::GameStore::GamePass => "profiles-gamepass.json",
+        _ => "profiles.json",
+    };
+    paths::app_data_dir().join(name)
 }
 pub fn meta_path() -> PathBuf {
     paths::app_data_dir().join("mods.meta.json")

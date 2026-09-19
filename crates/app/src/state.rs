@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use tkmm_core::dll::DllStatus;
 use tkmm_core::launch::{LaunchStatus, SaveGame};
 use tkmm_core::meta::{MetaDoc, ModMeta};
-use tkmm_core::packs::ModEntry;
-use tkmm_core::paths::GamePaths;
+use tkmm_core::packs::{ModEntry, ModSource};
+use tkmm_core::paths::{GameInstall, GamePaths, GameStore};
 use tkmm_core::profiles::{Profile, ProfilesDoc};
 use tkmm_core::se_scan::SeInfo;
 use tkmm_core::status::{self, SeRequirement};
@@ -61,6 +61,10 @@ impl Filters {
 #[derive(Default)]
 pub struct State {
     pub paths: GamePaths,
+    /// Every copy of the game found on this PC (Steam, Epic, Game Pass), for the switcher.
+    pub installs: Vec<GameInstall>,
+    /// Which copy's profile file is loaded (profiles are per store).
+    pub profiles_store: GameStore,
     pub mods: Vec<ModEntry>,
     pub by_key: HashMap<String, usize>,
     pub profiles: ProfilesDoc,
@@ -84,12 +88,18 @@ pub struct State {
 impl State {
     pub fn load() -> State {
         let mut s = State { sort: (None, true), ..Default::default() };
-        match ops::load_profiles() {
-            Ok(p) => s.profiles = p,
-            Err(e) => s.error = Some(e),
-        }
+        s.load_profiles_for(GameStore::default());
         s.meta = ops::load_meta().unwrap_or_default();
         s
+    }
+
+    /// Switch to another copy's profiles (each store has its own file).
+    pub fn load_profiles_for(&mut self, store: GameStore) {
+        self.profiles_store = store;
+        match ops::load_profiles(store) {
+            Ok(p) => self.profiles = p,
+            Err(e) => self.error = Some(e),
+        }
     }
 
     pub fn set_mods(&mut self, mods: Vec<ModEntry>) {
@@ -102,6 +112,17 @@ impl State {
 
     pub fn module(&self, key: &str) -> Option<&ModEntry> {
         self.by_key.get(key).map(|i| &self.mods[*i])
+    }
+
+    /// Where a pack came from, telling the game's own `mods\` folder (Epic, Game Pass) apart
+    /// from folders the user added.
+    pub fn source_label(&self, m: &ModEntry) -> &'static str {
+        match m.source {
+            ModSource::Workshop => "Workshop",
+            ModSource::Data => "data/",
+            ModSource::Folder if self.paths.mods_dir.as_deref().map(|d| d.eq_ignore_ascii_case(&m.dir)).unwrap_or(false) => "mods/",
+            ModSource::Folder => "Extra folder",
+        }
     }
 
     pub fn ws_of(&self, m: &ModEntry) -> Option<&WorkshopItem> {
@@ -138,7 +159,7 @@ impl State {
     }
 
     pub fn save_profiles(&mut self) {
-        if let Err(e) = ops::save_profiles(&self.profiles) {
+        if let Err(e) = ops::save_profiles(self.profiles_store, &self.profiles) {
             self.error = Some(e);
         }
     }

@@ -4,6 +4,41 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-19
+
+### Added
+- **Epic and Game Pass copies.** The manager finds every copy of the game on the PC (Steam
+  libraries, the Epic launcher's installs, `XboxGames`) and you pick which one to manage: a
+  **Copy** box next to Play and the full list in Settings. Each copy keeps its **own profiles**,
+  so Steam Workshop packs no longer show up as "missing" under Epic.
+- Packs in the game's own `mods\` folder (where the Epic and Game Pass builds keep them) are
+  listed and loaded, shown as `mods/`. The Workshop row is Steam-only and becomes "Mods folder"
+  for the other stores.
+- **Launching the Epic copy.** Epic will not let anything but its own launcher start the game, and
+  CA's launcher passes its own mod list, so the profile is written to the game's
+  `user.script.txt`, which the game reads on every start. The manager opens Epic, you press Play
+  in CA's launcher, and it then injects as usual. The file is removed when the game exits, and if
+  the app was closed mid-launch. If CA's launcher has mods of its own ticked, the manager says so
+  before launching. The Epic build ignores a save passed on the command line, so "Load save" is
+  refused there.
+- **Mod list row size**: Compact, Normal or Large, in the list toolbar and in Settings. Normal is
+  the new default and is taller than the old rows. Double-clicking a row enables or disables it.
+- **Every published script-extender version** is listed by "All versions…", with its date and the
+  game build it was made for. Installing an older one **pins** it, so it is injected instead of
+  the newest match until you choose "Always use newest" (rollback). The installed list has the
+  same buttons.
+- Startup **update offers**: the app checks for app and script-extender updates as before, but now
+  asks before installing anything, with **Install**, **Skip this version** and **Not now**.
+  A skipped version is never offered again.
+- **Pre-release channel for the app.** Pre-releases are only offered when Settings →
+  Behaviour → "Include pre-releases" is picked; the stable channel stays on full releases.
+- A DLL release can support several game builds through a `builds` list in its `manifest.json`
+  (script extender 0.36.1 uses it for the identical Steam and Epic 1.7.2.0 builds).
+
+### Fixed
+- "Open folder" and "Show file in Explorer" opened Documents when the path contained a space.
+- Nothing downloads or installs without asking first, app or DLL.
+
 ## [0.4.0] - 2026-09-18
 
 ### Changed

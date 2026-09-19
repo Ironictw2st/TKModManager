@@ -1,5 +1,5 @@
 # Build the portable release zip and (optionally) publish it as a GitHub release.
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Publish]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Publish] [-PreRelease]
 #
 #   1. cargo build --release -p tkmm inside the KDE Craft Qt 6 / MSVC environment
 #   2. release\TKModManager\ = TKModManager.exe + windeployqt output + the non-Qt DLLs Craft's Qt
@@ -8,7 +8,9 @@
 #   4. release\TKModManager-x64.zip (files at the zip root: the updater unpacks it over the
 #      install folder)
 #   5. -Publish: gh release create v<version> with the CHANGELOG section as notes
-param([switch]$Publish)
+#      -PreRelease: publish it as a GitHub pre-release, which the app offers only to users who
+#      picked "Include pre-releases" in Settings (everyone else stays on the last full release)
+param([switch]$Publish, [switch]$PreRelease)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $root
@@ -118,7 +120,9 @@ Write-Host "built $zip ($size MB, $((Get-ChildItem $stage -Recurse -File).Count)
 
 if ($Publish) {
     $env:PATH = $cleanPath
-    gh release create "v$version" $zip --repo Ironictw2st/TKModManager --title "v$version" --notes-file $notesFile
+    $args = @("v$version", $zip, "--repo", "Ironictw2st/TKModManager", "--title", "v$version", "--notes-file", $notesFile)
+    if ($PreRelease) { $args += "--prerelease" }
+    gh release create @args
     if ($LASTEXITCODE) { throw "gh release create failed" }
-    Write-Host "published v$version"
+    Write-Host "published v$version$(if ($PreRelease) { ' (pre-release: only offered to users who opted in)' })"
 }

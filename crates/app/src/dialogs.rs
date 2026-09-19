@@ -19,6 +19,50 @@ pub unsafe fn confirm(parent: &QBox<QMainWindow>, title: &str, text: &str) -> bo
     QMessageBox::question_q_widget2_q_string(parent, &qs(title), &qs(text)) == StandardButton::Yes
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UpdateChoice {
+    Install,
+    Skip,
+    Later,
+}
+
+/// Startup update offer: Install / Skip this version / Not now (Esc and closing = Not now).
+pub unsafe fn ask_update(parent: &QBox<QMainWindow>, title: &str, text: &str) -> UpdateChoice {
+    use qt_widgets::q_message_box::{ButtonRole, Icon};
+    let mb = QMessageBox::from_q_widget(parent);
+    mb.set_icon(Icon::Question);
+    mb.set_window_title(&qs(title));
+    mb.set_text(&qs(text));
+    let install = mb.add_button_q_string_button_role(&qs("Install"), ButtonRole::AcceptRole);
+    mb.add_button_q_string_button_role(&qs("Skip this version"), ButtonRole::DestructiveRole);
+    let later = mb.add_button_q_string_button_role(&qs("Not now"), ButtonRole::RejectRole);
+    mb.set_default_button_q_push_button(install);
+    mb.set_escape_button_q_abstract_button(later);
+    mb.exec();
+    let clicked = mb.clicked_button();
+    let choice = if clicked.is_null() {
+        UpdateChoice::Later
+    } else {
+        match mb.button_role(&clicked) {
+            ButtonRole::AcceptRole => UpdateChoice::Install,
+            ButtonRole::DestructiveRole => UpdateChoice::Skip,
+            _ => UpdateChoice::Later,
+        }
+    };
+    mb.delete_later();
+    choice
+}
+
+/// Release notes trimmed to fit a message box (the full text stays in the tooltip).
+pub fn clip_notes(notes: &str) -> String {
+    const MAX_LINES: usize = 15;
+    let lines: Vec<&str> = notes.trim().lines().collect();
+    if lines.len() <= MAX_LINES {
+        return lines.join("\n");
+    }
+    format!("{}\n…", lines[..MAX_LINES].join("\n"))
+}
+
 /// Single-line text input; None when cancelled or empty.
 pub unsafe fn ask_text(parent: &QBox<QMainWindow>, title: &str, label: &str, initial: &str) -> Option<String> {
     let mut ok = false;

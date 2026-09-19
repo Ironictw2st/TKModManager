@@ -4,6 +4,7 @@
 //! events and redraws the dirty parts. Widgets are therefore never rebuilt from inside one of
 //! their own signals.
 
+use crate::dialogs::UpdateChoice;
 use crate::events::{Bus, HashPurpose, UiEvent};
 use crate::state::State;
 use crate::{details, launch_panel, mod_list, settings_ui, tabs, tray};
@@ -75,6 +76,15 @@ impl StaticUpcast<QObject> for App {
     unsafe fn static_upcast(ptr: Ptr<Self>) -> Ptr<QObject> {
         ptr.window.as_ptr().static_upcast()
     }
+}
+
+fn app_update_text(meta: &update::UpdateMeta) -> String {
+    let text = format!(
+        "Download and install TK Mod Manager v{}?\n\nThe app will close and restart when it is done.\n\n{}",
+        meta.version,
+        crate::dialogs::clip_notes(&meta.notes)
+    );
+    text.trim_end().to_string()
 }
 
 pub fn app_icon() -> cpp_core::CppBox<QIcon> {
@@ -274,7 +284,7 @@ impl App {
         }));
         self.build_profile_menu();
         let this = self.clone();
-        self.update_btn.clicked().connect(&SlotNoArgs::new(&self.window, move || this.install_app_update()));
+        self.update_btn.clicked().connect(&SlotNoArgs::new(&self.window, move || this.confirm_app_update()));
 
         self.ml.connect(self);
         self.conflicts.connect(self);
@@ -291,11 +301,12 @@ impl App {
         self.rescan();
         self.refresh_dll();
         let s = self.ctx.settings();
+        // Startup checks offer each update in a popup. The DLL check waits for the app
+        // check's answer (see UiEvent::AppUpdate) so the two popups never stack.
         if s.check_app_updates {
             self.check_app_update(false);
-        }
-        if s.check_dll_updates {
-            self.settings.check_dll(self);
+        } else if s.check_dll_updates {
+            self.settings.check_dll(self, true);
         }
         let bus = self.bus.clone();
         let emit: Emit = Arc::new(move |st| bus.send(UiEvent::Launch(st)));
@@ -315,7 +326,7 @@ impl App {
         self.bus.spawn(move |_| {
             let paths = ctx.game_paths();
             let mods = ctx.scan();
-            Some(UiEvent::Scanned { paths, mods })
+            Some(UiEvent::Scanned { paths, mods, installs: tkmm_core::paths::detect_installs() })
         });
     }
 
@@ -345,14 +356,47 @@ impl App {
     }
 
     pub fn refresh_saves(self: &Rc<Self>) {
-        self.bus.spawn(|_| Some(UiEvent::Saves(launch::list_saves())));
+        let store = self.st.borrow().paths.store;
+        self.bus.spawn(move |_| Some(UiEvent::Saves(launch::list_saves(store))));
     }
 
     pub fn check_app_update(self: &Rc<Self>, verbose: bool) {
-        self.bus.spawn(move |_| Some(UiEvent::AppUpdate(update::check_update(), verbose)));
+        let pre = self.ctx.settings().app_channel == "prerelease";
+        self.bus.spawn(move |_| Some(UiEvent::AppUpdate(update::check_update(pre), verbose)));
     }
 
-    pub unsafe fn install_app_update(self: &Rc<Self>) {
+    /// The update bar's button: asks, then installs.
+    pub unsafe fn confirm_app_update(self: &Rc<Self>) {
+        let Some(meta) = self.update_meta.borrow().clone() else { return };
+        if crate::dialogs::confirm(&self.window, "Update TK Mod Manager", &app_update_text(&meta)) {
+            self.install_app_update();
+        }
+    }
+
+    /// Startup offer: Install / Skip this version / Not now. Returns whether it is installing.
+    unsafe fn offer_app_update(self: &Rc<Self>, meta: &update::UpdateMeta) -> bool {
+        if self.ctx.settings().skipped_app_version == meta.version {
+            return false;
+        }
+        match crate::dialogs::ask_update(&self.window, "Update TK Mod Manager", &app_update_text(meta)) {
+            UpdateChoice::Install => {
+                self.install_app_update();
+                true
+            }
+            UpdateChoice::Skip => {
+                let mut s = self.ctx.settings();
+                s.skipped_app_version = meta.version.clone();
+                if let Err(e) = self.ctx.set_settings(s) {
+                    crate::dialogs::error(&self.window, &e);
+                }
+                false
+            }
+            UpdateChoice::Later => false,
+        }
+    }
+
+    /// Download and install (no questions; callers have asked).
+    unsafe fn install_app_update(self: &Rc<Self>) {
         let Some(meta) = self.update_meta.borrow().clone() else { return };
         self.update_btn.set_enabled(false);
         self.update_label.set_text(&qs(format!("Downloading v{}…", meta.version)));
@@ -414,6 +458,24 @@ impl App {
             let st = self.st.borrow();
             (st.active(), Some(st.load_save.clone()).filter(|s| !s.is_empty()))
         };
+        // Epic goes through CA's launcher, whose own ticked mods load on top of our list.
+        if self.st.borrow().paths.store == tkmm_core::paths::GameStore::Epic {
+            let ticked = launch::ca_selected_mods(tkmm_core::paths::GameStore::Epic);
+            if !ticked.is_empty()
+                && !crate::dialogs::confirm(
+                    &self.window,
+                    "CA's launcher has mods ticked",
+                    &format!(
+                        "CA's launcher will also load {} mod{} of its own:\n\n{}\n\nThey load on top of this profile and can upset the load order. Untick them in CA's launcher for a clean run.\n\nStart anyway?",
+                        ticked.len(),
+                        if ticked.len() == 1 { "" } else { "s" },
+                        ticked.join("\n")
+                    ),
+                )
+            {
+                return;
+            }
+        }
         self.set_launch_message("writing", "Starting…");
         let ctx = self.ctx.clone();
         let bus = self.bus.clone();
@@ -429,6 +491,25 @@ impl App {
             Err(e) => self.set_launch_message("failed", &e),
         }
         self.mark(DIRTY_LAUNCH | DIRTY_LIST);
+    }
+
+    /// Switch to another copy of the game (Steam / Epic / Game Pass) and rescan.
+    pub unsafe fn set_game_root(self: &Rc<Self>, root: &str) {
+        if self.st.borrow().game_running {
+            crate::dialogs::error(&self.window, "Quit the game before switching to another copy.");
+            self.mark(DIRTY_ALL);
+            return;
+        }
+        let mut s = self.ctx.settings();
+        s.game_root = Some(root.to_string());
+        if let Err(e) = self.ctx.set_settings(s) {
+            crate::dialogs::error(&self.window, &e);
+            return;
+        }
+        self.rescan();
+        self.refresh_dll();
+        self.refresh_saves();
+        self.mark(DIRTY_ALL);
     }
 
     pub fn set_launch_message(&self, phase: &str, msg: &str) {
@@ -616,16 +697,28 @@ impl App {
 
     unsafe fn handle(self: &Rc<Self>, e: UiEvent) {
         match e {
-            UiEvent::Scanned { paths, mods } => {
+            UiEvent::Scanned { paths, mods, installs } => {
                 let first = self.st.borrow().mods.is_empty();
                 {
                     let mut st = self.st.borrow_mut();
+                    // Switching to another copy brings in that copy's own profiles. This also
+                    // fires on the first scan, when the loaded file is still the default one.
+                    if st.profiles_store != paths.store {
+                        st.load_profiles_for(paths.store);
+                    }
                     st.paths = paths;
+                    st.installs = installs;
                     st.set_mods(mods);
                 }
                 self.mark(DIRTY_ALL);
                 self.refresh_se_scan();
                 if first {
+                    // A leftover from a launch the app did not see out (closed mid-launch):
+                    // drop it so a start straight from Epic does not reuse that profile.
+                    let store = self.st.borrow().paths.store;
+                    if !self.st.borrow().game_running {
+                        launch::clear_user_script(store);
+                    }
                     self.fetch_workshop();
                     self.refresh_saves();
                     self.seed_from_ca_launcher();
@@ -648,7 +741,8 @@ impl App {
                 self.st.borrow_mut().dll = Some(s);
                 self.mark(DIRTY_ALL);
             }
-            UiEvent::DllRemote(r) => self.settings.on_dll_remote(self, r),
+            UiEvent::DllRemote(r, startup) => self.settings.on_dll_remote(self, r, startup),
+            UiEvent::DllCatalog(r) => self.settings.on_dll_catalog(self, r),
             UiEvent::DllProgress(f) => self.settings.on_dll_progress(f),
             UiEvent::DllInstalled(r) => {
                 self.settings.on_dll_installed(self, r);
@@ -681,18 +775,30 @@ impl App {
             UiEvent::Hashed(purpose, r) => self.settings.on_hashed(self, purpose, r),
             UiEvent::Conflicts(r) => self.conflicts.show_report(self, r),
             UiEvent::Collection(r) => self.settings.on_collection(self, r),
-            UiEvent::AppUpdate(r, verbose) => match r {
-                Ok(Some(meta)) => {
-                    self.update_label.set_text(&qs(format!("TK Mod Manager v{} is available.", meta.version)));
-                    self.update_label.set_tool_tip(&qs(&meta.notes));
-                    self.update_btn.set_enabled(true);
-                    self.update_bar.set_visible(true);
-                    *self.update_meta.borrow_mut() = Some(meta);
+            UiEvent::AppUpdate(r, verbose) => {
+                // Non-verbose = the startup check: offer the update in a popup, then move on
+                // to the DLL check unless the app is about to update and restart.
+                let mut updating = false;
+                match r {
+                    Ok(Some(meta)) => {
+                        self.update_label.set_text(&qs(format!("TK Mod Manager v{} is available.", meta.version)));
+                        self.update_label.set_tool_tip(&qs(&meta.notes));
+                        self.update_btn.set_enabled(true);
+                        self.update_bar.set_visible(true);
+                        *self.update_meta.borrow_mut() = Some(meta);
+                        if !verbose {
+                            let meta = self.update_meta.borrow().clone();
+                            updating = meta.map(|m| self.offer_app_update(&m)).unwrap_or(false);
+                        }
+                    }
+                    Ok(None) if verbose => crate::dialogs::info(&self.window, "Updates", "TK Mod Manager is up to date."),
+                    Err(e) if verbose => crate::dialogs::error(&self.window, &format!("Update check failed: {e}")),
+                    _ => {}
                 }
-                Ok(None) if verbose => crate::dialogs::info(&self.window, "Updates", "TK Mod Manager is up to date."),
-                Err(e) if verbose => crate::dialogs::error(&self.window, &format!("Update check failed: {e}")),
-                _ => {}
-            },
+                if !verbose && !updating && self.ctx.settings().check_dll_updates {
+                    self.settings.check_dll(self, true);
+                }
+            }
             UiEvent::UpdateProgress(f) => self.update_label.set_text(&qs(format!("Downloading update… {}%", (f * 100.0).round()))),
             UiEvent::UpdateInstalled(r) => match r {
                 Ok(()) => {
@@ -748,7 +854,7 @@ impl App {
         let msg = if let Some(e) = &st.error {
             Some(e.clone())
         } else if st.paths.game_root.is_none() && !st.mods.is_empty() {
-            Some("Three Kingdoms was not found through Steam. Set the game folder in Settings.".to_string())
+            Some("Three Kingdoms was not found in Steam, Epic or Game Pass. Set the game folder in Settings.".to_string())
         } else {
             None
         };

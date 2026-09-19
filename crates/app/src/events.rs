@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tkmm_core::cli::StartupArgs;
 use tkmm_core::conflicts::ConflictReport;
-use tkmm_core::dll::{DllStatus, InstalledDll, RemoteDll};
+use tkmm_core::dll::{CatalogEntry, DllStatus, InstalledDll, RemoteDll};
 use tkmm_core::hash::{PackHash, Progress};
 use tkmm_core::launch::{LaunchStatus, SaveGame};
 use tkmm_core::packs::ModEntry;
-use tkmm_core::paths::GamePaths;
+use tkmm_core::paths::{GameInstall, GamePaths};
 use tkmm_core::se_scan::SeInfo;
 use tkmm_core::update::UpdateMeta;
 use tkmm_core::workshop::{CollectionResult, WorkshopItem};
@@ -22,11 +22,13 @@ pub enum HashPurpose {
 }
 
 pub enum UiEvent {
-    Scanned { paths: GamePaths, mods: Vec<ModEntry> },
+    Scanned { paths: GamePaths, mods: Vec<ModEntry>, installs: Vec<GameInstall> },
     Workshop(HashMap<String, WorkshopItem>),
     SeScan(HashMap<String, SeInfo>),
     Dll(DllStatus),
-    DllRemote(Result<RemoteDll, String>),
+    /// `true` when it came from the startup check (offer the install in a popup).
+    DllRemote(Result<RemoteDll, String>, bool),
+    DllCatalog(Result<Vec<CatalogEntry>, String>),
     DllProgress(f64),
     DllInstalled(Result<InstalledDll, String>),
     Launch(LaunchStatus),

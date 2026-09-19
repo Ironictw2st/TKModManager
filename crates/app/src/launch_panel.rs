@@ -66,6 +66,31 @@ pub unsafe fn refresh(app: &Rc<App>) {
     summary.set_alignment(qt_core::QFlags::from(qt_core::AlignmentFlag::AlignHCenter));
     v.add_widget(&summary);
 
+    // More than one copy of the game (Steam and Epic, say): switch here instead of Settings.
+    if st.installs.len() > 1 {
+        let r = QHBoxLayout::new_0a();
+        v.add_layout_1a(&r);
+        r.add_widget(QLabel::from_q_string(&qs("Copy")).into_ptr());
+        let copies = QComboBox::new_0a();
+        let current = st.paths.game_root.clone().unwrap_or_default();
+        for i in &st.installs {
+            copies.add_item_q_string_q_variant(&qs(i.store.label()), &QVariant::from_q_string(&qs(&i.root)));
+            copies.set_item_data_3a(copies.count() - 1, &QVariant::from_q_string(&qs(&i.root)), qt_core::ItemDataRole::ToolTipRole.to_int());
+        }
+        let ci = copies.find_data_1a(&QVariant::from_q_string(&qs(&current)));
+        copies.set_current_index(ci.max(0));
+        copies.set_enabled(!running);
+        let (this, cp) = (app.clone(), copies.as_ptr());
+        copies.activated().connect(&SlotOfInt::new(&copies, move |_| {
+            let root = cp.current_data_0a().to_string().to_std_string();
+            if root.is_empty() || this.st.borrow().paths.game_root.as_deref() == Some(root.as_str()) {
+                return;
+            }
+            this.set_game_root(&root);
+        }));
+        r.add_widget_2a(&copies, 1);
+    }
+
     // Script-extender problems for this launch.
     let problems = status::se_problems(&profile, |k| st.se_req(k), |k| st.title_of(k), have.as_deref());
     for p in &problems {

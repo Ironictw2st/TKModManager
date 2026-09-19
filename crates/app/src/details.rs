@@ -8,7 +8,7 @@ use qt_widgets::{QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEd
 use std::rc::Rc;
 use std::time::Instant;
 use tkmm_core::fmt::{format_bytes, format_date};
-use tkmm_core::packs::{ModSource, PackType};
+use tkmm_core::packs::PackType;
 use tkmm_core::profile_ops;
 use tkmm_core::status::{self, StatusKind};
 
@@ -19,8 +19,12 @@ pub fn open_url(url: &str) {
 }
 
 /// Open Explorer with the file selected (explorer is a GUI process: no console window).
+/// Explorer wants `/select,"C:\a b\f"`: `arg()` would quote the whole switch when the path
+/// has a space, which Explorer can't parse and falls back to Documents. Hence `raw_arg`.
 pub fn reveal(path: &str) {
-    let _ = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+    use std::os::windows::process::CommandExt;
+    let path = path.replace('/', "\\");
+    let _ = std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn();
 }
 
 pub unsafe fn label(text: &str) -> QBox<QLabel> {
@@ -177,11 +181,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     }
 
     let facts = vec![
-        match m.source {
-            ModSource::Workshop => "Workshop".to_string(),
-            ModSource::Data => "data/".to_string(),
-            ModSource::Folder => "Extra folder".to_string(),
-        },
+        st.source_label(&m).to_string(),
         if m.pack_type == PackType::Movie { "movie pack".into() } else { "mod pack".into() },
         format_bytes(m.size),
         format!("file {}", format_date(m.mtime)),

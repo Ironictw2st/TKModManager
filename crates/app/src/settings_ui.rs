@@ -2,6 +2,7 @@
 
 use crate::app::{App, DIRTY_ALL, DIRTY_LIST, PAGE_LOGS};
 use crate::details::{bold, colored, label};
+use crate::dialogs::UpdateChoice;
 use crate::events::{HashPurpose, UiEvent};
 use crate::icons;
 use qt_core::{qs, QBox, QDate, QListOfQString, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt};
@@ -12,7 +13,7 @@ use qt_widgets::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use tkmm_core::dll::{self, DllConfig, InstalledDll, RemoteDll};
+use tkmm_core::dll::{self, CatalogEntry, DllConfig, InstalledDll, RemoteDll};
 use tkmm_core::fmt::{days_from_civil, format_bytes, ymd};
 use tkmm_core::hash::{PackHash, Progress};
 use tkmm_core::sync::{self, SyncStatus};
@@ -22,9 +23,11 @@ use tkmm_core::{ops, paths, profile_ops, workshop};
 pub struct SettingsUi {
     pub root: QBox<QScrollArea>,
     // game
+    installs: QBox<QComboBox>,
     game_root: QBox<QLabel>,
     game_change: QBox<QPushButton>,
     game_auto: QBox<QPushButton>,
+    ws_title: QBox<QLabel>,
     ws_dir: QBox<QLabel>,
     ws_change: QBox<QPushButton>,
     ws_auto: QBox<QPushButton>,
@@ -39,15 +42,20 @@ pub struct SettingsUi {
     // behaviour
     tray: QBox<QCheckBox>,
     app_updates: QBox<QCheckBox>,
+    app_channel: QBox<QComboBox>,
     dll_updates: QBox<QCheckBox>,
     cache_hours: QBox<QSpinBox>,
+    density: QBox<QComboBox>,
     // script extender
     dll_game: QBox<QLabel>,
     dll_list: QBox<QTreeWidget>,
     dll_folder: QBox<QPushButton>,
+    dll_pin: QBox<QPushButton>,
+    dll_unpin: QBox<QPushButton>,
     dll_remove: QBox<QPushButton>,
     dll_check: QBox<QPushButton>,
     dll_channel: QBox<QComboBox>,
+    dll_catalog: QBox<QPushButton>,
     dll_import: QBox<QPushButton>,
     dll_log: QBox<QPushButton>,
     dll_latest: QBox<QLabel>,
@@ -73,6 +81,21 @@ pub struct SettingsUi {
     check_app: QBox<QPushButton>,
 
     remote: RefCell<Option<RemoteDll>>,
+    /// Version to pin once its download finishes ("Install and use" in the catalog).
+    pending_pin: RefCell<Option<String>>,
+}
+
+/// Question shown before a DLL download. `pin`: the catalog's "Install and use".
+fn dll_install_text(r: &RemoteDll, pin: bool, pinned: Option<&str>) -> String {
+    let what = if pin {
+        "It will be used for every launch from now on, until you choose \"Always use newest\".".to_string()
+    } else if let Some(p) = pinned.filter(|p| *p != r.version) {
+        format!("You have v{p} pinned, so v{p} stays in use until you pin this one or choose \"Always use newest\".")
+    } else {
+        "If it matches this game build, it will be the version injected at the next launch.".to_string()
+    };
+    let text = format!("Download and install script extender v{}?\n\n{what}\n\n{}", r.version, crate::dialogs::clip_notes(&r.notes));
+    text.trim_end().to_string()
 }
 
 unsafe fn row(grid: &QBox<QGridLayout>, r: i32, title: &str) {
@@ -99,14 +122,19 @@ impl SettingsUi {
             let g = QGroupBox::from_q_string(&qs("Game and mod folders"));
             let grid = QGridLayout::new_1a(&g);
             grid.set_column_stretch(1, 1);
-            row(&grid, 0, "Game folder");
-            let game_root = label("");
-            grid.add_widget_3a(&game_root, 0, 1);
+            row(&grid, 0, "Game copy");
+            let installs = QComboBox::new_0a();
+            installs.set_tool_tip(&qs("Every copy of the game found on this PC; pick the one to manage and launch"));
+            grid.add_widget_3a(&installs, 0, 1);
             let game_change = button("Change…");
             let game_auto = button("Auto-detect");
             grid.add_widget_3a(&game_change, 0, 2);
             grid.add_widget_3a(&game_auto, 0, 3);
-            row(&grid, 1, "Workshop folder");
+            row(&grid, 6, "Game folder");
+            let game_root = label("");
+            grid.add_widget_5a(&game_root, 6, 1, 1, 3);
+            let ws_title = QLabel::from_q_string(&qs("Workshop folder"));
+            grid.add_widget_3a(&ws_title, 1, 0);
             let ws_dir = label("");
             grid.add_widget_3a(&ws_dir, 1, 1);
             let ws_change = button("Change…");
@@ -145,9 +173,17 @@ impl SettingsUi {
             let b = QVBoxLayout::new_1a(&g);
             let tray = QCheckBox::from_q_string(&qs("Keep running in the tray when the window is closed (tray menu: Play, profiles, Quit)"));
             let app_updates = QCheckBox::from_q_string(&qs("Check for app updates on startup"));
+            let app_channel = QComboBox::new_0a();
+            app_channel.add_item_q_string_q_variant(&qs("Stable releases"), &QVariant::from_q_string(&qs("stable")));
+            app_channel.add_item_q_string_q_variant(&qs("Include pre-releases"), &QVariant::from_q_string(&qs("prerelease")));
+            app_channel.set_tool_tip(&qs("Pre-release builds are only offered when you pick them here"));
             let dll_updates = QCheckBox::from_q_string(&qs("Check for script-extender updates on startup"));
             b.add_widget(&tray);
-            b.add_widget(&app_updates);
+            let ar = QHBoxLayout::new_0a();
+            b.add_layout_1a(&ar);
+            ar.add_widget(&app_updates);
+            ar.add_widget(&app_channel);
+            ar.add_stretch_1a(1);
             b.add_widget(&dll_updates);
             let hr = QHBoxLayout::new_0a();
             b.add_layout_1a(&hr);
@@ -157,6 +193,12 @@ impl SettingsUi {
             cache_hours.set_suffix(&qs(" hours"));
             hr.add_widget(&cache_hours);
             hr.add_stretch_1a(1);
+            let dr = QHBoxLayout::new_0a();
+            b.add_layout_1a(&dr);
+            dr.add_widget(QLabel::from_q_string(&qs("Mod list row size")).into_ptr());
+            let density = crate::mod_list::density_combo();
+            dr.add_widget(&density);
+            dr.add_stretch_1a(1);
             b.add_widget(&label("The look follows the Windows light / dark setting."));
             v.add_widget(&g);
 
@@ -178,10 +220,14 @@ impl SettingsUi {
             let r1 = QHBoxLayout::new_0a();
             s.add_layout_1a(&r1);
             let dll_folder = button("Open folder");
+            let dll_pin = button("Use this version");
+            dll_pin.set_tool_tip(&qs("Pin the selected version: every launch injects it, even when a newer one is installed (rollback)"));
+            let dll_unpin = button("Always use newest");
+            dll_unpin.set_tool_tip(&qs("Unpin: launches inject the newest installed version that matches the game"));
             let dll_remove = button("Remove version");
             let dll_log = button("View log");
             let dll_import = button("Import local DLL…");
-            for w in [&dll_folder, &dll_remove, &dll_log, &dll_import] {
+            for w in [&dll_folder, &dll_pin, &dll_unpin, &dll_remove, &dll_log, &dll_import] {
                 r1.add_widget(w);
             }
             r1.add_stretch_1a(1);
@@ -191,11 +237,14 @@ impl SettingsUi {
             let dll_channel = QComboBox::new_0a();
             dll_channel.add_item_q_string_q_variant(&qs("Stable releases"), &QVariant::from_q_string(&qs("stable")));
             dll_channel.add_item_q_string_q_variant(&qs("Include pre-releases"), &QVariant::from_q_string(&qs("prerelease")));
+            let dll_catalog = button("All versions…");
+            dll_catalog.set_tool_tip(&qs("Every published script-extender release: install an older one to roll back"));
             let dll_latest = QLabel::new();
             let dll_install = button("Install");
             dll_install.set_visible(false);
             r2.add_widget(&dll_check);
             r2.add_widget(&dll_channel);
+            r2.add_widget(&dll_catalog);
             r2.add_widget_2a(&dll_latest, 1);
             r2.add_widget(&dll_install);
             let dll_progress = QProgressBar::new_0a();
@@ -273,9 +322,11 @@ impl SettingsUi {
 
             SettingsUi {
                 root,
+                installs,
                 game_root,
                 game_change,
                 game_auto,
+                ws_title,
                 ws_dir,
                 ws_change,
                 ws_auto,
@@ -289,14 +340,19 @@ impl SettingsUi {
                 cutoff_reset,
                 tray,
                 app_updates,
+                app_channel,
                 dll_updates,
                 cache_hours,
+                density,
                 dll_game,
                 dll_list,
                 dll_folder,
+                dll_pin,
+                dll_unpin,
                 dll_remove,
                 dll_check,
                 dll_channel,
+                dll_catalog,
                 dll_import,
                 dll_log,
                 dll_latest,
@@ -318,6 +374,7 @@ impl SettingsUi {
                 open_data,
                 check_app,
                 remote: RefCell::new(None),
+                pending_pin: RefCell::new(None),
             }
         }
     }
@@ -356,6 +413,17 @@ impl SettingsUi {
             }
         });
         on_click!(self.game_auto, |a: &Rc<App>| SettingsUi::update_settings(a, |s| s.game_root = None));
+        let this = app.clone();
+        self.installs.activated().connect(&SlotOfInt::new(w, move |_| {
+            if this.suppress.get() {
+                return;
+            }
+            let root = this.settings.installs.current_data_0a().to_string().to_std_string();
+            if root.is_empty() || this.st.borrow().paths.game_root.as_deref() == Some(root.as_str()) {
+                return;
+            }
+            this.set_game_root(&root);
+        }));
         on_click!(self.ws_change, |a: &Rc<App>| {
             let d = QFileDialog::get_existing_directory_2a(&a.window, &qs("Select the Workshop content folder (779340)")).to_std_string();
             if !d.is_empty() {
@@ -416,10 +484,37 @@ impl SettingsUi {
             }
         }));
 
+        let this = app.clone();
+        self.density.activated().connect(&SlotOfInt::new(w, move |_| {
+            let v = this.settings.density.current_data_0a().to_string().to_std_string();
+            crate::mod_list::set_density(&this, &v);
+        }));
+
         on_click!(self.dll_folder, |a: &Rc<App>| {
             if let Some(d) = a.settings.selected_dll(a) {
                 crate::details::reveal(&d.path);
             }
+        });
+        on_click!(self.dll_pin, |a: &Rc<App>| {
+            let Some(d) = a.settings.selected_dll(a) else { return };
+            if !d.compatible {
+                crate::dialogs::error(&a.window, &format!("v{} was built for a different game build, so it would never be injected. Pick a version marked \"matches game\".", d.version));
+                return;
+            }
+            match dll::dll_set_pin(Some(&d.version)) {
+                Ok(()) => a.refresh_dll(),
+                Err(e) => crate::dialogs::error(&a.window, &e),
+            }
+        });
+        on_click!(self.dll_unpin, |a: &Rc<App>| match dll::dll_set_pin(None) {
+            Ok(()) => a.refresh_dll(),
+            Err(e) => crate::dialogs::error(&a.window, &e),
+        });
+        on_click!(self.dll_catalog, |a: &Rc<App>| {
+            a.settings.dll_catalog.set_enabled(false);
+            a.settings.dll_latest.set_text(&qs("Loading all versions…"));
+            let ctx = a.ctx.clone();
+            a.bus.spawn(move |_| Some(UiEvent::DllCatalog(dll::dll_catalog(&ctx))));
         });
         on_click!(self.dll_remove, |a: &Rc<App>| {
             let Some(d) = a.settings.selected_dll(a) else { return };
@@ -446,23 +541,24 @@ impl SettingsUi {
                 Err(e) => crate::dialogs::error(&a.window, &e),
             }
         });
-        on_click!(self.dll_check, |a: &Rc<App>| a.settings.check_dll(a));
+        on_click!(self.dll_check, |a: &Rc<App>| a.settings.check_dll(a, false));
+        let this = app.clone();
+        self.app_channel.activated().connect(&SlotOfInt::new(w, move |_| {
+            let v = this.settings.app_channel.current_data_0a().to_string().to_std_string();
+            SettingsUi::update_settings(&this, |s| s.app_channel = v.clone());
+            this.check_app_update(true);
+        }));
         let this = app.clone();
         self.dll_channel.activated().connect(&SlotOfInt::new(w, move |_| {
             let v = this.settings.dll_channel.current_data_0a().to_string().to_std_string();
             SettingsUi::update_settings(&this, |s| s.dll_channel = v);
-            this.settings.check_dll(&this);
+            this.settings.check_dll(&this, false);
         }));
         on_click!(self.dll_install, |a: &Rc<App>| {
             let Some(r) = a.settings.remote.borrow().clone() else { return };
-            a.settings.dll_install.set_enabled(false);
-            a.settings.dll_progress.set_value(0);
-            a.settings.dll_progress.set_visible(true);
-            let ctx = a.ctx.clone();
-            a.bus.spawn(move |bus| {
-                let b = bus.clone();
-                Some(UiEvent::DllInstalled(dll::dll_install(&ctx, &r, &move |f| b.send(UiEvent::DllProgress(f)))))
-            });
+            if crate::dialogs::confirm(&a.window, "Install script extender", &dll_install_text(&r, false, a.settings.pinned(a).as_deref())) {
+                a.settings.install_dll(a, r, false);
+            }
         });
         on_click!(self.cfg_save, |a: &Rc<App>| {
             let s = &a.settings;
@@ -519,27 +615,151 @@ impl SettingsUi {
         app.st.borrow().dll.as_ref()?.installed.iter().find(|d| d.version == version).cloned()
     }
 
-    pub fn check_dll(&self, app: &Rc<App>) {
+    /// `startup`: offer a found update in a popup instead of only showing the Install button.
+    pub fn check_dll(&self, app: &Rc<App>, startup: bool) {
         unsafe {
             self.dll_latest.set_text(&qs("Checking…"));
         }
         let ctx = app.ctx.clone();
-        app.bus.spawn(move |_| Some(UiEvent::DllRemote(dll::dll_check_update(&ctx))));
+        app.bus.spawn(move |_| Some(UiEvent::DllRemote(dll::dll_check_update(&ctx), startup)));
     }
 
-    pub unsafe fn on_dll_remote(&self, _app: &Rc<App>, r: Result<RemoteDll, String>) {
+    fn pinned(&self, app: &Rc<App>) -> Option<String> {
+        app.st.borrow().dll.as_ref().and_then(|d| d.pinned.clone())
+    }
+
+    /// Download and install `r` (no questions; callers have asked). `pin`: use it from now on.
+    unsafe fn install_dll(&self, app: &Rc<App>, r: RemoteDll, pin: bool) {
+        *self.pending_pin.borrow_mut() = pin.then(|| r.version.clone());
+        self.dll_install.set_enabled(false);
+        self.dll_catalog.set_enabled(false);
+        self.dll_latest.set_text(&qs(format!("Downloading v{}…", r.version)));
+        self.dll_progress.set_value(0);
+        self.dll_progress.set_visible(true);
+        let ctx = app.ctx.clone();
+        app.bus.spawn(move |bus| {
+            let b = bus.clone();
+            Some(UiEvent::DllInstalled(dll::dll_install(&ctx, &r, &move |f| b.send(UiEvent::DllProgress(f)))))
+        });
+    }
+
+    pub unsafe fn on_dll_remote(&self, app: &Rc<App>, r: Result<RemoteDll, String>, startup: bool) {
         match r {
             Ok(remote) => {
                 self.dll_latest.set_text(&qs(format!("Latest: v{}{}", remote.version, if remote.installed { " (installed)" } else { "" })));
                 self.dll_latest.set_tool_tip(&qs(&remote.notes));
                 self.dll_install.set_visible(!remote.installed);
                 self.dll_install.set_enabled(true);
-                *self.remote.borrow_mut() = Some(remote);
+                let offer = startup && !remote.installed && app.ctx.settings().skipped_dll_version != remote.version;
+                *self.remote.borrow_mut() = Some(remote.clone());
+                if offer {
+                    self.offer_dll(app, remote);
+                }
             }
             Err(e) => {
                 self.dll_latest.set_text(&qs(e));
                 self.dll_install.set_visible(false);
             }
+        }
+    }
+
+    /// Startup offer: Install / Skip this version / Not now.
+    unsafe fn offer_dll(&self, app: &Rc<App>, r: RemoteDll) {
+        let text = dll_install_text(&r, false, self.pinned(app).as_deref());
+        match crate::dialogs::ask_update(&app.window, "Script extender update", &text) {
+            UpdateChoice::Install => self.install_dll(app, r, false),
+            UpdateChoice::Skip => SettingsUi::update_settings(app, |s| s.skipped_dll_version = r.version.clone()),
+            UpdateChoice::Later => {}
+        }
+    }
+
+    /// "All versions…" result: list every release; the chosen one is installed (after asking)
+    /// and pinned, or just pinned when it is already installed.
+    pub unsafe fn on_dll_catalog(&self, app: &Rc<App>, r: Result<Vec<CatalogEntry>, String>) {
+        self.dll_catalog.set_enabled(true);
+        let entries = match r {
+            Ok(e) => e,
+            Err(e) => {
+                self.dll_latest.set_text(&qs(format!("Could not load versions: {e}")));
+                return;
+            }
+        };
+        self.dll_latest.set_text(&qs(format!("{} versions published", entries.len())));
+        let (in_use, pinned) = {
+            let st = app.st.borrow();
+            let d = st.dll.as_ref();
+            (d.and_then(|d| d.selected.as_ref()).map(|s| s.version.clone()), d.and_then(|d| d.pinned.clone()))
+        };
+        let chosen: Rc<RefCell<Option<CatalogEntry>>> = Rc::new(RefCell::new(None));
+        let intro = "Every published script-extender release, newest first. Pick one and choose \"Use this version\" to roll back: it is downloaded if needed (you'll be asked first) and used for every launch until you choose \"Always use newest\". Only versions made for your game build can be injected.";
+        crate::dialogs::custom(&app.window, "Script extender versions", 760, 460, |l, d| {
+            l.add_widget(&label(intro));
+            let tree = QTreeWidget::new_0a();
+            let h = QListOfQString::new_0a();
+            for t in ["Version", "Released", "Made for game build", "Status"] {
+                h.append_q_string(&qs(t));
+            }
+            tree.set_header_labels(&h);
+            tree.set_root_is_decorated(false);
+            tree.header().set_section_resize_mode_2a(3, ResizeMode::Stretch);
+            l.add_widget(&tree);
+            for e in &entries {
+                let r = &e.remote;
+                let it = QTreeWidgetItem::new();
+                it.set_text(0, &qs(format!("v{}{}", r.version, if r.prerelease { " (pre-release)" } else { "" })));
+                it.set_text(1, &qs(&r.published));
+                it.set_text(2, &qs(e.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| "?".into())));
+                let mut status = vec![match e.compatible {
+                    Some(true) => "matches game",
+                    Some(false) => "other game build",
+                    None => "game build unknown",
+                }];
+                if r.installed {
+                    status.push("installed");
+                }
+                if pinned.as_deref() == Some(r.version.as_str()) {
+                    status.push("pinned");
+                }
+                if in_use.as_deref() == Some(r.version.as_str()) {
+                    status.push("will inject");
+                }
+                it.set_text(3, &qs(status.join(" · ")));
+                it.set_tool_tip(0, &qs(crate::dialogs::clip_notes(&r.notes)));
+                if let Some(ok) = e.compatible {
+                    it.set_foreground(3, &qt_gui::QBrush::from_q_color(&if ok { icons::green() } else { icons::red() }));
+                }
+                tree.add_top_level_item(it.into_ptr());
+            }
+            let row = QHBoxLayout::new_0a();
+            l.add_layout_1a(&row);
+            let use_btn = button("Use this version");
+            row.add_widget(&use_btn);
+            row.add_stretch_1a(1);
+            let (tp, dp, entries, chosen) = (tree.as_ptr(), d.as_ptr(), entries.clone(), chosen.clone());
+            use_btn.clicked().connect(&SlotNoArgs::new(d, move || {
+                let i = tp.index_of_top_level_item(tp.current_item());
+                if let Some(e) = usize::try_from(i).ok().and_then(|i| entries.get(i)) {
+                    *chosen.borrow_mut() = Some(e.clone());
+                    dp.accept();
+                }
+            }));
+        });
+        let Some(e) = chosen.borrow_mut().take() else { return };
+        let v = e.remote.version.clone();
+        if e.compatible == Some(false) {
+            crate::dialogs::error(&app.window, &format!("v{v} was built for a different game build, so it would never be injected."));
+            return;
+        }
+        if e.remote.installed {
+            match dll::dll_set_pin(Some(&v)) {
+                Ok(()) => {
+                    self.dll_latest.set_text(&qs(format!("Using v{v} for every launch")));
+                    app.refresh_dll();
+                }
+                Err(err) => crate::dialogs::error(&app.window, &err),
+            }
+        } else if crate::dialogs::confirm(&app.window, "Install script extender", &dll_install_text(&e.remote, true, pinned.as_deref())) {
+            self.install_dll(app, e.remote, true);
         }
     }
 
@@ -550,16 +770,30 @@ impl SettingsUi {
     pub unsafe fn on_dll_installed(&self, app: &Rc<App>, r: Result<InstalledDll, String>) {
         self.dll_progress.set_visible(false);
         self.dll_install.set_enabled(true);
+        self.dll_catalog.set_enabled(true);
+        let pin = self.pending_pin.borrow_mut().take();
         match r {
             Ok(d) => {
-                self.dll_install.set_visible(false);
-                self.dll_latest.set_text(&qs(format!(
-                    "Installed v{}{}",
-                    d.version,
-                    if d.compatible { " (matches this game build)" } else { " (built for a different game build)" }
-                )));
+                // Installing an older version from the catalog leaves the latest on offer.
+                if let Some(remote) = self.remote.borrow_mut().as_mut() {
+                    if remote.version == d.version {
+                        remote.installed = true;
+                        self.dll_install.set_visible(false);
+                    }
+                }
+                let mut note = if d.compatible { " (matches this game build)" } else { " (built for a different game build)" }.to_string();
+                if pin.as_deref() == Some(d.version.as_str()) {
+                    match dll::dll_set_pin(Some(&d.version)) {
+                        Ok(()) => note.push_str(", used for every launch"),
+                        Err(e) => crate::dialogs::error(&app.window, &e),
+                    }
+                }
+                self.dll_latest.set_text(&qs(format!("Installed v{}{note}", d.version)));
             }
-            Err(e) => crate::dialogs::error(&app.window, &e),
+            Err(e) => {
+                self.dll_latest.set_text(&qs("Install failed"));
+                crate::dialogs::error(&app.window, &e)
+            }
         }
     }
 
@@ -747,10 +981,44 @@ impl SettingsUi {
             st.paths.game_root.clone().unwrap_or_else(|| "not found".into()),
             if s.game_root.is_some() { "  (manual)" } else { "  (auto)" }
         )));
-        self.ws_dir.set_text(&qs(st.paths.workshop_dir.clone().unwrap_or_else(|| "not found".into())));
-        self.version.set_text(&qs(st.paths.exe_version.clone().unwrap_or_else(|| "?".into())));
+        // Every copy found, plus the current folder when it is somewhere else.
+        self.installs.clear();
+        let current = st.paths.game_root.clone().unwrap_or_default();
+        let mut listed = false;
+        for i in &st.installs {
+            self.installs.add_item_q_string_q_variant(&qs(i.label()), &QVariant::from_q_string(&qs(&i.root)));
+            listed |= i.root.eq_ignore_ascii_case(&current);
+        }
+        if !current.is_empty() && !listed {
+            let store = st.paths.store.label();
+            self.installs.add_item_q_string_q_variant(&qs(format!("{store} — {current}")), &QVariant::from_q_string(&qs(&current)));
+        }
+        if st.installs.is_empty() && current.is_empty() {
+            self.installs.add_item_q_string_q_variant(&qs("no copy found — use Change…"), &QVariant::from_q_string(&qs("")));
+        }
+        let ci = self.installs.find_data_1a(&QVariant::from_q_string(&qs(&current)));
+        self.installs.set_current_index(ci.max(0));
+        // Only Steam has a Workshop; the other stores keep downloaded mods in <game>\mods.
+        let store = st.paths.store;
+        let steam = store == paths::GameStore::Steam;
+        self.ws_title.set_text(&qs(if steam { "Workshop folder" } else { "Mods folder" }));
+        self.ws_dir.set_text(&qs(if steam {
+            st.paths.workshop_dir.clone().unwrap_or_else(|| "not found".into())
+        } else {
+            st.paths
+                .mods_dir
+                .clone()
+                .map(|d| format!("{d}  (the game's own mods folder; {} has no Workshop)", store.label()))
+                .unwrap_or_else(|| format!("none — {} keeps mods in <game folder>\\mods, which does not exist yet", store.label()))
+        }));
+        self.ws_change.set_enabled(steam);
+        self.version.set_text(&qs(match (&st.paths.exe_version, st.paths.game_root.is_some()) {
+            (Some(v), true) => format!("{v} ({})", store.label()),
+            (Some(v), false) => v.clone(),
+            (None, _) => "?".into(),
+        }));
         self.game_auto.set_enabled(s.game_root.is_some());
-        self.ws_auto.set_enabled(s.workshop_dir.is_some());
+        self.ws_auto.set_enabled(steam && s.workshop_dir.is_some());
         self.folders.clear();
         for d in &s.extra_mod_dirs {
             self.folders.add_item_q_string(&qs(d));
@@ -766,8 +1034,13 @@ impl SettingsUi {
         self.dll_updates.set_checked(s.check_dll_updates);
         self.dll_auto.set_checked(s.auto_inject_external);
         self.cache_hours.set_value(s.workshop_cache_hours as i32);
+        let di = self.density.find_data_1a(&QVariant::from_q_string(&qs(&s.list_density)));
+        self.density.set_current_index(if di < 0 { 1 } else { di });
         let ch = self.dll_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.dll_channel)));
         self.dll_channel.set_current_index(ch.max(0));
+        let ac = self.app_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.app_channel)));
+        self.app_channel.set_current_index(ac.max(0));
+        self.app_channel.set_enabled(s.check_app_updates);
 
         self.dll_list.clear();
         if let Some(d) = &st.dll {
@@ -781,10 +1054,18 @@ impl SettingsUi {
                 it.set_text(0, &qs(format!("v{}", i.version)));
                 it.set_text(1, &qs(i.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| "no manifest".into())));
                 let selected = d.selected.as_ref().map(|s| s.version == i.version).unwrap_or(false);
-                it.set_text(2, &qs(if selected { "matches game · will inject" } else if i.compatible { "matches game" } else { "other game build" }));
+                let mut status = vec![if i.compatible { "matches game" } else { "other game build" }];
+                if d.pinned.as_deref() == Some(i.version.as_str()) {
+                    status.push(if i.compatible { "pinned" } else { "pinned, but can't be injected" });
+                }
+                if selected {
+                    status.push("will inject");
+                }
+                it.set_text(2, &qs(status.join(" · ")));
                 it.set_foreground(2, &qt_gui::QBrush::from_q_color(&if i.compatible { icons::green() } else { icons::red() }));
                 self.dll_list.add_top_level_item(it.into_ptr());
             }
+            self.dll_unpin.set_enabled(d.pinned.is_some());
         }
         let cfg = dll::dll_read_cfg();
         self.cfg_build.set_text(&qs(&cfg.build_number));

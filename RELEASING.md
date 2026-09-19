@@ -24,14 +24,18 @@ ritual-generated bindings from the RPFM checkout), so releases are made locally,
    - writes `release\TKModManager-x64.zip` (files at the zip root) and runs
      `gh release create v<version>` with the changelog section as notes.
 
-   Without `-Publish` it stops after building the zip.
+   Without `-Publish` it stops after building the zip. Add `-PreRelease` to publish it as a
+   GitHub pre-release, which only users who opted into pre-releases are offered.
 
 ## How the updater works
 
 `crates/core/src/update.rs`:
 
-- `check_update` reads `releases/latest` and compares its tag with `CARGO_PKG_VERSION`. Debug
-  builds never update.
+- `check_update` compares `CARGO_PKG_VERSION` with `releases/latest` (GitHub skips pre-releases
+  there), or with the highest of `releases` when the user picked "Include pre-releases" in
+  Settings → Behaviour. Debug builds never update.
+- So a build published with `gh release create --prerelease` (or a hyphenated tag, as the script
+  extender does) reaches only the people who opted in; a full release reaches everyone.
 - `install_update` downloads the zip, extracts it to `update.staging\` next to the exe, then
   for every file renames the existing one to `*.old` (Windows allows renaming a running exe and
   loaded DLLs) and moves the new one in. The renamed files are listed in `update.old.txt`.

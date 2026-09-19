@@ -14,12 +14,12 @@ use std::path::{Path, PathBuf};
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub fn load_profiles() -> Result<ProfilesDoc, String> {
-    json_store::load::<ProfilesDoc>(&context::profiles_path())
+pub fn load_profiles(store: paths::GameStore) -> Result<ProfilesDoc, String> {
+    json_store::load::<ProfilesDoc>(&context::profiles_path(store))
 }
 
-pub fn save_profiles(doc: &ProfilesDoc) -> Result<(), String> {
-    json_store::save(&context::profiles_path(), doc)
+pub fn save_profiles(store: paths::GameStore, doc: &ProfilesDoc) -> Result<(), String> {
+    json_store::save(&context::profiles_path(store), doc)
 }
 
 pub fn load_meta() -> Result<MetaDoc, String> {

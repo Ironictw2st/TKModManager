@@ -75,10 +75,10 @@ pub struct SaveGame {
     pub mtime: u64,
 }
 
-/// Campaign saves in `%APPDATA%\The Creative Assembly\ThreeKingdoms\save_games`, newest first.
-pub fn list_saves() -> Vec<SaveGame> {
-    let Some(base) = directories::BaseDirs::new() else { return vec![] };
-    let dir = base.data_dir().join("The Creative Assembly").join("ThreeKingdoms").join("save_games");
+/// Campaign saves in the store's user folder (Epic keeps them under `…\ThreeKingdoms\EOS`),
+/// newest first.
+pub fn list_saves(store: paths::GameStore) -> Vec<SaveGame> {
+    let Some(dir) = paths::game_user_dir(store).map(|d| d.join("save_games")) else { return vec![] };
     let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
     let mut out: Vec<SaveGame> = rd
         .flatten()
@@ -113,6 +113,54 @@ pub fn game_args(load_save: Option<&str>) -> String {
     }
 }
 
+/// Mods the CA launcher itself has ticked for this store (`mods.json`). They load on top of
+/// our list, so the app warns about them before an Epic launch.
+pub fn ca_selected_mods(store: paths::GameStore) -> Vec<String> {
+    let Some(path) = paths::ca_mods_json(store) else { return vec![] };
+    let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return vec![] };
+    v.as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter(|r| r["active"].as_bool().unwrap_or(false))
+                .filter_map(|r| r["key"].as_str())
+                .map(|k| k.rsplit(['\\', '/']).next().unwrap_or(k).to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The Epic build may only be started by Epic's launcher (it restarts itself through Epic
+/// otherwise, losing our command line), and CA's launcher then passes its own list file. The
+/// game also reads `scripts\user.script.txt` on every start, so the list goes there instead.
+/// The previous file, if the user had one, is kept next to it and restored after the game exits.
+fn user_script_backup(path: &Path) -> PathBuf {
+    path.with_extension("txt.tkmm-backup")
+}
+
+fn write_user_script(store: paths::GameStore, text: &str) -> Result<PathBuf, String> {
+    let path = paths::user_script_path(store).ok_or("cannot find the game's user folder")?;
+    let dir = path.parent().ok_or("bad user script path")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let backup = user_script_backup(&path);
+    if path.is_file() && !backup.exists() {
+        std::fs::rename(&path, &backup).map_err(|e| format!("cannot move your user.script.txt aside: {e}"))?;
+    }
+    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Remove our `user.script.txt` again (and put the user's own file back), so a later start
+/// straight from Epic does not silently reuse this profile.
+pub fn clear_user_script(store: paths::GameStore) {
+    let Some(path) = paths::user_script_path(store) else { return };
+    let backup = user_script_backup(&path);
+    let _ = std::fs::remove_file(&path);
+    if backup.is_file() {
+        let _ = std::fs::rename(&backup, &path);
+    }
+}
+
 /// Write the list file and spawn the game. Returns as soon as the process is started; the DLL
 /// phase and the exit tracking continue on a background thread.
 pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&str>) -> Result<u32, String> {
@@ -124,6 +172,11 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
     let root = PathBuf::from(p.game_root.as_deref().ok_or("game folder not found; set it in Settings")?);
     let exe = root.join(paths::EXE_NAME);
 
+    let store = p.store;
+    let epic = store == paths::GameStore::Epic;
+    if epic && load_save.map(|s| !s.trim().is_empty()).unwrap_or(false) {
+        return Err("the Epic version cannot be told to load a save; start the campaign from the main menu".into());
+    }
     emit(out, "writing", "Writing mod list", None);
     let scan = state.scan();
     let mut input = list_input_for(&profile, &scan);
@@ -133,8 +186,12 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
         input.extra_mods.push(name);
     }
     let text = modlist::build(&input);
-    let list_path = list_file_path(&root);
-    std::fs::write(&list_path, text).map_err(|e| format!("cannot write {}: {e}", list_path.display()))?;
+    if epic {
+        write_user_script(store, &text)?;
+    } else {
+        let list_path = list_file_path(&root);
+        std::fs::write(&list_path, text).map_err(|e| format!("cannot write {}: {e}", list_path.display()))?;
+    }
 
     // A DLL is resolved before spawning so a missing/incompatible one is reported up front.
     let dll_path: Option<PathBuf> = if profile.dll {
@@ -161,45 +218,79 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
         .collect();
     let history_id = history::begin(&profile.name, history::snapshot(&enabled));
 
-    let args = game_args(load_save);
-    let (pid, handle) = match inject_core::spawn_game(&exe, &args, &root) {
-        Ok(v) => v,
-        Err(e) => {
+    // Epic: ask its launcher to start the game (CA's launcher comes up first, and the user
+    // presses Play there); pid 0 means "wait for the game to appear".
+    let pid = if epic {
+        let app = paths::epic_app_for(&root).ok_or("Epic's launcher does not list this install; start the game from Epic once")?;
+        if let Err(e) = open_uri(&paths::epic_launch_uri(&app)) {
             history::finish(history_id, None);
+            clear_user_script(store);
             return Err(e);
         }
+        emit_full(out, "spawned", "Opening Epic; press Play in CA's launcher", None, None, Some(history_id));
+        0
+    } else {
+        let args = game_args(load_save);
+        let (pid, handle) = match inject_core::spawn_game(&exe, &args, &root) {
+            Ok(v) => v,
+            Err(e) => {
+                history::finish(history_id, None);
+                return Err(e);
+            }
+        };
+        inject_core::close_handle(handle);
+        ctx.tracker.claim(pid);
+        emit_full(out, "spawned", format!("Game started (pid {pid})"), Some(pid), None, Some(history_id));
+        pid
     };
-    inject_core::close_handle(handle);
-    ctx.tracker.claim(pid);
-    emit_full(out, "spawned", format!("Game started (pid {pid})"), Some(pid), None, Some(history_id));
 
     let (ctx2, out2) = (ctx.clone(), out.clone());
-    std::thread::spawn(move || follow(ctx2, out2, pid, dll_path, Some(history_id)));
+    std::thread::spawn(move || follow(ctx2, out2, pid, dll_path, Some(history_id), store));
     Ok(pid)
 }
 
+/// Hand a URI to the shell without a console window flashing up.
+fn open_uri(uri: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", uri])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("cannot open Epic's launcher: {e}"))
+}
+
 /// Background: track the process, inject when the menu is up, then wait for the exit.
-fn follow(ctx: Ctx, out: Emit, first_pid: u32, dll_path: Option<PathBuf>, history_id: Option<u64>) {
+fn follow(ctx: Ctx, out: Emit, first_pid: u32, dll_path: Option<PathBuf>, history_id: Option<u64>, store: paths::GameStore) {
+    let epic = store == paths::GameStore::Epic;
     let mut pid = first_pid;
-    // Steam may restart the game under its own launcher wrapper; recover the live PID.
+    // Steam may restart the game under its own launcher wrapper; recover the live PID. On Epic
+    // there is no process yet at all: CA's launcher waits for the user to press Play.
     std::thread::sleep(Duration::from_secs(3));
     if !pid_alive(pid) {
-        let deadline = Instant::now() + Duration::from_secs(60);
+        // Long enough for the Epic launcher, CA's launcher and the user's Play click.
+        let deadline = Instant::now() + Duration::from_secs(if epic { 15 * 60 } else { 60 });
         loop {
             let pids = inject_core::find_pids(paths::EXE_NAME);
             if let Some(&np) = pids.first() {
                 ctx.tracker.release(pid);
                 pid = np;
                 ctx.tracker.claim(pid);
-                emit_full(&out, "spawned", format!("Game relaunched by Steam (pid {pid})"), Some(pid), None, history_id);
+                let how = if epic { "Game started from CA's launcher" } else { "Game relaunched by Steam" };
+                emit_full(&out, "spawned", format!("{how} (pid {pid})"), Some(pid), None, history_id);
                 break;
             }
             if Instant::now() >= deadline {
-                emit_full(&out, "failed", "The game exited immediately (is Steam running?)", None, None, history_id);
+                let why = if epic { "No game started; Epic's launcher was not used or Play was never pressed" } else { "The game exited immediately (is Steam running?)" };
+                emit_full(&out, "failed", why, None, None, history_id);
                 if let Some(id) = history_id {
                     history::finish(id, None);
                 }
                 ctx.tracker.release(first_pid);
+                if epic {
+                    clear_user_script(store);
+                }
                 return;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -214,6 +305,9 @@ fn follow(ctx: Ctx, out: Emit, first_pid: u32, dll_path: Option<PathBuf>, histor
         }
     }
     finish(&ctx, &out, pid, handle, history_id);
+    if epic {
+        clear_user_script(store);
+    }
 }
 
 /// Wait for the menu, inject once, and report what the DLL log says. `external` = the game

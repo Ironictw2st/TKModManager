@@ -43,6 +43,33 @@ const HEADERS: [&str; 9] = ["", "", "#", "Mod", "Notes", "Source", "Type", "Size
 
 const MOVIE_HEADER_KEY: &str = "__movies__";
 
+/// Row-size presets: (settings value, label, row min-height px, font +pt, check box px,
+/// check / status column widths).
+pub const DENSITIES: [(&str, &str, i32, f64, i32, i32, i32); 3] = [
+    ("compact", "Compact rows", 22, 0.0, 14, 44, 48),
+    ("normal", "Normal rows", 30, 0.5, 18, 52, 56),
+    ("large", "Large rows", 40, 2.0, 22, 60, 64),
+];
+
+/// Save and apply a row-size preset (from the list toolbar or Settings).
+pub unsafe fn set_density(app: &Rc<App>, value: &str) {
+    let mut s = app.ctx.settings();
+    if s.list_density != value {
+        s.list_density = value.to_string();
+        if let Err(e) = app.ctx.set_settings(s) {
+            crate::dialogs::error(&app.window, &e);
+        }
+    }
+    app.ml.apply_density(value);
+    app.mark(crate::app::DIRTY_SETTINGS);
+}
+
+/// The row-size choices, for the list toolbar and the Settings page.
+pub unsafe fn density_combo() -> QBox<QComboBox> {
+    let items: Vec<(&str, &str)> = DENSITIES.iter().map(|d| (d.1, d.0)).collect();
+    combo(&items)
+}
+
 fn role_key() -> i32 {
     ItemDataRole::UserRole.to_int() + 1
 }
@@ -61,6 +88,9 @@ pub struct ModListUi {
     pub group_btn: QBox<QPushButton>,
     pub sort_btn: QBox<QPushButton>,
     pub top_btn: QBox<QPushButton>,
+    pub density: QBox<QComboBox>,
+    /// The view's font size before any row-size adjustment.
+    base_point_size: f64,
     pub view: QBox<QTreeView>,
     pub model: QBox<QStandardItemModel>,
     pub pending_drop: RefCell<Vec<CppBox<QPersistentModelIndex>>>,
@@ -135,6 +165,9 @@ impl ModListUi {
             sort_btn.set_tool_tip(&qs("Sort by pack file name (the CA launcher's default order), inside each group"));
             let top_btn = QPushButton::from_q_string(&qs("Enabled to top"));
             top_btn.set_tool_tip(&qs("Move enabled mods above disabled ones, inside each group"));
+            let density = density_combo();
+            density.set_tool_tip(&qs("Height of the rows in the mod list (also in Settings)"));
+            bar2.add_widget(&density);
             bar2.add_widget(&group_btn);
             bar2.add_widget(&sort_btn);
             bar2.add_widget(&top_btn);
@@ -167,8 +200,28 @@ impl ModListUi {
                 header.set_section_resize_mode_2a(c, ResizeMode::ResizeToContents);
             }
             layout.add_widget_2a(&view, 1);
+            let base_point_size = view.font().point_size_f();
 
-            ModListUi { root, search, source, pack_type, enabled, status, tag, hidden, count, updated_btn, group_btn, sort_btn, top_btn, view, model, pending_drop: RefCell::new(Vec::new()) }
+            ModListUi {
+                root,
+                search,
+                source,
+                pack_type,
+                enabled,
+                status,
+                tag,
+                hidden,
+                count,
+                updated_btn,
+                group_btn,
+                sort_btn,
+                top_btn,
+                density,
+                base_point_size,
+                view,
+                model,
+                pending_drop: RefCell::new(Vec::new()),
+            }
         }
     }
 
@@ -227,6 +280,26 @@ impl ModListUi {
         self.top_btn.clicked().connect(&SlotNoArgs::new(w, move || {
             this.st.borrow_mut().update_active(|p| p.entries = profile_ops::enabled_to_top(&p.entries));
             this.mark(DIRTY_LIST);
+        }));
+        self.apply_density(&app.ctx.settings().list_density);
+        let this = app.clone();
+        self.density.activated().connect(&SlotOfInt::new(w, move |_| {
+            let v = this.ml.density.current_data_0a().to_string().to_std_string();
+            set_density(&this, &v);
+        }));
+
+        // Double-click a mod row (outside the check box) to enable / disable it.
+        let this = app.clone();
+        self.view.double_clicked().connect(&SlotOfQModelIndex::new(w, move |idx| {
+            if idx.column() == COL_CHECK || this.st.borrow().game_running {
+                return;
+            }
+            let key = key_of(&this.ml.model, &idx);
+            if key.is_empty() || groups::is_separator_key(&key) || this.st.borrow().module(&key).is_none() {
+                return;
+            }
+            this.st.borrow_mut().update_active(|p| profile_ops::toggle(&mut p.entries, &[key], None));
+            this.mark(DIRTY_LIST | DIRTY_DETAILS | DIRTY_LAUNCH | DIRTY_HEADER);
         }));
 
         // Header click = sort by that column; clicking "#" again returns to load order.
@@ -337,6 +410,24 @@ impl ModListUi {
             }));
             std::mem::forget(sc);
         }
+    }
+
+    /// Apply a row-size preset (unknown values fall back to "normal").
+    pub unsafe fn apply_density(&self, value: &str) {
+        let (v, _, row, plus, check, check_w, status_w) = DENSITIES.iter().copied().find(|d| d.0 == value).unwrap_or(DENSITIES[1]);
+        self.view.set_style_sheet(&qs(format!(
+            "QTreeView::item {{ min-height: {row}px; }} QTreeView::indicator {{ width: {check}px; height: {check}px; }}"
+        )));
+        let f = QFont::new_copy(self.view.font());
+        f.set_point_size_f(self.base_point_size + plus);
+        self.view.set_font(&f);
+        let icon = (check - 2).max(12);
+        self.view.set_icon_size(&qt_core::QSize::new_2a(icon, icon));
+        let header = self.view.header();
+        header.resize_section(COL_CHECK, check_w);
+        header.resize_section(COL_STATUS, status_w);
+        let i = self.density.find_data_1a(&QVariant::from_q_string(&qs(v)));
+        self.density.set_current_index(i.max(0));
     }
 
     unsafe fn read_selection(&self, app: &Rc<App>) {
@@ -841,7 +932,7 @@ impl ModListUi {
             flags_item.set_foreground(&QBrush::from_q_color(&icons::green()));
         }
 
-        let source_item = item(m.map(|m| source_label(m.source)).unwrap_or(""));
+        let source_item = item(m.map(|m| st.source_label(m)).unwrap_or(""));
         if let Some(m) = m {
             source_item.set_tool_tip(&qs(&m.dir));
         }
@@ -870,14 +961,6 @@ fn source_value(s: ModSource) -> &'static str {
         ModSource::Workshop => "workshop",
         ModSource::Data => "data",
         ModSource::Folder => "folder",
-    }
-}
-
-fn source_label(s: ModSource) -> &'static str {
-    match s {
-        ModSource::Workshop => "Workshop",
-        ModSource::Data => "data/",
-        ModSource::Folder => "Folder",
     }
 }
 
