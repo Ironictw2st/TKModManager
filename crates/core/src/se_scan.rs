@@ -13,14 +13,13 @@
 use crate::json_store;
 use crate::packs::ModEntry;
 use crate::paths;
-use crate::state::AppState;
+use crate::context::AppContext;
 use rpfm_lib::files::pack::Pack;
 use rpfm_lib::files::Container;
 use rpfm_lib::games::supported_games::{SupportedGames, KEY_THREE_KINGDOMS};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
 
 pub const MANIFEST_PATH: &str = "SE/script_extender.json";
 
@@ -192,10 +191,9 @@ fn cache_path() -> PathBuf {
 
 /// Read the manifests of the packs with these keys (all packs when empty). Unreadable packs
 /// count as "not required".
-#[tauri::command]
-pub async fn se_requirements(app: AppHandle, keys: Vec<String>) -> Result<HashMap<String, SeInfo>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let scan = app.state::<AppState>().scan();
+pub fn se_requirements(ctx: &AppContext, keys: &[String]) -> HashMap<String, SeInfo> {
+    {
+        let scan = ctx.scan();
         let wanted: Vec<&ModEntry> = if keys.is_empty() { scan.iter().collect() } else { scan.iter().filter(|m| keys.contains(&m.key)).collect() };
         let mut cache: CacheDoc = json_store::load(&cache_path()).unwrap_or_default();
         let mut out = HashMap::new();
@@ -219,10 +217,8 @@ pub async fn se_requirements(app: AppHandle, keys: Vec<String>) -> Result<HashMa
         if dirty {
             let _ = json_store::save(&cache_path(), &cache);
         }
-        Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        out
+    }
 }
 
 #[cfg(test)]

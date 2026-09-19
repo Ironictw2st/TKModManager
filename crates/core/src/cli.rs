@@ -5,8 +5,6 @@
 //! plus creating a desktop shortcut that carries them.
 
 use serde::Serialize;
-use std::sync::Mutex;
-use tauri::State;
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
 pub struct StartupArgs {
@@ -34,18 +32,8 @@ pub fn parse<I: IntoIterator<Item = String>>(argv: I) -> StartupArgs {
     out
 }
 
-/// Args of this process, handed to the frontend once (then cleared so a reload does not
-/// launch the game again).
-pub struct Startup(pub Mutex<Option<StartupArgs>>);
-
-#[tauri::command]
-pub fn startup_args(startup: State<Startup>) -> Option<StartupArgs> {
-    startup.0.lock().ok()?.take()
-}
-
 /// Create `Desktop\TK3K - <profile>.lnk` pointing at this exe with `--profile "<name>" --launch`.
-#[tauri::command]
-pub fn create_profile_shortcut(profile: String) -> Result<String, String> {
+pub fn create_profile_shortcut(profile: &str) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let desktop = directories::UserDirs::new()
         .and_then(|u| u.desktop_dir().map(|d| d.to_path_buf()))

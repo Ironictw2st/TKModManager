@@ -11,7 +11,6 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::State;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -99,14 +98,14 @@ pub fn report(cache: &ConflictCache, ordered: &[ModEntry]) -> ConflictReport {
 }
 
 /// `keys` = enabled pack keys in profile order. Movie packs are moved last (engine order).
-#[tauri::command]
-pub fn conflicts_for(state: State<crate::state::AppState>, cache: State<ConflictCache>, keys: Vec<String>) -> ConflictReport {
-    let scan = state.scan();
+pub fn conflicts_for(ctx: &crate::context::AppContext, keys: &[String]) -> ConflictReport {
+    let cache = &ctx.conflicts;
+    let scan = ctx.scan();
     let by_key: HashMap<&str, &ModEntry> = scan.iter().map(|m| (m.key.as_str(), m)).collect();
     let mut ordered: Vec<ModEntry> = keys.iter().filter_map(|k| by_key.get(k.as_str()).map(|m| (*m).clone())).collect();
     let (mut mods, mut movies): (Vec<ModEntry>, Vec<ModEntry>) =
         ordered.drain(..).partition(|m| m.pack_type != PackType::Movie);
     movies.sort_by_key(|m| m.file.to_ascii_lowercase());
     mods.append(&mut movies);
-    report(&cache, &mods)
+    report(cache, &mods)
 }

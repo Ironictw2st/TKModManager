@@ -3,13 +3,12 @@
 
 use crate::json_store;
 use crate::paths;
-use crate::state::AppState;
+use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CacheEntry {
@@ -33,12 +32,12 @@ pub struct PackHash {
     pub sha256: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-struct Progress {
-    file: String,
-    done_bytes: u64,
-    total_bytes: u64,
+pub struct Progress {
+    pub file: String,
+    pub done_bytes: u64,
+    pub total_bytes: u64,
 }
 
 fn cache_path() -> PathBuf {
@@ -62,11 +61,10 @@ pub fn sha256_file(path: &Path, mut on_chunk: impl FnMut(u64)) -> Result<String,
 }
 
 /// Hash the packs with these keys (in the given order). Unknown keys are skipped.
-#[tauri::command]
-pub async fn hash_packs(app: AppHandle, keys: Vec<String>) -> Result<Vec<PackHash>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let scan = state.scan();
+/// Blocking; call from a worker thread. `progress` is called every ~32 MB.
+pub fn hash_packs(ctx: &AppContext, keys: &[String], progress: &dyn Fn(Progress)) -> Result<Vec<PackHash>, String> {
+    {
+        let scan = ctx.scan();
         let mut cache: CacheDoc = json_store::load(&cache_path()).unwrap_or_default();
         let wanted: Vec<_> = keys.iter().filter_map(|k| scan.iter().find(|m| &m.key == k)).collect();
         let total: u64 = wanted
@@ -86,7 +84,7 @@ pub async fn hash_packs(app: AppHandle, keys: Vec<String>) -> Result<Vec<PackHas
                         done += n;
                         if done - last_emit > 32 * 1024 * 1024 || done == total {
                             last_emit = done;
-                            let _ = app.emit("hash-progress", Progress { file: m.file.clone(), done_bytes: done, total_bytes: total });
+                            progress(Progress { file: m.file.clone(), done_bytes: done, total_bytes: total });
                         }
                     })?;
                     cache.files.insert(m.path.clone(), CacheEntry { size: m.size, mtime: m.mtime, sha256: h.clone() });
@@ -97,9 +95,7 @@ pub async fn hash_packs(app: AppHandle, keys: Vec<String>) -> Result<Vec<PackHas
         }
         let _ = json_store::save(&cache_path(), &cache);
         Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 #[cfg(test)]

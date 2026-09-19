@@ -1,0 +1,7 @@
+[package]
+name = "tkmm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tkmm_core = { path = "../core" }

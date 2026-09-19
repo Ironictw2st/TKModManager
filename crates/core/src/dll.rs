@@ -6,12 +6,11 @@
 
 use crate::fingerprint::{self, ExeFingerprint};
 use crate::paths;
-use crate::state::AppState;
+use crate::context::AppContext;
 use crate::update::{download_to, fetch_releases, pick_release};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, State};
 
 pub const OWNER: &str = "Ironictw2st";
 pub const REPO: &str = "TK-ScriptExtender";
@@ -120,17 +119,16 @@ pub fn status_for(exe: Option<&Path>) -> DllStatus {
     }
 }
 
-#[tauri::command]
-pub fn dll_status(state: State<AppState>) -> DllStatus {
-    let p = state.game_paths();
+pub fn dll_status(ctx: &AppContext) -> DllStatus {
+    let p = ctx.game_paths();
     status_for(p.exe.as_deref().map(Path::new))
 }
 
 /// Query the latest DLL release. Errors are returned as strings (offline, no release yet).
-#[tauri::command]
-pub async fn dll_check_update(state: State<'_, AppState>) -> Result<RemoteDll, String> {
-    let allow_pre = state.settings().dll_channel == "prerelease";
-    let rel = pick_release(fetch_releases(OWNER, REPO).await?, allow_pre).ok_or("no release published yet")?;
+/// Blocking (network).
+pub fn dll_check_update(ctx: &AppContext) -> Result<RemoteDll, String> {
+    let allow_pre = ctx.settings().dll_channel == "prerelease";
+    let rel = pick_release(fetch_releases(OWNER, REPO)?, allow_pre).ok_or("no release published yet")?;
     let dll_url = rel.asset_url(DLL_NAME).ok_or_else(|| format!("release has no {DLL_NAME}"))?.to_string();
     let manifest_url =
         rel.asset_url(MANIFEST_NAME).ok_or_else(|| format!("release has no {MANIFEST_NAME}"))?.to_string();
@@ -145,8 +143,9 @@ fn sha256_of(path: &Path) -> Result<String, String> {
 
 /// Download a release into `dll\<version>\` (manifest first, then the DLL, verified by sha256).
 /// Emits `dll-progress` 0..1. Never touches other version folders.
-#[tauri::command]
-pub async fn dll_install(app: AppHandle, version: String, dll_url: String, manifest_url: String) -> Result<InstalledDll, String> {
+/// Blocking (network). `progress` receives 0..1 per file.
+pub fn dll_install(ctx: &AppContext, remote: &RemoteDll, progress: &dyn Fn(f64)) -> Result<InstalledDll, String> {
+    let (version, dll_url, manifest_url) = (remote.version.clone(), remote.dll_url.clone(), remote.manifest_url.clone());
     let version = version.trim_start_matches('v').to_string();
     if version.is_empty() || version.contains(['/', '\\']) || version.contains("..") {
         return Err("bad version".into());
@@ -156,12 +155,12 @@ pub async fn dll_install(app: AppHandle, version: String, dll_url: String, manif
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
 
-    download_to(&app, &manifest_url, &staging.join(MANIFEST_NAME), "dll-progress").await?;
+    download_to(&manifest_url, &staging.join(MANIFEST_NAME), progress)?;
     let manifest: Manifest = serde_json::from_slice(
         &std::fs::read(staging.join(MANIFEST_NAME)).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("bad manifest.json: {e}"))?;
-    download_to(&app, &dll_url, &staging.join(DLL_NAME), "dll-progress").await?;
+    download_to(&dll_url, &staging.join(DLL_NAME), progress)?;
     if !manifest.sha256.is_empty() {
         let got = sha256_of(&staging.join(DLL_NAME))?;
         if !got.eq_ignore_ascii_case(manifest.sha256.trim()) {
@@ -180,8 +179,7 @@ pub async fn dll_install(app: AppHandle, version: String, dll_url: String, manif
     }
     std::fs::rename(&staging, &dir).map_err(|e| format!("finalise {}: {e}", dir.display()))?;
 
-    let state = app.state::<AppState>();
-    let p = state.game_paths();
+    let p = ctx.game_paths();
     let fp = p.exe.as_deref().and_then(|e| fingerprint::read(Path::new(e)).ok());
     Ok(list_installed(fp.as_ref())
         .into_iter()
@@ -191,15 +189,14 @@ pub async fn dll_install(app: AppHandle, version: String, dll_url: String, manif
 
 /// Register a DLL that is already on disk (e.g. a local build) as version `version`,
 /// writing a manifest pinned to the current game fingerprint. The file is copied.
-#[tauri::command]
-pub fn dll_import_local(state: State<AppState>, path: String, version: String) -> Result<InstalledDll, String> {
+pub fn dll_import_local(ctx: &AppContext, path: &str, version: &str) -> Result<InstalledDll, String> {
     let version = version.trim().trim_start_matches('v').to_string();
     semver::Version::parse(&version).map_err(|e| format!("version must be semver (e.g. 0.15.0): {e}"))?;
     let src = PathBuf::from(&path);
     if !src.is_file() {
         return Err(format!("{path} is not a file"));
     }
-    let p = state.game_paths();
+    let p = ctx.game_paths();
     let exe = p.exe.as_deref().ok_or("game not found")?;
     let fp = fingerprint::read(Path::new(exe))?;
     let dir = dll_root().join(&version);
@@ -223,7 +220,6 @@ pub fn dll_import_local(state: State<AppState>, path: String, version: String) -
 }
 
 /// Delete an installed version folder (refused while the game runs).
-#[tauri::command]
 pub fn dll_remove(version: String) -> Result<(), String> {
     if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
         return Err("quit the game before removing a DLL version".into());
@@ -236,7 +232,6 @@ pub fn dll_remove(version: String) -> Result<(), String> {
 }
 
 /// Read the DLL's own log (next to the DLL), if any.
-#[tauri::command]
 pub fn dll_read_log(dir: String) -> Result<String, String> {
     let p = Path::new(&dir).join(LOG_NAME);
     std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
@@ -288,12 +283,10 @@ pub fn render_cfg(c: &DllConfig) -> String {
     out
 }
 
-#[tauri::command]
 pub fn dll_read_cfg() -> DllConfig {
     std::fs::read_to_string(dll_root().join(CFG_NAME)).map(|t| parse_cfg(&t)).unwrap_or_default()
 }
 
-#[tauri::command]
 pub fn dll_write_cfg(config: DllConfig) -> Result<(), String> {
     let dir = dll_root();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;

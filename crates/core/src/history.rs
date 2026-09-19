@@ -115,7 +115,6 @@ pub struct CrashReport {
     pub diff: Option<Diff>,
 }
 
-#[tauri::command]
 pub fn launch_history() -> Vec<LaunchRecord> {
     let mut doc: HistoryDoc = json_store::load(&path()).unwrap_or_default();
     doc.launches.reverse();
@@ -124,7 +123,6 @@ pub fn launch_history() -> Vec<LaunchRecord> {
 
 /// The record `id` (or the most recent launch when `id` is None) compared with the last clean
 /// launch before it.
-#[tauri::command]
 pub fn crash_report(id: Option<u64>) -> Option<CrashReport> {
     let doc: HistoryDoc = json_store::load(&path()).unwrap_or_default();
     let idx = match id {

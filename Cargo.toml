@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/app"]
+# The Qt app builds only on Windows with the Craft Qt environment (scripts/build.ps1).
+default-members = ["crates/core"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+authors = ["Ironictw2st"]
+license = "MIT"
+repository = "https://github.com/Ironictw2st/TKModManager"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = true
+
+[profile.dev]
+incremental = true

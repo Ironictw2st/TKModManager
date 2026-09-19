@@ -3,12 +3,11 @@
 //! Reading is restricted to files under the game root or our DLL folder.
 
 use crate::dll;
-use crate::state::AppState;
+use crate::context::AppContext;
 use serde::Serialize;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use tauri::State;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -45,10 +44,9 @@ fn newest(dir: &Path, prefix: &str) -> Option<PathBuf> {
         .map(|(_, p)| p)
 }
 
-#[tauri::command]
-pub fn log_sources(state: State<AppState>) -> Vec<LogSource> {
+pub fn log_sources(ctx: &AppContext) -> Vec<LogSource> {
     let mut out = Vec::new();
-    let p = state.game_paths();
+    let p = ctx.game_paths();
     let status = dll::status_for(p.exe.as_deref().map(Path::new));
     if let Some(sel) = status.selected.or_else(|| status.installed.first().cloned()) {
         let log = Path::new(&sel.dir).join(dll::LOG_NAME);
@@ -96,9 +94,8 @@ pub fn tail(path: &Path, max_bytes: u64) -> Result<String, String> {
     Ok(text)
 }
 
-#[tauri::command]
-pub fn log_tail(state: State<AppState>, path: String, max_bytes: Option<u64>) -> Result<String, String> {
-    let p = state.game_paths();
+pub fn log_tail(ctx: &AppContext, path: &str, max_bytes: Option<u64>) -> Result<String, String> {
+    let p = ctx.game_paths();
     let mut roots = vec![dll::dll_root()];
     if let Some(root) = p.game_root {
         roots.push(PathBuf::from(root));

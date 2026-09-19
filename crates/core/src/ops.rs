@@ -1,80 +1,38 @@
-//! Tauri commands for settings, paths, mod discovery, profiles, metadata and the list file.
+//! Profile / list-file operations shared by the UI: loading and saving the JSON documents,
+//! importing CA's `used_mods.txt`, and building the `tkmm_mods.txt` text for a profile.
 
+use crate::context::{self, AppContext};
 use crate::json_store;
 use crate::meta::MetaDoc;
 use crate::modlist::{self, ListInput, ListMod, ParsedList};
 use crate::packs::{self, ModEntry, ModSource, PackType};
-use crate::paths::{self, GamePaths};
+use crate::paths;
 use crate::profiles::{Profile, ProfilesDoc};
-use crate::settings::Settings;
-use crate::state::{self, AppState};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tauri::State;
 
-#[tauri::command]
-pub fn app_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[tauri::command]
-pub fn app_data_dir() -> String {
-    paths::app_data_dir().to_string_lossy().into_owned()
-}
-
-#[tauri::command]
-pub fn get_settings(state: State<AppState>) -> Settings {
-    state.settings()
-}
-
-#[tauri::command]
-pub fn set_settings(app: tauri::AppHandle, state: State<AppState>, settings: Settings) -> Result<(), String> {
-    json_store::save(&state::settings_path(), &settings)?;
-    crate::tray::set_visible(&app, settings.minimize_to_tray);
-    if let Ok(mut s) = state.settings.lock() {
-        *s = settings;
-    }
-    state.invalidate_paths();
-    Ok(())
-}
-
-#[tauri::command]
-pub fn get_paths(state: State<AppState>) -> GamePaths {
-    state.game_paths()
-}
-
-#[tauri::command]
-pub fn scan_mods(state: State<AppState>) -> Vec<ModEntry> {
-    state.scan()
-}
-
-#[tauri::command]
 pub fn load_profiles() -> Result<ProfilesDoc, String> {
-    json_store::load::<ProfilesDoc>(&state::profiles_path())
+    json_store::load::<ProfilesDoc>(&context::profiles_path())
 }
 
-#[tauri::command]
-pub fn save_profiles(app: tauri::AppHandle, doc: ProfilesDoc) -> Result<(), String> {
-    json_store::save(&state::profiles_path(), &doc)?;
-    crate::tray::refresh(&app);
-    Ok(())
+pub fn save_profiles(doc: &ProfilesDoc) -> Result<(), String> {
+    json_store::save(&context::profiles_path(), doc)
 }
 
-#[tauri::command]
 pub fn load_meta() -> Result<MetaDoc, String> {
-    json_store::load::<MetaDoc>(&state::meta_path())
+    json_store::load::<MetaDoc>(&context::meta_path())
 }
 
-#[tauri::command]
-pub fn save_meta(doc: MetaDoc) -> Result<(), String> {
-    json_store::save(&state::meta_path(), &doc)
+pub fn save_meta(doc: &MetaDoc) -> Result<(), String> {
+    json_store::save(&context::meta_path(), doc)
 }
 
 /// Parse a CA-style list file (`used_mods.txt`) into its directives.
-#[tauri::command]
-pub fn read_mod_list_file(path: String) -> Result<ParsedList, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+pub fn read_mod_list_file(path: &str) -> Result<ParsedList, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     Ok(modlist::parse(&text))
 }
 
@@ -88,11 +46,10 @@ pub struct ImportedEntry {
 
 /// Resolve the `mod` lines of a CA list against the current scan. A file name is matched
 /// first inside the listed working directories (Workshop items), then in data/.
-#[tauri::command]
-pub fn import_mod_list(state: State<AppState>, path: String) -> Result<Vec<ImportedEntry>, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+pub fn import_mod_list(ctx: &AppContext, path: &str) -> Result<Vec<ImportedEntry>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let parsed = modlist::parse(&text);
-    let scan = state.scan();
+    let scan = ctx.scan();
     Ok(resolve_import(&parsed, &scan))
 }
 
@@ -152,10 +109,9 @@ pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
 }
 
 /// The exact text that would be written for this profile (without launch-time extras).
-#[tauri::command]
-pub fn preview_mod_list(state: State<AppState>, profile: Profile) -> String {
-    let scan = state.scan();
-    modlist::build(&list_input_for(&profile, &scan))
+pub fn preview_mod_list(ctx: &AppContext, profile: &Profile) -> String {
+    let scan = ctx.scan();
+    modlist::build(&list_input_for(profile, &scan))
 }
 
 /// Path of the list file inside the game root.

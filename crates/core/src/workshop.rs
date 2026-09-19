@@ -8,12 +8,11 @@
 
 use crate::json_store;
 use crate::paths;
-use crate::state::AppState;
+use crate::context::AppContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::State;
 
 const USER_AGENT: &str = "TKModManager";
 const DETAILS_URL: &str = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
@@ -52,7 +51,6 @@ pub fn load_cache() -> Cache {
 }
 
 /// Everything cached, plus launcher-cache seeds for ids that have nothing yet.
-#[tauri::command]
 pub fn workshop_cached() -> HashMap<String, WorkshopItem> {
     let mut cache = load_cache();
     let mut changed = false;
@@ -70,9 +68,9 @@ pub fn workshop_cached() -> HashMap<String, WorkshopItem> {
 
 /// Fetch details for `ids` (skipping fresh cache entries unless `force`). Errors are per-item
 /// tolerant: whatever Steam returned is cached and returned; a network failure is an error.
-#[tauri::command]
-pub async fn workshop_fetch(state: State<'_, AppState>, ids: Vec<String>, force: bool) -> Result<HashMap<String, WorkshopItem>, String> {
-    let ttl_secs = u64::from(state.settings().workshop_cache_hours.max(1)) * 3600;
+/// Blocking (network).
+pub fn workshop_fetch(ctx: &AppContext, ids: &[String], force: bool) -> Result<HashMap<String, WorkshopItem>, String> {
+    let ttl_secs = u64::from(ctx.settings().workshop_cache_hours.max(1)) * 3600;
     let mut cache = load_cache();
     let t = now();
     let stale: Vec<String> = ids
@@ -90,15 +88,15 @@ pub async fn workshop_fetch(state: State<'_, AppState>, ids: Vec<String>, force:
     if stale.is_empty() {
         return Ok(cache.items.into_iter().filter(|(k, _)| ids.contains(k)).collect());
     }
-    let client = reqwest::Client::builder()
+    let client = reqwest::blocking::Client::builder()
         .user_agent(USER_AGENT)
         .build()
         .map_err(|e| e.to_string())?;
     for chunk in stale.chunks(50) {
-        let details = fetch_details(&client, chunk).await?;
+        let details = fetch_details(&client, chunk)?;
         for mut item in details {
             item.fetched_at = t;
-            item.required_items = fetch_required_items(&client, &item.id).await.unwrap_or_default();
+            item.required_items = fetch_required_items(&client, &item.id).unwrap_or_default();
             cache.items.insert(item.id.clone(), item);
         }
     }
@@ -106,7 +104,7 @@ pub async fn workshop_fetch(state: State<'_, AppState>, ids: Vec<String>, force:
     Ok(cache.items.into_iter().filter(|(k, _)| ids.contains(k)).collect())
 }
 
-async fn fetch_details(client: &reqwest::Client, ids: &[String]) -> Result<Vec<WorkshopItem>, String> {
+fn fetch_details(client: &reqwest::blocking::Client, ids: &[String]) -> Result<Vec<WorkshopItem>, String> {
     let mut form: Vec<(String, String)> = vec![("itemcount".into(), ids.len().to_string())];
     for (i, id) in ids.iter().enumerate() {
         form.push((format!("publishedfileids[{i}]"), id.clone()));
@@ -115,12 +113,11 @@ async fn fetch_details(client: &reqwest::Client, ids: &[String]) -> Result<Vec<W
         .post(DETAILS_URL)
         .form(&form)
         .send()
-        .await
         .map_err(|e| format!("Steam API: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("Steam API returned {}", resp.status()));
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Steam API JSON: {e}"))?;
+    let json: serde_json::Value = resp.json().map_err(|e| format!("Steam API JSON: {e}"))?;
     Ok(parse_details(&json))
 }
 
@@ -148,9 +145,9 @@ pub fn parse_details(json: &serde_json::Value) -> Vec<WorkshopItem> {
 }
 
 /// Scrape the "Required items" box of the public Workshop page. Best effort.
-async fn fetch_required_items(client: &reqwest::Client, id: &str) -> Result<Vec<String>, String> {
+fn fetch_required_items(client: &reqwest::blocking::Client, id: &str) -> Result<Vec<String>, String> {
     let url = format!("https://steamcommunity.com/sharedfiles/filedetails/?id={id}");
-    let html = client.get(&url).send().await.map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())?;
+    let html = client.get(&url).send().map_err(|e| e.to_string())?.text().map_err(|e| e.to_string())?;
     Ok(parse_required_items(&html, id))
 }
 
@@ -241,24 +238,24 @@ pub struct CollectionResult {
 }
 
 /// Resolve a Workshop collection (keyless Web API) into its items.
-#[tauri::command]
-pub async fn workshop_collection(input: String) -> Result<CollectionResult, String> {
-    let id = parse_collection_id(&input).ok_or("that does not look like a Workshop collection link or id")?;
-    let client = reqwest::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
+/// Blocking (network).
+pub fn workshop_collection(input: &str) -> Result<CollectionResult, String> {
+    let id = parse_collection_id(input).ok_or("that does not look like a Workshop collection link or id")?;
+    let client = reqwest::blocking::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
     let form = [("collectioncount".to_string(), "1".to_string()), ("publishedfileids[0]".to_string(), id.clone())];
-    let resp = client.post(COLLECTION_URL).form(&form).send().await.map_err(|e| format!("Steam API: {e}"))?;
+    let resp = client.post(COLLECTION_URL).form(&form).send().map_err(|e| format!("Steam API: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("Steam API returned {}", resp.status()));
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Steam API JSON: {e}"))?;
+    let json: serde_json::Value = resp.json().map_err(|e| format!("Steam API JSON: {e}"))?;
     let children = parse_collection_children(&json);
     if children.is_empty() {
         return Err("the collection is empty, private, or not a collection".into());
     }
-    let title = fetch_details(&client, std::slice::from_ref(&id)).await.ok().and_then(|v| v.into_iter().next()).map(|i| i.title).unwrap_or_default();
+    let title = fetch_details(&client, std::slice::from_ref(&id)).ok().and_then(|v| v.into_iter().next()).map(|i| i.title).unwrap_or_default();
     let mut items = HashMap::new();
     for chunk in children.chunks(50) {
-        for item in fetch_details(&client, chunk).await? {
+        for item in fetch_details(&client, chunk)? {
             items.insert(item.id.clone(), item);
         }
     }

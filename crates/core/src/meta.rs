@@ -11,9 +11,6 @@ pub struct ModMeta {
     pub notes: String,
     #[serde(default)]
     pub hidden: bool,
-    /// Manual script-extender requirement: None = automatic (marker / Lua scan).
-    #[serde(default, rename = "seOverride", skip_serializing_if = "Option::is_none")]
-    pub se_override: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

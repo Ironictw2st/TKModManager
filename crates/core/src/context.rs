@@ -1,36 +1,59 @@
-//! Process-wide state shared by commands: settings (persisted) and the launch tracker.
+//! Process-wide state shared by the UI and the worker threads: settings (persisted), cached game
+//! paths, the conflict index cache and the set of game processes being followed.
 
+use crate::conflicts::ConflictCache;
 use crate::json_store;
+use crate::launch::LaunchTracker;
+use crate::packs::ModEntry;
 use crate::paths;
 use crate::settings::Settings;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
-pub struct AppState {
-    pub settings: Mutex<Settings>,
-    /// Detected game paths. Detection shells out (registry query, exe version), so it runs
-    /// once and is reused until the settings change or the exe disappears.
+pub struct AppContext {
+    settings: Mutex<Settings>,
+    /// Detected game paths. Detection shells out (registry query, exe version), so it runs once
+    /// and is reused until the settings change or the exe disappears.
     paths_cache: Mutex<Option<paths::GamePaths>>,
+    pub conflicts: ConflictCache,
+    pub tracker: LaunchTracker,
 }
 
-impl AppState {
-    pub fn load() -> Self {
+pub type Ctx = Arc<AppContext>;
+
+impl AppContext {
+    pub fn load() -> Ctx {
         let settings = json_store::load::<Settings>(&settings_path()).unwrap_or_else(|e| {
             eprintln!("settings: {e}; using defaults");
             Settings::default()
         });
-        AppState { settings: Mutex::new(settings), paths_cache: Mutex::new(None) }
+        Arc::new(AppContext {
+            settings: Mutex::new(settings),
+            paths_cache: Mutex::new(None),
+            conflicts: ConflictCache::default(),
+            tracker: LaunchTracker::default(),
+        })
     }
 
     pub fn settings(&self) -> Settings {
         self.settings.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
+    /// Persist new settings; forgets cached paths so a changed game folder takes effect.
+    pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
+        json_store::save(&settings_path(), &settings)?;
+        if let Ok(mut s) = self.settings.lock() {
+            *s = settings;
+        }
+        self.invalidate_paths();
+        Ok(())
+    }
+
     /// Resolve game paths from the settings override or Steam auto-detection (cached).
     pub fn game_paths(&self) -> paths::GamePaths {
         if let Ok(cache) = self.paths_cache.lock() {
             if let Some(p) = cache.as_ref() {
-                let exe_ok = p.exe.as_deref().map(|e| std::path::Path::new(e).is_file()).unwrap_or(false);
+                let exe_ok = p.exe.as_deref().map(|e| Path::new(e).is_file()).unwrap_or(false);
                 if exe_ok {
                     return p.clone();
                 }
@@ -54,17 +77,12 @@ impl AppState {
     }
 
     /// Every user pack: data/, Workshop, and the extra folders from the settings.
-    pub fn scan(&self) -> Vec<crate::packs::ModEntry> {
+    pub fn scan(&self) -> Vec<ModEntry> {
         let p = self.game_paths();
         let extra: Vec<PathBuf> = self.settings().extra_mod_dirs.iter().map(PathBuf::from).collect();
-        crate::packs::scan(
-            p.data_dir.as_deref().map(std::path::Path::new),
-            p.workshop_dir.as_deref().map(std::path::Path::new),
-            &extra,
-        )
+        crate::packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new), &extra)
     }
 
-    /// Forget the cached paths (settings changed).
     pub fn invalidate_paths(&self) {
         if let Ok(mut cache) = self.paths_cache.lock() {
             *cache = None;
