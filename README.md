@@ -3,7 +3,13 @@
 A mod manager and launcher for **Total War: THREE KINGDOMS** that replaces the CA launcher:
 profiles, real load-order control, movie packs, Workshop metadata, conflict detection, and
 one-click injection of the [script extender](https://github.com/Ironictw2st/TK-ScriptExtender)
-DLL. Portable single exe, self-updating.
+DLL. A native Windows app (Rust + Qt Widgets), portable and self-updating.
+
+## Install
+
+Download `TKModManager-x64.zip` from the latest
+[release](https://github.com/Ironictw2st/TKModManager/releases/latest), unpack it into any
+folder and start `TKModManager.exe`. Updates install in place from the same zip.
 
 ## How it launches the game
 
@@ -46,18 +52,27 @@ A pack needs the script extender exactly when it contains this file. Every field
 and a trailing comma is tolerated. Versions may be numbers or strings, such as `"0.28.1"`. They
 compare as dotted versions, so `0.30` is newer than `0.28`. A maximum of `0.28` allows every
 0.28.x release. The manager warns before launch when the installed DLL falls outside the range.
-You can still override any mod by hand in its details pane. The game never loads the `SE/`
-folder, so the file is harmless.
+The game never loads the `SE/` folder, so the file is harmless.
 
 ## Development
 
+The workspace has two crates:
+
+- `crates/core` (`tkmm_core`): everything except the window: pack scanning, profiles, groups,
+  launch and injection, Workshop, updates. No GUI and no Qt needed; CI runs its tests.
+- `crates/app` (`tkmm`): the Qt Widgets UI. It builds against Qt 6 (MSVC) from
+  [KDE Craft](https://community.kde.org/Craft) in `C:\CraftRoot` and the ritual-generated Qt
+  bindings from an RPFM checkout (the same setup RPFM uses), so it builds on a prepared Windows PC
+  only.
+
 ```
-npm install
-npm run tauri dev          # app with hot reload
-npm test                   # frontend unit tests (vitest)
-cargo test --manifest-path src-tauri/Cargo.toml
-npx tauri build --no-bundle   # portable exe -> src-tauri/target/release/tk-mod-manager.exe
+cargo test -p tkmm_core                                                        # core tests
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 [-Release] [-Run]   # the app
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Publish]        # release zip
 ```
 
+To run a dev build, put `C:\CraftRoot\bin` on `PATH` and set
+`QT_PLUGIN_PATH=C:\CraftRoot\plugins`.
+
 Data lives in `%APPDATA%\TKModManager` (settings, profiles, tags/notes, Workshop cache,
-DLL versions, generated options pack). See `RELEASING.md` for the update channels.
+DLL versions, generated options pack). See `RELEASING.md` for releases and the update channels.

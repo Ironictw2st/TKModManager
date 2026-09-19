@@ -16,6 +16,9 @@ pub const REPO: &str = "TKModManager";
 pub const ASSET_NAME: &str = "TKModManager-x64.zip";
 pub const USER_AGENT: &str = "TKModManager-Updater";
 const STAGING_DIR: &str = "update.staging";
+/// Files the last update moved aside (`*.old`), one relative path per line. Only these are
+/// deleted on the next start, so unrelated `.old` files next to the exe are never touched.
+const OLD_LIST: &str = "update.old.txt";
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -204,9 +207,14 @@ fn old_name(p: &Path) -> PathBuf {
 }
 
 /// Move every file from `staging` into `target`, renaming files that already exist to `*.old`
-/// first (works for the running exe and loaded DLLs). Removes `staging` afterwards.
+/// first (works for the running exe and loaded DLLs) and listing them in `update.old.txt`.
+/// Removes `staging` afterwards.
 pub fn apply_staged(staging: &Path, target: &Path) -> Result<usize, String> {
     let files = files_under(staging);
+    let mut moved_aside: Vec<String> = Vec::new();
+    let write_list = |moved: &[String]| {
+        let _ = std::fs::write(target.join(OLD_LIST), moved.join("\n"));
+    };
     for rel in &files {
         let from = staging.join(rel);
         let to = target.join(rel);
@@ -217,9 +225,12 @@ pub fn apply_staged(staging: &Path, target: &Path) -> Result<usize, String> {
             let old = old_name(&to);
             let _ = std::fs::remove_file(&old);
             std::fs::rename(&to, &old).map_err(|e| format!("cannot move {} aside: {e}", to.display()))?;
+            moved_aside.push(old_name(rel).to_string_lossy().replace('\\', "/"));
+            write_list(&moved_aside);
         }
         std::fs::rename(&from, &to).map_err(|e| format!("cannot install {}: {e}", to.display()))?;
     }
+    write_list(&moved_aside);
     let _ = std::fs::remove_dir_all(staging);
     Ok(files.len())
 }
@@ -243,10 +254,28 @@ pub fn install_update(asset_url: &str, progress: &dyn Fn(f64)) -> Result<(), Str
 
 /// Remove `*.old` leftovers of a previous update (they are unlocked once the old process exited).
 pub fn cleanup_old_files() {
-    let Ok(dir) = install_dir() else { return };
-    for rel in files_under(&dir) {
-        if rel.extension().map(|e| e == "old").unwrap_or(false) {
-            let _ = std::fs::remove_file(dir.join(rel));
+    if let Ok(dir) = install_dir() {
+        cleanup_in(&dir);
+    }
+}
+
+fn cleanup_in(dir: &Path) {
+    let list = dir.join(OLD_LIST);
+    if let Ok(text) = std::fs::read_to_string(&list) {
+        let mut left = Vec::new();
+        for rel in text.lines().map(str::trim).filter(|l| l.ends_with(".old")) {
+            // Only plain relative paths inside the install folder.
+            if Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+                let p = dir.join(rel);
+                if p.exists() && std::fs::remove_file(&p).is_err() {
+                    left.push(rel.to_string());
+                }
+            }
+        }
+        if left.is_empty() {
+            let _ = std::fs::remove_file(&list);
+        } else {
+            let _ = std::fs::write(&list, left.join("\n"));
         }
     }
     let _ = std::fs::remove_dir_all(dir.join(STAGING_DIR));
@@ -288,6 +317,14 @@ mod tests {
         assert_eq!(std::fs::read_to_string(target.join("platforms/qwindows.dll")).unwrap(), "new dll");
         assert!(target.join("styles/qmodernwindowsstyle.dll").is_file());
         assert!(!staging.exists());
+
+        // Next start: only the listed leftovers go; an unrelated .old file stays.
+        std::fs::write(target.join("notes.old"), "mine").unwrap();
+        cleanup_in(&target);
+        assert!(!target.join("app.exe.old").exists());
+        assert!(!target.join("platforms/qwindows.dll.old").exists());
+        assert!(target.join("notes.old").is_file());
+        assert!(!target.join(OLD_LIST).exists());
     }
 
     #[test]

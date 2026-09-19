@@ -120,6 +120,50 @@ pub fn move_block(entries: &mut Vec<ProfileEntry>, keys: &[String], over_key: &s
     true
 }
 
+/// Move `keys` (a separator takes its whole group) so they sit right before `anchor`, or at the
+/// end when `anchor` is None. A group can't land inside another group: its anchor moves on to
+/// the next separator. Returns false when the order did not change.
+pub fn move_before(entries: &mut Vec<ProfileEntry>, keys: &[String], anchor: Option<&str>) -> bool {
+    let mut expanded: HashSet<String> = HashSet::new();
+    for k in keys {
+        if entries.iter().any(|e| &e.key == k) {
+            expanded.insert(k.clone());
+            if is_separator_key(k) {
+                expanded.extend(group_members(entries, k));
+            }
+        }
+    }
+    if expanded.is_empty() {
+        return false;
+    }
+    let moving: Vec<ProfileEntry> = entries.iter().filter(|e| expanded.contains(&e.key)).cloned().collect();
+    let rest: Vec<ProfileEntry> = entries.iter().filter(|e| !expanded.contains(&e.key)).cloned().collect();
+    let mut at = match anchor {
+        Some(a) if expanded.contains(a) => return false,
+        Some(a) => match rest.iter().position(|e| e.key == a) {
+            Some(i) => i,
+            None => return false,
+        },
+        None => rest.len(),
+    };
+    if moving.iter().any(ProfileEntry::is_separator) {
+        let inside_group = rest[..at].iter().any(ProfileEntry::is_separator);
+        if inside_group {
+            while at < rest.len() && !rest[at].is_separator() {
+                at += 1;
+            }
+        }
+    }
+    let mut out = rest[..at].to_vec();
+    out.extend(moving);
+    out.extend_from_slice(&rest[at..]);
+    if out.iter().map(|e| &e.key).eq(entries.iter().map(|e| &e.key)) {
+        return false;
+    }
+    *entries = out;
+    true
+}
+
 /// Keys hidden because their separator is collapsed.
 pub fn collapsed_keys(entries: &[ProfileEntry]) -> HashSet<String> {
     let mut hidden = HashSet::new();
@@ -156,6 +200,38 @@ mod tests {
         assert_eq!(group_members(&base(), "sep:B"), vec!["data:b1.pack"]);
         assert_eq!(group_of(&base(), "data:a2.pack").as_deref(), Some("sep:A"));
         assert_eq!(group_of(&base(), "data:top.pack"), None);
+    }
+
+    #[test]
+    fn move_before_places_packs_and_groups() {
+        let s = |v: &[&str]| v.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        // A pack into another group, before a member.
+        let mut v = base();
+        assert!(move_before(&mut v, &s(&["data:top.pack"]), Some("data:b1.pack")));
+        assert_eq!(keys(&v), vec!["sep:A", "data:a1.pack", "data:a2.pack", "sep:B", "data:top.pack", "data:b1.pack"]);
+        // To the end (joins the last group).
+        let mut v = base();
+        assert!(move_before(&mut v, &s(&["data:a1.pack"]), None));
+        assert_eq!(keys(&v).last(), Some(&"data:a1.pack"));
+        // Onto itself or its current place: no change.
+        let mut v = base();
+        assert!(!move_before(&mut v, &s(&["data:a1.pack"]), Some("data:a1.pack")));
+        assert!(!move_before(&mut v, &s(&["data:a1.pack"]), Some("data:a2.pack")));
+        // A group moves with its members, before another separator.
+        let mut v = base();
+        assert!(move_before(&mut v, &s(&["sep:B"]), Some("sep:A")));
+        assert_eq!(keys(&v), vec!["data:top.pack", "sep:B", "data:b1.pack", "sep:A", "data:a1.pack", "data:a2.pack"]);
+        // A group dropped inside another group lands after that group instead of splitting it.
+        let mut v = base();
+        assert!(move_before(&mut v, &s(&["sep:A"]), Some("data:b1.pack")));
+        assert_eq!(keys(&v), vec!["data:top.pack", "sep:B", "data:b1.pack", "sep:A", "data:a1.pack", "data:a2.pack"]);
+        // Group members dragged along with their separator are not counted twice.
+        let mut v = base();
+        assert!(move_before(&mut v, &s(&["sep:A", "data:a1.pack"]), None));
+        assert_eq!(keys(&v), vec!["data:top.pack", "sep:B", "data:b1.pack", "sep:A", "data:a1.pack", "data:a2.pack"]);
+        // Unknown keys are ignored.
+        let mut v = base();
+        assert!(!move_before(&mut v, &s(&["data:nope.pack"]), None));
     }
 
     #[test]

@@ -4,6 +4,27 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+### Changed
+- **Native Qt app.** The window is now built with Qt Widgets from Rust instead of an embedded web
+  page (HTML/CSS). Same layout: header over the mod list, details and launch controls on the
+  right. The look follows the Windows light/dark setting, with the Windows 11 style where it is
+  available and a neutral Fusion style on Windows 10.
+- Groups are real tree rows: fold them with the arrow, tick the header to turn the whole group
+  on or off, and drag a group to move all of its mods.
+- The app now ships as a zip (`TKModManager-x64.zip`: the exe plus its Qt files) and updates in
+  place from it.
+
+### Removed
+- The per-mod manual script-extender override. A mod needs the script extender only when its
+  pack has `SE/script_extender.json`.
+
+### Upgrading from 0.3.x
+- 0.3.x looks for a single exe in the release and will say there is no update. Download
+  `TKModManager-x64.zip` once, unpack it into a folder and start `TKModManager.exe`. Settings,
+  profiles, notes and downloaded DLLs are kept (they live in `%APPDATA%\TKModManager`).
+
 ## [0.3.1] - 2026-09-18
 
 ### Changed

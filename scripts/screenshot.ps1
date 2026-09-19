@@ -1,5 +1,5 @@
 # Capture the TK Mod Manager window to a PNG (dev aid). Usage: powershell -File scripts\screenshot.ps1 out.png
-param([string]$Out = "shot.png", [string]$Title = "TK Mod Manager")
+param([string]$Out = "shot.png", [string]$Title = "TK Mod Manager", [string]$Process = "")
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
@@ -12,7 +12,7 @@ public class Win32 {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
 }
 "@
-$proc = Get-Process | Where-Object { $_.MainWindowTitle -like "*$Title*" } | Select-Object -First 1
+$proc = Get-Process | Where-Object { $_.MainWindowTitle -like "*$Title*" -and (-not $Process -or $_.ProcessName -eq $Process) } | Select-Object -First 1
 if (-not $proc) { Write-Error "window '$Title' not found"; exit 1 }
 $h = $proc.MainWindowHandle
 $r = New-Object Win32+RECT

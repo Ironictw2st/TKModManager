@@ -1,11 +1,5 @@
-# Dependencies
-/node_modules
-
 # Build output
-/dist
-/src-tauri/target
-/src-tauri/gen/schemas
-*.tsbuildinfo
+/target
 
 # Editor / OS cruft
 .DS_Store
@@ -17,5 +11,5 @@ Thumbs.db
 # Dev screenshots
 /scripts/*.png
 
-# Local release copies
+# Release staging and zips (scripts/release.ps1)
 /release

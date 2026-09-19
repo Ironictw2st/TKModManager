@@ -1,7 +1,24 @@
 [package]
 name = "tkmm"
+description = "TK Mod Manager: Qt Widgets UI"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tkmm"
+path = "src/main.rs"
 
 [dependencies]
 tkmm_core = { path = "../core" }
+serde_json = "1"
+# Qt 6 bindings generated with ritual in the local RPFM clone (the same crates RPFM uses).
+# They build only inside the KDE Craft Qt 6 / MSVC environment: see scripts/build.ps1.
+cpp_core = { path = "../../../GitHUb/RPFM/3rdparty/src/ritual/cpp_core" }
+qt_core = { path = "../../../GitHUb/RPFM/3rdparty/src/ritual/output/out/qt_core" }
+qt_gui = { path = "../../../GitHUb/RPFM/3rdparty/src/ritual/output/out/qt_gui" }
+qt_widgets = { path = "../../../GitHUb/RPFM/3rdparty/src/ritual/output/out/qt_widgets" }
+
+[build-dependencies]
+winres = "0.1"

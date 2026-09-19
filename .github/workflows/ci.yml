@@ -1,6 +1,8 @@
 name: CI
 
-# Compile + typecheck + tests on every push to master and on PRs.
+# Tests for the GUI-free core on every push to master and on PRs. The Qt app (crates/app) needs
+# the local KDE Craft Qt and the ritual-generated bindings, so it is built and released from the
+# maintainer's PC with scripts/release.ps1.
 on:
   push:
     branches: [master]
@@ -11,30 +13,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  core:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
-      - run: npm ci
+      # The app's path dependencies (ritual Qt bindings) only exist locally: drop it from the
+      # workspace so Cargo doesn't try to resolve them.
+      - name: Core-only workspace
+        shell: pwsh
+        run: (Get-Content Cargo.toml) -replace '"crates/app"', '' | Set-Content Cargo.toml
 
-      # Typecheck + frontend bundle (the Rust build embeds ../dist).
-      - run: npm run build
-      - run: npm test
-
-      - name: Cargo build
-        run: cargo build --manifest-path src-tauri/Cargo.toml --locked
-
-      - name: Cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Test tkmm_core
+        run: cargo test -p tkmm_core
