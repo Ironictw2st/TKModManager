@@ -83,11 +83,16 @@ pub struct ModListUi {
     pub status: QBox<QComboBox>,
     pub tag: QBox<QComboBox>,
     pub hidden: QBox<QCheckBox>,
+    /// "Show missing (N)": reveals entries whose pack is not installed. Hidden when N is 0.
+    pub missing: QBox<QCheckBox>,
     pub count: QBox<QLabel>,
     pub updated_btn: QBox<QPushButton>,
     pub group_btn: QBox<QPushButton>,
     pub sort_btn: QBox<QPushButton>,
     pub top_btn: QBox<QPushButton>,
+    pub rescan_btn: QBox<QPushButton>,
+    /// "Remove missing…": drops the uninstalled entries from the profile. Hidden when none.
+    pub purge_btn: QBox<QPushButton>,
     pub density: QBox<QComboBox>,
     /// The view's font size before any row-size adjustment.
     base_point_size: f64,
@@ -148,6 +153,13 @@ impl ModListUi {
             }
             let hidden = QCheckBox::from_q_string(&qs("Show hidden"));
             bar.add_widget(&hidden);
+            let missing = QCheckBox::from_q_string(&qs("Show missing"));
+            missing.set_tool_tip(&qs(
+                "Show entries whose pack is not installed any more (unsubscribed or deleted). \
+                 They are kept in the profile so the load order comes back if you re-subscribe.",
+            ));
+            missing.set_visible(false);
+            bar.add_widget(&missing);
             bar.add_stretch_1a(1);
             layout.add_layout_1a(&bar);
 
@@ -165,12 +177,18 @@ impl ModListUi {
             sort_btn.set_tool_tip(&qs("Sort by pack file name (the CA launcher's default order), inside each group"));
             let top_btn = QPushButton::from_q_string(&qs("Enabled to top"));
             top_btn.set_tool_tip(&qs("Move enabled mods above disabled ones, inside each group"));
+            let rescan_btn = QPushButton::from_q_string(&qs("Rescan"));
+            rescan_btn.set_tool_tip(&qs("Look for added and removed packs now (also runs when the window regains focus)"));
+            let purge_btn = QPushButton::new();
+            purge_btn.set_visible(false);
             let density = density_combo();
             density.set_tool_tip(&qs("Height of the rows in the mod list (also in Settings)"));
+            bar2.add_widget(&purge_btn);
             bar2.add_widget(&density);
             bar2.add_widget(&group_btn);
             bar2.add_widget(&sort_btn);
             bar2.add_widget(&top_btn);
+            bar2.add_widget(&rescan_btn);
             layout.add_layout_1a(&bar2);
 
             let model = QStandardItemModel::new_0a();
@@ -211,11 +229,14 @@ impl ModListUi {
                 status,
                 tag,
                 hidden,
+                missing,
                 count,
                 updated_btn,
                 group_btn,
                 sort_btn,
                 top_btn,
+                rescan_btn,
+                purge_btn,
                 density,
                 base_point_size,
                 view,
@@ -255,6 +276,15 @@ impl ModListUi {
             this.st.borrow_mut().filters.show_hidden = on;
             this.mark(DIRTY_LIST);
         }));
+        let this = app.clone();
+        self.missing.clicked().connect(&SlotOfBool::new(w, move |on| {
+            this.st.borrow_mut().filters.show_missing = on;
+            this.mark(DIRTY_LIST);
+        }));
+        let this = app.clone();
+        self.rescan_btn.clicked().connect(&SlotNoArgs::new(w, move || this.rescan()));
+        let this = app.clone();
+        self.purge_btn.clicked().connect(&SlotNoArgs::new(w, move || this.purge_missing()));
         let this = app.clone();
         self.updated_btn.clicked().connect(&SlotNoArgs::new(w, move || {
             this.st.borrow_mut().filters.enabled = "updated".into();
@@ -553,10 +583,17 @@ impl ModListUi {
         } else {
             let selected = app.st.borrow().selected.clone();
             let keys = if selected.contains(&key) { selected } else { vec![key.clone()] };
+            // A pack that is not installed cannot be enabled - its check box is not checkable and
+            // double-click ignores it - so the menu must agree, or it writes a phantom "enabled"
+            // entry that inflates the counts and never loads.
+            let keys: Vec<String> = {
+                let st = app.st.borrow();
+                keys.into_iter().filter(|k| st.module(k).is_some()).collect()
+            };
             let n = if keys.len() > 1 { format!(" ({})", keys.len()) } else { String::new() };
             for (label, on) in [("Enable", true), ("Disable", false)] {
                 let (this, ks) = (app.clone(), keys.clone());
-                add(&format!("{label}{n}"), !running, Box::new(move || {
+                add(&format!("{label}{n}"), !running && !ks.is_empty(), Box::new(move || {
                     this.st.borrow_mut().update_active(|p| profile_ops::toggle(&mut p.entries, &ks, Some(on)));
                     this.mark(DIRTY_LIST | DIRTY_LAUNCH | DIRTY_HEADER | DIRTY_DETAILS);
                 }));
@@ -589,6 +626,15 @@ impl ModListUi {
             }));
             let (this, k) = (app.clone(), key.clone());
             add("Copy key", true, Box::new(move || this.clipboard_set(&k)));
+            let n_missing = {
+                let st = app.st.borrow();
+                profile_ops::missing_keys(&st.active(), &st.mods).len()
+            };
+            if n_missing > 0 {
+                menu.add_separator();
+                let this = app.clone();
+                add(&format!("Remove missing entries ({n_missing})…"), !running, Box::new(move || this.purge_missing()));
+            }
         }
         menu.exec_1a_mut(&self.view.viewport().map_to_global_q_point(pos));
     }
@@ -624,6 +670,14 @@ impl ModListUi {
             c.set_current_index(i.max(0));
         }
         self.hidden.set_checked(f.show_hidden);
+        // Entries whose pack is not installed: hidden by default, but the user needs to know they
+        // are there (they hold a place in the load order) and be able to clear them out.
+        let missing_count = profile.entries.iter().filter(|e| !e.is_separator() && st.module(&e.key).is_none()).count();
+        self.missing.set_visible(missing_count > 0);
+        self.missing.set_text(&qs(format!("Show missing ({missing_count})")));
+        self.missing.set_checked(f.show_missing);
+        self.purge_btn.set_visible(missing_count > 0 && !st.game_running);
+        self.purge_btn.set_text(&qs(format!("Remove missing ({missing_count})…")));
         self.group_btn.set_enabled(grouped);
         for b in [&self.sort_btn, &self.top_btn] {
             b.set_enabled(!st.game_running);
@@ -686,6 +740,9 @@ impl ModListUi {
             if hidden_keys.contains(&e.key) && !f.show_hidden {
                 continue;
             }
+            if m.is_none() && !f.show_missing {
+                continue;
+            }
             let ws = m.and_then(|m| st.ws_of(m));
             let stat = status::mod_status(m, ws, cutoff);
             let req = st.se_req(&e.key);
@@ -693,10 +750,10 @@ impl ModListUi {
             if is_updated {
                 updated_count += 1;
             }
-            if f.source != "all" && m.map(|m| source_value(m.source) != f.source).unwrap_or(false) {
+            if f.source != "all" && m.map(|m| source_value(m.source) != f.source).unwrap_or(true) {
                 continue;
             }
-            if f.pack_type != "all" && m.map(|m| (m.pack_type == PackType::Movie) != (f.pack_type == "movie")).unwrap_or(false) {
+            if f.pack_type != "all" && m.map(|m| (m.pack_type == PackType::Movie) != (f.pack_type == "movie")).unwrap_or(true) {
                 continue;
             }
             match f.enabled.as_str() {
@@ -846,9 +903,13 @@ impl ModListUi {
         }
         self.view.vertical_scroll_bar().set_value(scroll);
 
-        let total = profile.entries.iter().filter(|e| !e.is_separator()).count();
-        let enabled = profile.entries.iter().filter(|e| e.enabled && !e.is_separator()).count();
-        self.count.set_text(&qs(format!("{enabled} enabled of {total} · {shown} shown{}", if grouped { "" } else { " · groups hidden while sorting or filtering" })));
+        let total = profile.entries.iter().filter(|e| !e.is_separator()).count() - missing_count;
+        let enabled = st.count_enabled(&profile);
+        let missing_note = if missing_count > 0 { format!(" · {missing_count} missing") } else { String::new() };
+        self.count.set_text(&qs(format!(
+            "{enabled} enabled of {total} · {shown} shown{missing_note}{}",
+            if grouped { "" } else { " · groups hidden while sorting or filtering" }
+        )));
         self.updated_btn.set_visible(updated_count > 0 && f.enabled != "updated");
         self.updated_btn.set_text(&qs(format!("{updated_count} updated since last played")));
         let _ = update::ASSET_NAME;

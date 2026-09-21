@@ -12,7 +12,12 @@ fn entry(key: &str, enabled: bool) -> ProfileEntry {
 }
 
 /// Make sure every installed pack has an entry: new packs are appended disabled, in file-name
-/// order. Entries for packs that are gone stay (shown as missing). Returns true when changed.
+/// order. Returns true when changed.
+///
+/// Entries for packs that are gone are **kept**, deliberately: a pack can be missing because the
+/// user unsubscribed, but also because its drive is offline or the scan of that folder failed, and
+/// dropping the entry would throw away its place in the load order. The list hides them instead
+/// (see the `show_missing` filter), and [`remove_missing`] purges them when the user asks.
 pub fn reconcile(profile: &mut Profile, mods: &[ModEntry]) -> bool {
     let have: HashSet<&str> = profile.entries.iter().map(|e| e.key.as_str()).collect();
     let mut missing: Vec<&ModEntry> = mods.iter().filter(|m| !have.contains(m.key.as_str())).collect();
@@ -22,6 +27,25 @@ pub fn reconcile(profile: &mut Profile, mods: &[ModEntry]) -> bool {
     missing.sort_by(|a, b| compare_pack_names(&a.file, &b.file));
     profile.entries.extend(missing.into_iter().map(|m| entry(&m.key, false)));
     true
+}
+
+/// Drop entries whose pack is not installed, from one profile. Separators always stay.
+/// Returns how many were removed.
+///
+/// Only ever called for an explicit user action: a scan that comes up empty because a folder was
+/// unreadable must not silently erase the load order (`packs::scan` returns nothing for a root it
+/// cannot read), so the caller checks the relevant folder is really there first.
+pub fn remove_missing(profile: &mut Profile, mods: &[ModEntry]) -> usize {
+    let have: HashSet<&str> = mods.iter().map(|m| m.key.as_str()).collect();
+    let before = profile.entries.len();
+    profile.entries.retain(|e| e.is_separator() || have.contains(e.key.as_str()));
+    before - profile.entries.len()
+}
+
+/// Keys in `profile` with no installed pack (separators excluded).
+pub fn missing_keys(profile: &Profile, mods: &[ModEntry]) -> Vec<String> {
+    let have: HashSet<&str> = mods.iter().map(|m| m.key.as_str()).collect();
+    profile.entries.iter().filter(|e| !e.is_separator() && !have.contains(e.key.as_str())).map(|e| e.key.clone()).collect()
 }
 
 pub fn reconcile_all(doc: &mut ProfilesDoc, mods: &[ModEntry]) -> bool {
@@ -209,6 +233,36 @@ mod tests {
         assert_eq!(keys(&prof.entries), vec!["data:z.pack", "sep:1", "ws:1/gone.pack", "data:!a.pack", "data:b.pack"]);
         assert!(!prof.entries[3].enabled);
         assert!(!reconcile(&mut prof, &[m("data:z.pack", "z.pack", 0)]));
+    }
+
+    /// The counterpart to `reconcile` keeping them: the user can purge them on demand, and
+    /// separators survive so the groups do not collapse.
+    #[test]
+    fn remove_missing_drops_only_uninstalled_packs() {
+        let mods = [m("data:z.pack", "z.pack", 0), m("data:a.pack", "a.pack", 0)];
+        let mut prof = p(vec![
+            entry("data:z.pack", true),
+            entry("sep:1", false),
+            entry("ws:1/gone.pack", true),
+            entry("data:a.pack", false),
+            entry("ws:2/also_gone.pack", false),
+        ]);
+        assert_eq!(missing_keys(&prof, &mods), vec!["ws:1/gone.pack", "ws:2/also_gone.pack"]);
+        assert_eq!(remove_missing(&mut prof, &mods), 2);
+        assert_eq!(keys(&prof.entries), vec!["data:z.pack", "sep:1", "data:a.pack"]);
+        assert!(prof.entries[0].enabled, "an installed pack keeps its enabled state");
+        // Idempotent, and nothing left to report.
+        assert_eq!(remove_missing(&mut prof, &mods), 0);
+        assert!(missing_keys(&prof, &mods).is_empty());
+    }
+
+    /// Guard rail for the whole design: an empty scan (an unreadable folder looks exactly like
+    /// this) would wipe every entry, which is why `remove_missing` is never called automatically.
+    #[test]
+    fn remove_missing_with_an_empty_scan_would_clear_everything() {
+        let mut prof = p(vec![entry("data:z.pack", true), entry("sep:1", false)]);
+        assert_eq!(remove_missing(&mut prof, &[]), 1);
+        assert_eq!(keys(&prof.entries), vec!["sep:1"]);
     }
 
     #[test]

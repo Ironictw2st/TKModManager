@@ -151,13 +151,42 @@ fn fetch_required_items(client: &reqwest::blocking::Client, id: &str) -> Result<
     Ok(parse_required_items(&html, id))
 }
 
+/// Byte offset just past the `</div>` closing the container that `rest` starts inside.
+///
+/// Each required item is an `<a>` wrapping its own `<div>`, so the *first* `</div>` closes an
+/// item, not the section: the nesting has to be walked. Every offset here comes from matching an
+/// ASCII substring, so it always lands on a char boundary - slicing at a fixed byte length would
+/// panic on the multi-byte characters (em dashes, CJK titles, Cyrillic names) that Workshop pages
+/// are full of, and `panic = "abort"` would take the whole app down with it.
+fn container_end(rest: &str) -> usize {
+    let (mut depth, mut i) = (0usize, 0usize);
+    while i < rest.len() {
+        let open = rest[i..].find("<div");
+        let close = rest[i..].find("</div>");
+        match (open, close) {
+            (Some(o), Some(c)) if o < c => {
+                depth += 1;
+                i += o + "<div".len();
+            }
+            (_, Some(c)) => {
+                i += c + "</div>".len();
+                if depth == 0 {
+                    return i;
+                }
+                depth -= 1;
+            }
+            _ => break,
+        }
+    }
+    rest.len()
+}
+
 pub fn parse_required_items(html: &str, self_id: &str) -> Vec<String> {
     let Some(start) = html.find("requiredItemsContainer") else { return vec![] };
     let rest = &html[start..];
-    let end = rest.find("</div>").map(|e| e + 6).unwrap_or(rest.len());
     // The container holds one <a href="...?id=NNN"> per required item; collect until the
-    // section closes. Nested divs are rare here; be generous and scan a bounded window.
-    let window = &rest[..end.max(4000.min(rest.len()))];
+    // section closes, so links further down the page are not mistaken for requirements.
+    let window = &rest[..container_end(rest)];
     let mut out = Vec::new();
     let mut pos = 0;
     while let Some(i) = window[pos..].find("filedetails/?id=") {
@@ -301,7 +330,30 @@ mod tests {
           <a href="https://steamcommunity.com/workshop/filedetails/?id=111" target="_blank"><div class="requiredItem">X</div></a>
           <a href="https://steamcommunity.com/workshop/filedetails/?id=222"><div>Y</div></a>
         </div><a href="https://steamcommunity.com/sharedfiles/filedetails/?id=333">unrelated</a>"#;
-        assert_eq!(parse_required_items(html, "999"), vec!["111", "222", "333"]);
+        assert_eq!(parse_required_items(html, "999"), vec!["111", "222"]);
         assert!(parse_required_items("<html></html>", "1").is_empty());
+    }
+
+    /// Three bytes each, so the `fill` loop below steps the old 4000-byte cut across a character.
+    const EM_DASH: &str = "\u{2014}";
+    const HAN: &str = "\u{6f22}";
+
+    /// Regression: the window used to be `rest[..end.max(4000.min(rest.len()))]`, i.e. always at
+    /// least 4000 bytes. On a page whose required-items section closes early and is followed by
+    /// long multi-byte body text - the normal shape of a Workshop page - byte 4000 lands inside a
+    /// character and the slice panics. With `panic = "abort"` that kills the whole app, so this
+    /// walks `fill` across every alignment.
+    #[test]
+    fn long_page_with_multibyte_does_not_panic() {
+        for fill in 0..6 {
+            let html = format!(
+                r#"<div class="requiredItemsContainer"><a href="filedetails/?id=111"></a></div><p>{}{}</p>"#,
+                "x".repeat(fill),
+                EM_DASH.repeat(2000),
+            );
+            assert_eq!(parse_required_items(&html, "999"), vec!["111"], "fill {fill}");
+        }
+        // A page of nothing but multi-byte text, with no required items at all.
+        assert!(parse_required_items(&format!("<p>{}</p>", HAN.repeat(5000)), "1").is_empty());
     }
 }

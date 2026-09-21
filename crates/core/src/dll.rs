@@ -106,6 +106,10 @@ pub struct CatalogEntry {
 /// `dll\pinned.txt`: the version the user chose to always inject (rollback).
 pub const PIN_NAME: &str = "pinned.txt";
 
+/// Suffix of the folder a download stages into. Such a folder is an interrupted install: its
+/// DLL may be truncated and its hash was never checked, so it is never a usable version.
+const PARTIAL_SUFFIX: &str = ".partial";
+
 pub fn dll_root() -> PathBuf {
     paths::app_data_dir().join("dll")
 }
@@ -115,8 +119,12 @@ fn version_key(v: &str) -> semver::Version {
 }
 
 pub fn list_installed(fp: Option<&ExeFingerprint>) -> Vec<InstalledDll> {
+    list_installed_in(&dll_root(), fp)
+}
+
+fn list_installed_in(root: &Path, fp: Option<&ExeFingerprint>) -> Vec<InstalledDll> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dll_root()) else { return out };
+    let Ok(rd) = std::fs::read_dir(root) else { return out };
     for e in rd.flatten() {
         let dir = e.path();
         let dll = dir.join(DLL_NAME);
@@ -124,6 +132,11 @@ pub fn list_installed(fp: Option<&ExeFingerprint>) -> Vec<InstalledDll> {
             continue;
         }
         let version = e.file_name().to_string_lossy().into_owned();
+        // An interrupted download left this behind; offering it would let a truncated DLL be
+        // selected and injected.
+        if version.ends_with(PARTIAL_SUFFIX) {
+            continue;
+        }
         let manifest: Option<Manifest> = std::fs::read(dir.join(MANIFEST_NAME))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok());
@@ -255,6 +268,32 @@ fn sha256_of(path: &Path) -> Result<String, String> {
 
 /// Download a release into `dll\<version>\` (manifest first, then the DLL, verified by sha256).
 /// Emits `dll-progress` 0..1. Never touches other version folders.
+/// Download the manifest and DLL into `staging`, check the hash, then move it to `dir`.
+/// The caller removes `staging` if this fails.
+fn install_staged(staging: &Path, dir: &Path, dll_url: &str, manifest_url: &str, progress: &dyn Fn(f64)) -> Result<(), String> {
+    download_to(manifest_url, &staging.join(MANIFEST_NAME), progress)?;
+    let manifest: Manifest = serde_json::from_slice(
+        &std::fs::read(staging.join(MANIFEST_NAME)).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("bad manifest.json: {e}"))?;
+    download_to(dll_url, &staging.join(DLL_NAME), progress)?;
+    if !manifest.sha256.is_empty() {
+        let got = sha256_of(&staging.join(DLL_NAME))?;
+        if !got.eq_ignore_ascii_case(manifest.sha256.trim()) {
+            return Err(format!("sha256 mismatch: manifest {} vs download {got}", manifest.sha256));
+        }
+    }
+    if dir.exists() {
+        // Re-download over an existing (possibly loaded) version: keep the old folder if the
+        // game is running; otherwise replace it.
+        if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
+            return Err("that DLL version is installed and the game is running; quit the game first".into());
+        }
+        std::fs::remove_dir_all(dir).map_err(|e| format!("replace {}: {e}", dir.display()))?;
+    }
+    std::fs::rename(staging, dir).map_err(|e| format!("finalise {}: {e}", dir.display()))
+}
+
 /// Blocking (network). `progress` receives 0..1 per file.
 pub fn dll_install(ctx: &AppContext, remote: &RemoteDll, progress: &dyn Fn(f64)) -> Result<InstalledDll, String> {
     let (version, dll_url, manifest_url) = (remote.version.clone(), remote.dll_url.clone(), remote.manifest_url.clone());
@@ -263,33 +302,17 @@ pub fn dll_install(ctx: &AppContext, remote: &RemoteDll, progress: &dyn Fn(f64))
         return Err("bad version".into());
     }
     let dir = dll_root().join(&version);
-    let staging = dll_root().join(format!("{version}.partial"));
+    let staging = dll_root().join(format!("{version}{PARTIAL_SUFFIX}"));
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
 
-    download_to(&manifest_url, &staging.join(MANIFEST_NAME), progress)?;
-    let manifest: Manifest = serde_json::from_slice(
-        &std::fs::read(staging.join(MANIFEST_NAME)).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("bad manifest.json: {e}"))?;
-    download_to(&dll_url, &staging.join(DLL_NAME), progress)?;
-    if !manifest.sha256.is_empty() {
-        let got = sha256_of(&staging.join(DLL_NAME))?;
-        if !got.eq_ignore_ascii_case(manifest.sha256.trim()) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(format!("sha256 mismatch: manifest {} vs download {got}", manifest.sha256));
-        }
+    // Every failure below has to take the staging folder with it. A half-downloaded, unverified
+    // DLL left on disk used to be listed as a real installed version and could be injected.
+    let staged = install_staged(&staging, &dir, &dll_url, &manifest_url, progress);
+    if staged.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
     }
-    if dir.exists() {
-        // Re-download over an existing (possibly loaded) version: keep the old folder if the
-        // game is running; otherwise replace it.
-        if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err("that DLL version is installed and the game is running; quit the game first".into());
-        }
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("replace {}: {e}", dir.display()))?;
-    }
-    std::fs::rename(&staging, &dir).map_err(|e| format!("finalise {}: {e}", dir.display()))?;
+    staged?;
 
     let p = ctx.game_paths();
     let fp = p.exe.as_deref().and_then(|e| fingerprint::read(Path::new(e)).ok());
@@ -440,6 +463,20 @@ mod tests {
         // Pinned but built for another game build, or not installed: newest match instead.
         assert_eq!(select(&installed, Some("0.32.0")).unwrap().version, "0.31.0");
         assert_eq!(select(&installed, Some("0.1.0")).unwrap().version, "0.31.0");
+    }
+
+    /// An interrupted download leaves `<version>.partial` holding an unverified, possibly
+    /// truncated DLL. It must never be listed, or `select` could pick it and inject it.
+    #[test]
+    fn partial_downloads_are_not_listed_as_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["0.36.0", "0.36.1.partial"] {
+            let d = tmp.path().join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join(DLL_NAME), b"MZ").unwrap();
+        }
+        let found = list_installed_in(tmp.path(), None);
+        assert_eq!(found.iter().map(|d| d.version.as_str()).collect::<Vec<_>>(), vec!["0.36.0"]);
     }
 
     #[test]

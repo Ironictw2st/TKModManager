@@ -48,6 +48,15 @@ pub struct App {
     pub hidden_ok: Cell<bool>,
     pub last_poll: Cell<Instant>,
     pub last_logs: Cell<Instant>,
+    /// Bumped per scan request. Scans run on unsynchronised threads, so without this a slow
+    /// earlier one can land after a newer one and put the previous copy's mods back.
+    scan_gen: Cell<u64>,
+    /// Window had focus on the last tick, for the rescan-on-focus check.
+    was_active: Cell<bool>,
+    last_focus_scan: Cell<Instant>,
+    /// Workshop ids already asked about. Steam never returns some of them (deleted or private
+    /// items), so they stay uncached; without this every rescan would request them again.
+    ws_requested: RefCell<std::collections::HashSet<String>>,
     pub notes_pending: RefCell<Option<(String, String, Instant)>>,
     pub verify_text: RefCell<String>,
     pub update_meta: RefCell<Option<update::UpdateMeta>>,
@@ -209,6 +218,10 @@ impl App {
                 hidden_ok: Cell::new(hidden_ok),
                 last_poll: Cell::new(Instant::now()),
                 last_logs: Cell::new(Instant::now() - Duration::from_secs(10)),
+                scan_gen: Cell::new(0),
+                was_active: Cell::new(true),
+                last_focus_scan: Cell::new(Instant::now()),
+                ws_requested: RefCell::new(std::collections::HashSet::new()),
                 notes_pending: RefCell::new(None),
                 verify_text: RefCell::new(String::new()),
                 update_meta: RefCell::new(None),
@@ -322,11 +335,13 @@ impl App {
     // ------------------------------------------------------------------ background jobs
 
     pub fn rescan(self: &Rc<Self>) {
+        let gen = self.scan_gen.get() + 1;
+        self.scan_gen.set(gen);
         let ctx = self.ctx.clone();
         self.bus.spawn(move |_| {
             let paths = ctx.game_paths();
             let mods = ctx.scan();
-            Some(UiEvent::Scanned { paths, mods, installs: tkmm_core::paths::detect_installs() })
+            Some(UiEvent::Scanned { gen, paths, mods, installs: tkmm_core::paths::detect_installs() })
         });
     }
 
@@ -348,6 +363,7 @@ impl App {
             v.dedup();
             v
         };
+        self.ws_requested.borrow_mut().extend(ids.iter().cloned());
         let ctx = self.ctx.clone();
         self.bus.spawn(move |bus| {
             bus.send(UiEvent::Workshop(workshop::workshop_cached()));
@@ -636,6 +652,17 @@ impl App {
             }
         }
 
+        // Subscribing and unsubscribing happens in Steam, in another window, and nothing tells us
+        // the Workshop folder changed - so rescan when the window comes back to the front.
+        // Record the state first: folding the `replace` into the `&&` below would short-circuit
+        // while the window is inactive, so losing focus would never be noticed.
+        let active = tkmm_core::winproc::app_has_foreground();
+        let was_active = self.was_active.replace(active);
+        if active && !was_active && self.last_focus_scan.get().elapsed() > Duration::from_secs(3) {
+            self.last_focus_scan.set(Instant::now());
+            self.rescan();
+        }
+
         // Game-running safety poll (the launch thread reports games it follows).
         if self.last_poll.get().elapsed() > Duration::from_secs(5) {
             self.last_poll.set(Instant::now());
@@ -697,7 +724,10 @@ impl App {
 
     unsafe fn handle(self: &Rc<Self>, e: UiEvent) {
         match e {
-            UiEvent::Scanned { paths, mods, installs } => {
+            UiEvent::Scanned { gen, paths, mods, installs } => {
+                if gen != self.scan_gen.get() {
+                    return; // superseded: a newer scan was requested while this one ran
+                }
                 let first = self.st.borrow().mods.is_empty();
                 {
                     let mut st = self.st.borrow_mut();
@@ -710,8 +740,36 @@ impl App {
                     st.installs = installs;
                     st.set_mods(mods);
                 }
+                {
+                    let mut guard = self.st.borrow_mut();
+                    let st = &mut *guard;
+                    // A row the list no longer shows must not stay selected, or the details pane
+                    // keeps describing a pack that just vanished. Group headers are not packs.
+                    if !st.filters.show_missing {
+                        let by_key = &st.by_key;
+                        let kept = |k: &String| by_key.contains_key(k) || tkmm_core::groups::is_separator_key(k);
+                        st.selected.retain(kept);
+                        if st.focused.as_ref().map(|k| !kept(k)).unwrap_or(false) {
+                            st.focused = None;
+                        }
+                    }
+                }
+                // A mod subscribed to while the app was open has no cached metadata, so its row
+                // would show the raw file name until the next restart. Only ids we have never
+                // asked about count, or a deleted item would be refetched on every rescan.
+                let unseen = {
+                    let st = self.st.borrow();
+                    let asked = self.ws_requested.borrow();
+                    st.mods
+                        .iter()
+                        .filter_map(|m| m.workshop_id.as_deref())
+                        .any(|id| !st.workshop.contains_key(id) && !asked.contains(id))
+                };
                 self.mark(DIRTY_ALL);
                 self.refresh_se_scan();
+                if !first && unseen {
+                    self.fetch_workshop();
+                }
                 if first {
                     // A leftover from a launch the app did not see out (closed mid-launch):
                     // drop it so a start straight from Epic does not reuse that profile.
@@ -842,7 +900,7 @@ impl App {
         self.profile_combo.clear();
         let mut current = 0;
         for (i, p) in st.profiles.profiles.iter().enumerate() {
-            let n = p.entries.iter().filter(|e| e.enabled && !e.is_separator()).count();
+            let n = st.count_enabled(p);
             self.profile_combo.add_item_q_string_q_variant(&qs(format!("{} ({n})", p.name)), &qt_core::QVariant::from_q_string(&qs(&p.name)));
             if p.name == st.profiles.active {
                 current = i as i32;
@@ -864,11 +922,67 @@ impl App {
         self.tray.rebuild(self);
     }
 
+    /// Drop profile entries whose pack is not installed. Only ever reached from an explicit user
+    /// action - nothing prunes automatically, because `packs::scan` returns nothing for a folder
+    /// it cannot read, and an offline drive looks exactly like an unsubscribe.
+    pub unsafe fn purge_missing(self: &Rc<Self>) {
+        let (name, here, total, no_workshop) = {
+            let st = self.st.borrow();
+            let active = st.active();
+            let here = profile_ops::missing_keys(&active, &st.mods).len();
+            let all: Vec<String> = st.profiles.profiles.iter().flat_map(|p| profile_ops::missing_keys(p, &st.mods)).collect();
+            let no_workshop = st.paths.workshop_dir.is_none() && all.iter().any(|k| k.starts_with("ws:"));
+            (active.name.clone(), here, all.len(), no_workshop)
+        };
+        if total == 0 {
+            return;
+        }
+        if no_workshop {
+            crate::dialogs::error(
+                &self.window,
+                "The Workshop folder was not found, so every Workshop pack looks missing right now. \
+                 Set it in Settings and rescan before removing these entries.",
+            );
+            return;
+        }
+        let plural = |n: usize| if n == 1 { "entry" } else { "entries" };
+        let question = if total == here {
+            format!("Remove {here} {} for packs that are not installed, from \"{name}\"?", plural(here))
+        } else {
+            format!(
+                "Remove {here} {} for packs that are not installed from \"{name}\", and {} more from your other profiles?",
+                plural(here),
+                total - here
+            )
+        };
+        let text = format!(
+            "{question}\n\nTheir place in the load order goes with them: re-subscribing adds the mod back at the bottom, disabled."
+        );
+        if !self.ask_yes_no("Remove missing entries", &text) {
+            return;
+        }
+        {
+            let mut guard = self.st.borrow_mut();
+            let st = &mut *guard;
+            let mods = &st.mods;
+            for p in &mut st.profiles.profiles {
+                profile_ops::remove_missing(p, mods);
+            }
+            let by_key = &st.by_key;
+            let kept = |k: &String| by_key.contains_key(k) || tkmm_core::groups::is_separator_key(k);
+            st.selected.retain(kept);
+            if st.focused.as_ref().map(|k| !kept(k)).unwrap_or(false) {
+                st.focused = None;
+            }
+            st.save_profiles();
+        }
+        self.mark(DIRTY_ALL);
+    }
+
     pub unsafe fn clipboard_set(&self, text: &str) {
         QGuiApplication::clipboard().set_text_1a(&qs(text));
     }
 
-    #[allow(dead_code)]
     pub unsafe fn ask_yes_no(&self, title: &str, text: &str) -> bool {
         QMessageBox::question_q_widget2_q_string(&self.window, &qs(title), &qs(text)) == StandardButton::Yes
     }

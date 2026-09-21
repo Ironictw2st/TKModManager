@@ -4,6 +4,38 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+### Changed
+- **Unsubscribed mods disappear from the list.** A mod you unsubscribe from (or delete) no longer
+  sits in the list as a struck-through "missing" row. Its place in the load order is still kept,
+  so re-subscribing puts the mod back exactly where it was, still enabled - but it is out of the
+  way until then. **Show missing** in the list toolbar brings the rows back when you want to see
+  them, and **Remove missing** clears them out for good, from every profile.
+- The list now **rescans when the window comes back to the front**, so subscribing or
+  unsubscribing in Steam and switching back is enough; there is also a **Rescan** button in the
+  list toolbar, next to Sort A-Z. Newly subscribed mods pick up their Workshop title straight
+  away instead of showing the raw file name until the next restart.
+- "N enabled", the number beside each profile and the counts in the list no longer include packs
+  that are not installed. Those are skipped at launch, so the counts now say what will load.
+
+### Fixed
+- **Profiles could be lost.** Saving removed the old file before renaming the new one into place,
+  which left a moment where a crash or power cut lost it entirely - and a profiles file that
+  failed to load was then overwritten with an empty one. The save now replaces the file in a
+  single step, and nothing is ever written over a file that could not be read.
+- **The app could close itself while fetching Workshop details.** Reading a mod's "Required items"
+  cut the page at a fixed length, which crashed on any page with an em dash, or a Chinese,
+  Japanese or Cyrillic title near that point. Required items are also read more accurately now:
+  links further down the page are no longer listed as requirements.
+- A **movie pack from the Workshop loaded even when you turned it off**, if another pack from the
+  same mod was on. Data-folder movie packs were already handled; Workshop ones now are too.
+- The **script extender's log is read from the point of injection**, not from the top. A line from
+  a previous session could report "Script extender active" when nothing had loaded, or keep
+  reporting a build mismatch after the right version was installed.
+- An **interrupted script-extender download** left a folder behind that was listed as an installed
+  version and could be injected, even though the file was incomplete and never checked.
+- Right-clicking a mod that is not installed no longer offers Enable/Disable, which used to mark
+  an entry as on although it could never load.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

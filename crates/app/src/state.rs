@@ -35,6 +35,9 @@ pub struct Filters {
     pub status: String,
     pub tag: Option<String>,
     pub show_hidden: bool,
+    /// Show entries whose pack is not installed (unsubscribed or deleted). Off by default: the
+    /// row disappears, while the profile entry stays so the load order survives a re-subscribe.
+    pub show_missing: bool,
 }
 
 impl Default for Filters {
@@ -47,6 +50,7 @@ impl Default for Filters {
             status: "all".into(),
             tag: None,
             show_hidden: false,
+            show_missing: false,
         }
     }
 }
@@ -65,6 +69,9 @@ pub struct State {
     pub installs: Vec<GameInstall>,
     /// Which copy's profile file is loaded (profiles are per store).
     pub profiles_store: GameStore,
+    /// The profiles file was read successfully (or was simply missing). False after a corrupt
+    /// or unreadable file, which blocks saving so a bad read cannot overwrite the real thing.
+    pub profiles_ok: bool,
     pub mods: Vec<ModEntry>,
     pub by_key: HashMap<String, usize>,
     pub profiles: ProfilesDoc,
@@ -94,11 +101,22 @@ impl State {
     }
 
     /// Switch to another copy's profiles (each store has its own file).
+    ///
+    /// A failed read is remembered rather than papered over: `self.profiles` would otherwise keep
+    /// the previous store's document (or the empty default), and the next scan's `reconcile` would
+    /// save that straight over the file the user still has on disk.
     pub fn load_profiles_for(&mut self, store: GameStore) {
         self.profiles_store = store;
         match ops::load_profiles(store) {
-            Ok(p) => self.profiles = p,
-            Err(e) => self.error = Some(e),
+            Ok(p) => {
+                self.profiles = p;
+                self.profiles_ok = true;
+            }
+            Err(e) => {
+                self.profiles = ProfilesDoc::default();
+                self.profiles_ok = false;
+                self.error = Some(format!("{e}. Fix or move that file; nothing will be saved over it until then."));
+            }
         }
     }
 
@@ -159,6 +177,9 @@ impl State {
     }
 
     pub fn save_profiles(&mut self) {
+        if !self.profiles_ok {
+            return; // the file on disk could not be read; never write over it blind
+        }
         if let Err(e) = ops::save_profiles(self.profiles_store, &self.profiles) {
             self.error = Some(e);
         }
@@ -184,7 +205,13 @@ impl State {
         settings_cutoff.or_else(|| self.dll.as_ref().and_then(|d| d.game_fingerprint).map(|f| f.timestamp as u64)).unwrap_or(0)
     }
 
+    /// Enabled packs that actually exist. Entries for uninstalled packs are skipped at launch
+    /// (`ops::list_input_for`), so counting them would overstate what the game will load.
     pub fn enabled_count(&self) -> usize {
-        self.active().entries.iter().filter(|e| e.enabled && !e.is_separator()).count()
+        self.count_enabled(&self.active())
+    }
+
+    pub fn count_enabled(&self, p: &Profile) -> usize {
+        p.entries.iter().filter(|e| e.enabled && !e.is_separator() && self.by_key.contains_key(&e.key)).count()
     }
 }

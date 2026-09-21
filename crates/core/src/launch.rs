@@ -334,6 +334,12 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
         }
         _ => {}
     }
+    // The DLL appends to a log in its version folder that survives between runs, so only the
+    // text written after this injection says anything about this launch. Remember how long the
+    // log is now and read from there: otherwise yesterday's "hook installed" reports success for
+    // a failed injection, and a single past "fingerprint mismatch" pins every future launch.
+    let log = dll.parent().map(|d| d.join(dll::LOG_NAME));
+    let log_from = log.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0);
     emit(out, "menu", "Main menu up; injecting DLL", Some(pid));
     match inject_core::inject(pid, dll) {
         Ok(_) => emit(out, "injected", "DLL loaded; waiting for verification", Some(pid)),
@@ -342,10 +348,10 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
             return;
         }
     }
-    let Some(log) = dll.parent().map(|d| d.join(dll::LOG_NAME)) else { return };
+    let Some(log) = log else { return };
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        if let Ok(text) = std::fs::read_to_string(&log) {
+        if let Some(text) = read_log_from(&log, log_from) {
             if text.contains("hook installed") || text.contains("bootstrap complete") {
                 emit(out, "verified", "Script extender active", Some(pid));
                 return;
@@ -364,6 +370,18 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// The log's text from `offset` on, so a previous run's lines are not read as this run's.
+/// A log shorter than `offset` was truncated or replaced, so all of it is new.
+fn read_log_from(path: &Path, offset: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(if len < offset { 0 } else { offset })).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Block until the game ends, then record and report how it ended.
@@ -433,6 +451,32 @@ pub fn start_external_watcher(ctx: Ctx, out: Emit) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only what the DLL wrote after this injection may be read, or a previous run's verdict
+    /// is reported for this one.
+    #[test]
+    fn log_is_read_from_the_offset_taken_before_injecting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("script_extender.log");
+
+        // Nothing there yet: offset 0, and the whole file is this run's.
+        assert_eq!(read_log_from(&log, 0), None);
+        std::fs::write(&log, b"old run: fingerprint mismatch\n").unwrap();
+
+        let offset = std::fs::metadata(&log).unwrap().len();
+        assert_eq!(read_log_from(&log, offset).as_deref(), Some(""));
+
+        let mut text = std::fs::read(&log).unwrap();
+        text.extend_from_slice(b"hook installed\n");
+        std::fs::write(&log, &text).unwrap();
+        let seen = read_log_from(&log, offset).unwrap();
+        assert!(seen.contains("hook installed"));
+        assert!(!seen.contains("fingerprint mismatch"), "stale line leaked into this run");
+
+        // A log the DLL truncated on start is shorter than the offset: all of it is new.
+        std::fs::write(&log, b"bootstrap complete\n").unwrap();
+        assert!(read_log_from(&log, offset).unwrap().contains("bootstrap complete"));
+    }
 
     #[test]
     fn args_with_and_without_save() {

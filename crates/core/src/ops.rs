@@ -72,8 +72,9 @@ pub fn resolve_import(parsed: &ParsedList, scan: &[ModEntry]) -> Vec<ImportedEnt
         .collect()
 }
 
-/// Build the list-file input for a profile: enabled packs in order, plus exclusions for
-/// every data/ movie pack the profile does not enable.
+/// Build the list-file input for a profile: enabled packs in order, plus exclusions for every
+/// movie pack the profile does not enable that the engine would auto-load anyway - the ones in
+/// data/, and the ones sharing a folder we add as a working directory.
 pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
     let by_key: HashMap<&str, &ModEntry> = scan.iter().map(|m| (m.key.as_str(), m)).collect();
     let mut input = ListInput::default();
@@ -97,8 +98,10 @@ pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
         .filter(|m| m.pack_type == PackType::Movie)
         .filter(|m| match m.source {
             ModSource::Data => true,
-            ModSource::Folder => added_dirs.contains(&packs::norm_dir(&m.dir)),
-            ModSource::Workshop => false,
+            // A Workshop item folder becomes a working directory exactly like an extra folder
+            // does, so a disabled movie pack sitting next to an enabled pack in the same item
+            // would load regardless. Exclude it by name; the file itself is never touched.
+            ModSource::Workshop | ModSource::Folder => added_dirs.contains(&packs::norm_dir(&m.dir)),
         })
         .filter(|m| !enabled_keys.contains(m.key.as_str()))
         .map(|m| m.file.clone())
@@ -192,5 +195,34 @@ mod tests {
         assert!(text.contains("mod \"x.pack\";"));
         assert!(!text.contains("mod \"m2.pack\";"));
         assert!(text.contains("exclude_pack_file \"mv.pack\";"));
+    }
+
+    /// A Workshop item that ships a mod pack and a movie pack: enabling only the mod still adds
+    /// the item folder as a working directory, so the disabled movie has to be excluded by name.
+    #[test]
+    fn excludes_disabled_movies_in_an_added_workshop_folder() {
+        let scan = vec![
+            entry("ws:7/thing.pack", "thing.pack", r"C:\ws\7", ModSource::Workshop, PackType::Mod),
+            entry("ws:7/thing_movie.pack", "thing_movie.pack", r"C:\ws\7", ModSource::Workshop, PackType::Movie),
+            // Same item disabled entirely: its folder is never added, so nothing to exclude.
+            entry("ws:8/other_movie.pack", "other_movie.pack", r"C:\ws\8", ModSource::Workshop, PackType::Movie),
+        ];
+        let profile = Profile {
+            name: "p".into(),
+            entries: vec![
+                pe("ws:7/thing.pack"),
+                ProfileEntry { key: "ws:7/thing_movie.pack".into(), enabled: false, label: None, collapsed: false },
+                ProfileEntry { key: "ws:8/other_movie.pack".into(), enabled: false, label: None, collapsed: false },
+            ],
+            dll: false,
+            skip_intro: false,
+            last_played: None,
+        };
+        let input = list_input_for(&profile, &scan);
+        assert_eq!(input.excluded_data_movies, vec!["thing_movie.pack"]);
+        let text = modlist::build(&input);
+        assert!(text.contains("add_working_directory \"C:/ws/7\";"));
+        assert!(text.contains("exclude_pack_file \"thing_movie.pack\";"));
+        assert!(!text.contains("other_movie.pack"));
     }
 }

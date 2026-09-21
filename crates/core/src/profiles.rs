@@ -33,7 +33,9 @@ impl ProfileEntry {
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
     pub name: String,
-    /// Load order = array order. Entries may reference packs that are no longer installed.
+    /// Load order = array order. Entries may reference packs that are no longer installed: they
+    /// are kept so the load order survives a re-subscribe, hidden in the list, and purged only
+    /// when the user asks (`profile_ops::remove_missing`).
     pub entries: Vec<ProfileEntry>,
     /// Inject the script extender after launch.
     #[serde(default)]

@@ -37,6 +37,26 @@ extern "system" {
     fn Module32FirstW(snap: Handle, entry: *mut ModuleEntry32W) -> i32;
     fn Module32NextW(snap: Handle, entry: *mut ModuleEntry32W) -> i32;
     fn GetLastError() -> u32;
+    fn GetForegroundWindow() -> Handle;
+    fn GetWindowThreadProcessId(hwnd: Handle, pid: *mut u32) -> u32;
+}
+
+/// Is the window currently in front one of ours?
+///
+/// Used to rescan when the user comes back from Steam. Qt cannot answer this on this setup:
+/// `QWidget::isActiveWindow()` stays true even while the window is minimised, and
+/// `QGuiApplication::applicationState()` stays `ApplicationActive` with another app in front,
+/// so ask Windows for the foreground window's owner instead.
+pub fn app_has_foreground() -> bool {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        pid != 0 && pid == std::process::id()
+    }
 }
 
 /// An open process handle good for waiting and reading the exit code.

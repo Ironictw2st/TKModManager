@@ -22,7 +22,9 @@ pub enum HashPurpose {
 }
 
 pub enum UiEvent {
-    Scanned { paths: GamePaths, mods: Vec<ModEntry>, installs: Vec<GameInstall> },
+    /// `gen` is the scan's generation; a result older than the newest request is discarded, so a
+    /// slow scan of the previous game copy cannot overwrite a newer one.
+    Scanned { gen: u64, paths: GamePaths, mods: Vec<ModEntry>, installs: Vec<GameInstall> },
     Workshop(HashMap<String, WorkshopItem>),
     SeScan(HashMap<String, SeInfo>),
     Dll(DllStatus),
