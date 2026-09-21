@@ -4,6 +4,8 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-20
+
 ### Changed
 - **Unsubscribed mods disappear from the list.** A mod you unsubscribe from (or delete) no longer
   sits in the list as a struck-through "missing" row. Its place in the load order is still kept,
