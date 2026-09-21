@@ -8,7 +8,8 @@ DLL. A native Windows app (Rust + Qt Widgets), portable and self-updating.
 ## Install
 
 Download `TKModManager-x64.zip` from the latest
-[release](https://github.com/Ironictw2st/TKModManager/releases/latest), unpack it into any
+[release](https://github.com/Ironictw2st/TKModManager/releases/latest) or from
+[Nexus Mods](https://www.nexusmods.com/totalwarthreekingdoms/mods/249), unpack it into any
 folder and start `TKModManager.exe`. Updates install in place from the same zip.
 
 ## How it launches the game

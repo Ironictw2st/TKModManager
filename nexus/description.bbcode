@@ -1,0 +1,50 @@
+[size=5][b]TK Mod Manager[/b][/size]
+
+A mod manager and launcher for [b]Total War: THREE KINGDOMS[/b] that replaces the CA launcher. It is a native Windows app that you do not install: unzip it and run it. It keeps itself up to date.
+
+[size=4][b]Features[/b][/size]
+[list]
+[*][b]Profiles[/b]: separate mod lists and load orders, with one set per game copy.
+[*][b]Real load order[/b]: drag and drop mods, and sort them into groups with separators.
+[*][b]Workshop metadata[/b]: shows titles, authors and update status. Unsubscribed mods drop off the list.
+[*][b]Status dots[/b]: green means up to date. Amber means the mod predates the current game build. Red means Steam has a newer version.
+[*][b]Conflict detection[/b] between packs.
+[*][b]Movie packs[/b] can be turned on and off without renaming or moving any files.
+[*][b]Script Extender[/b]: one-click injection of the TK Script Extender DLL, and a warning when a mod needs it or needs a different version.
+[*]Works with the Steam, Epic and Game Pass copies of the game.
+[/list]
+
+[size=4][b]Install[/b][/size]
+[list=1]
+[*]Download [b]TKModManager-x64.zip[/b] from the Files tab.
+[*]Unzip it into any folder. Avoid Program Files.
+[*]Run [b]TKModManager.exe[/b]. Updates are offered inside the app and install in place.
+[/list]
+
+[size=4][b]How it launches the game[/b][/size]
+The manager writes [b]tkmm_mods.txt[/b] into the game folder and starts Three_Kingdoms.exe with it. For the Steam copy, Steam must be running. Workshop packs load from where Steam put them, and nothing is copied into data/. No game files are ever renamed or moved.
+
+[size=4][b]TK Script Extender[/b][/size]
+The second main file is the [b]TK Script Extender[/b], a DLL that adds extra [b]se.*[/b] functions to the campaign Lua scripting. Mods can use them to move characters between factions' recruitment pools, to recruit, replace and disband retinue units, to edit experience, skill points and faction potential, to change CAI personalities, and to steer auto-resolve and the AI's recruitment. It also works in multiplayer campaigns. Before it touches anything, it checks the game build and verifies every engine address, and it does nothing if they do not match. It currently supports game build 1.7.2.0 on Steam and Epic.
+
+[b]You do not need to download it separately.[/b] TK Mod Manager fetches the right version for your game and injects it when you turn on "Script extender" in the launch panel. The zip is here for manual use: start the game, wait for the main menu, then run [b]injector.exe script_extender.dll[/b].
+
+Scripting reference for mod authors: [url=https://github.com/Ironictw2st/TK-ScriptExtender/blob/master/docs/SCRIPTING.md]docs/SCRIPTING.md[/url]
+
+[size=4][b]For mod authors: requiring the Script Extender[/b][/size]
+Ship [b]SE/script_extender.json[/b] inside your pack:
+[code]{
+    "author": "YourName",
+    "minimum_version": "0.41",
+    "maximum_version": "",
+    "notes": ""
+}[/code]
+The manager marks your mod with an [b]SE[/b] chip and warns before launch if the installed DLL is outside that range. The game never loads the SE/ folder, so the file is harmless.
+
+[size=4][b]Links[/b][/size]
+[list]
+[*]Source, issues and changelog: [url=https://github.com/Ironictw2st/TKModManager]github.com/Ironictw2st/TKModManager[/url]
+[*]Script Extender: [url=https://github.com/Ironictw2st/TK-ScriptExtender]github.com/Ironictw2st/TK-ScriptExtender[/url]
+[/list]
+
+Windows SmartScreen may warn the first time you run it, because the exe is not code-signed.

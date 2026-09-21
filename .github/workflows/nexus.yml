@@ -1,0 +1,57 @@
+name: Nexus Mods
+
+# Uploads TKModManager-x64.zip from a full GitHub release to the Nexus Mods page as a new version
+# of the existing main file, with the release notes as the changelog. Pre-releases stay on GitHub.
+# Needs the NEXUSMODS_API_KEY secret and the NEXUSMODS_MOD_ID / NEXUSMODS_FILE_ID variables; the
+# job is skipped until the file ID is set.
+on:
+  release:
+    # "released" = published as a full release, or a pre-release promoted to one.
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload (e.g. v0.5.1)
+        required: true
+
+concurrency:
+  group: nexus
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: vars.NEXUSMODS_FILE_ID != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Fetch the release
+        id: release
+        run: |
+          if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease)" = "true" ]; then
+            echo "::error::$TAG is a pre-release; only full releases go to Nexus"
+            exit 1
+          fi
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p TKModManager-x64.zip
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "version=${TAG#v}"
+            echo "notes<<$delim"
+            gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body -q .body
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: Nexus-Mods/upload-action@v1.0.0-beta.10
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          mod_id: ${{ vars.NEXUSMODS_MOD_ID }}
+          file_id: ${{ vars.NEXUSMODS_FILE_ID }}
+          filename: TKModManager-x64.zip
+          display_name: TK Mod Manager
+          version: ${{ steps.release.outputs.version }}
+          changelog: ${{ steps.release.outputs.notes }}
+          update_mod_version: true
+          archive_existing_version: true

@@ -27,6 +27,19 @@ ritual-generated bindings from the RPFM checkout), so releases are made locally,
    Without `-Publish` it stops after building the zip. Add `-PreRelease` to publish it as a
    GitHub pre-release, which only users who opted into pre-releases are offered.
 
+## Nexus Mods
+
+Page: <https://www.nexusmods.com/totalwarthreekingdoms/mods/249>. It holds two main files, the
+manager and the script extender. `.github/workflows/nexus.yml` runs when a release becomes a full release (published without
+`-PreRelease`, or a pre-release promoted later). It uploads `TKModManager-x64.zip` to the Nexus
+page as a new version of the existing main file, archives the old one, sets the mod version and
+uses the release notes as the changelog. To re-send a release, run the workflow by hand with its
+tag (`gh workflow run nexus.yml -f tag=v0.5.1`). It needs the `NEXUSMODS_API_KEY` secret and the
+`NEXUSMODS_MOD_ID` / `NEXUSMODS_FILE_ID` repo variables, and is skipped while the file ID is
+unset. The page text lives in `nexus/description.bbcode`; Nexus has no API for it, so paste it
+in by hand when it changes. The script extender repo has its own `nexus.yml` for its file. It
+leaves the page version and changelog alone, because both belong to the manager.
+
 ## How the updater works
 
 `crates/core/src/update.rs`:
