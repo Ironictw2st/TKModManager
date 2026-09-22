@@ -39,6 +39,10 @@ pub struct Settings {
     pub skipped_dll_version: String,
     /// Mod list row size: "compact" | "normal" | "large".
     pub list_density: String,
+    /// Personal Nexus Mods API key (nexusmods.com > Site preferences > API Access).
+    pub nexus_api_key: String,
+    /// Modified time (unix seconds) of the newest crash.log the user has been told about.
+    pub last_crash_seen: u64,
 }
 
 impl Default for Settings {
@@ -61,6 +65,8 @@ impl Default for Settings {
             skipped_app_version: String::new(),
             skipped_dll_version: String::new(),
             list_density: "normal".into(),
+            nexus_api_key: String::new(),
+            last_crash_seen: 0,
         }
     }
 }

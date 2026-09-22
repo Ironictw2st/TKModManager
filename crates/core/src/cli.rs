@@ -2,6 +2,7 @@
 //!   --profile "<name>"   make this profile active
 //!   --launch             start the game right away
 //!   --minimized          start hidden in the tray
+//!   nxm://...            a Nexus "Mod Manager Download" link to install
 //! plus creating a desktop shortcut that carries them.
 
 use serde::Serialize;
@@ -11,6 +12,7 @@ pub struct StartupArgs {
     pub profile: Option<String>,
     pub launch: bool,
     pub minimized: bool,
+    pub nxm: Option<String>,
 }
 
 /// Parse an argv (first element = exe path is skipped). Unknown arguments are ignored.
@@ -22,6 +24,7 @@ pub fn parse<I: IntoIterator<Item = String>>(argv: I) -> StartupArgs {
             "--launch" => out.launch = true,
             "--minimized" => out.minimized = true,
             "--profile" => out.profile = it.next().filter(|s| !s.is_empty()),
+            other if other.to_ascii_lowercase().starts_with("nxm://") => out.nxm = Some(other.to_string()),
             other => {
                 if let Some(v) = other.strip_prefix("--profile=") {
                     out.profile = Some(v.to_string()).filter(|s| !s.is_empty());
@@ -63,10 +66,11 @@ mod tests {
         assert_eq!(p(&["app.exe"]), StartupArgs::default());
         assert_eq!(
             p(&["app.exe", "--profile", "190E MP", "--launch"]),
-            StartupArgs { profile: Some("190E MP".into()), launch: true, minimized: false }
+            StartupArgs { profile: Some("190E MP".into()), launch: true, minimized: false, nxm: None }
         );
         assert_eq!(p(&["app.exe", "--profile=Vanilla+", "--minimized", "--bogus"]).profile.as_deref(), Some("Vanilla+"));
         assert!(p(&["app.exe", "--minimized"]).minimized);
         assert_eq!(p(&["app.exe", "--profile"]).profile, None);
+        assert_eq!(p(&["app.exe", "nxm://totalwarthreekingdoms/mods/1/files/2?key=k"]).nxm.as_deref(), Some("nxm://totalwarthreekingdoms/mods/1/files/2?key=k"));
     }
 }

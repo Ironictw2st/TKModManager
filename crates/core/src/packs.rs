@@ -62,10 +62,12 @@ pub enum ModSource {
     Data,
     /// A user-registered extra folder (loaded in place through add_working_directory).
     Folder,
+    /// Installed from Nexus Mods into the manager's own folder (see `nexus`).
+    Nexus,
 }
 
 /// One user pack on disk. `key` is the stable identity used by profiles:
-/// `ws:<workshop id>/<file>` or `data:<file>`.
+/// `ws:<workshop id>/<file>`, `data:<file>`, `ext:<folder>/<file>` or `nx:<slot>/<file>`.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ModEntry {
@@ -85,6 +87,8 @@ pub struct ModEntry {
     pub installed_updated: Option<u64>,
     /// Workshop only: the newest version Steam knows of (same manifest).
     pub latest_updated: Option<u64>,
+    /// Nexus only: which installed file this is and what else is installed.
+    pub nexus: Option<crate::nexus::NexusRef>,
 }
 
 pub fn make_key(source: ModSource, workshop_id: Option<&str>, file: &str) -> String {
@@ -92,6 +96,7 @@ pub fn make_key(source: ModSource, workshop_id: Option<&str>, file: &str) -> Str
         ModSource::Workshop => format!("ws:{}/{}", workshop_id.unwrap_or(""), file),
         ModSource::Data => format!("data:{file}"),
         ModSource::Folder => format!("ext:{}/{}", workshop_id.unwrap_or(""), file),
+        ModSource::Nexus => format!("nx:{}/{}", workshop_id.unwrap_or(""), file),
     }
 }
 
@@ -192,7 +197,7 @@ pub fn scan(data_dir: Option<&Path>, workshop_dir: Option<&Path>, extra_dirs: &[
     out
 }
 
-fn entry_for(path: &Path, source: ModSource, workshop_id: Option<&str>) -> Option<ModEntry> {
+pub(crate) fn entry_for(path: &Path, source: ModSource, workshop_id: Option<&str>) -> Option<ModEntry> {
     let pack_type = match read_pack_type(path) {
         Ok(t) => t,
         Err(e) => {
@@ -222,6 +227,7 @@ fn entry_for(path: &Path, source: ModSource, workshop_id: Option<&str>) -> Optio
         preview_path: preview,
         installed_updated: None,
         latest_updated: None,
+        nexus: None,
     })
 }
 
@@ -258,6 +264,7 @@ mod tests {
         assert_eq!(make_key(ModSource::Workshop, Some("42"), "a.pack"), "ws:42/a.pack");
         assert_eq!(make_key(ModSource::Data, None, "a.pack"), "data:a.pack");
         assert_eq!(make_key(ModSource::Folder, Some("z:/my mods"), "a.pack"), "ext:z:/my mods/a.pack");
+        assert_eq!(make_key(ModSource::Nexus, Some("249"), "a.pack"), "nx:249/a.pack");
         assert_eq!(norm_dir(r"Z:\My Mods\"), "z:/my mods");
     }
 

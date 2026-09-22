@@ -18,8 +18,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 semver = "1"
 sha2 = "0.10"
 hex = "0.4"
-# Update packages are zips (exe + Qt DLLs).
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# Update packages are zips (exe + Qt DLLs); mod archives from Nexus are zip, 7z or rar.
+zip = { version = "8", default-features = false, features = ["deflate", "deflate64", "bzip2", "lzma"] }
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["util", "bzip2", "deflate"] }
+unrar = "0.5"
 # Desktop shortcuts (.lnk) for "play this profile".
 mslnk = "0.1"
 # Process spawn / window wait / DLL injection primitives shared with the script extender.

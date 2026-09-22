@@ -77,7 +77,8 @@ impl AppContext {
     }
 
     /// Every user pack: data/, Workshop, the game's own `mods\` folder (where the Epic and
-    /// Game Pass builds keep downloaded mods), and the extra folders from the settings.
+    /// Game Pass builds keep downloaded mods), the extra folders from the settings, and the
+    /// active files of mods installed from Nexus.
     pub fn scan(&self) -> Vec<ModEntry> {
         let p = self.game_paths();
         let mut extra: Vec<PathBuf> = self.settings().extra_mod_dirs.iter().map(PathBuf::from).collect();
@@ -86,7 +87,9 @@ impl AppContext {
                 extra.push(mods);
             }
         }
-        crate::packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new), &extra)
+        let mut out = crate::packs::scan(p.data_dir.as_deref().map(Path::new), p.workshop_dir.as_deref().map(Path::new), &extra);
+        out.extend(crate::nexus::scan(&crate::nexus::root()));
+        out
     }
 
     pub fn invalidate_paths(&self) {

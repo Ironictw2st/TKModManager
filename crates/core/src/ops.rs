@@ -101,7 +101,7 @@ pub fn list_input_for(profile: &Profile, scan: &[ModEntry]) -> ListInput {
             // A Workshop item folder becomes a working directory exactly like an extra folder
             // does, so a disabled movie pack sitting next to an enabled pack in the same item
             // would load regardless. Exclude it by name; the file itself is never touched.
-            ModSource::Workshop | ModSource::Folder => added_dirs.contains(&packs::norm_dir(&m.dir)),
+            ModSource::Workshop | ModSource::Folder | ModSource::Nexus => added_dirs.contains(&packs::norm_dir(&m.dir)),
         })
         .filter(|m| !enabled_keys.contains(m.key.as_str()))
         .map(|m| m.file.clone())
@@ -145,6 +145,7 @@ mod tests {
             preview_path: None,
             installed_updated: None,
             latest_updated: None,
+            nexus: None,
         }
     }
 
@@ -195,6 +196,27 @@ mod tests {
         assert!(text.contains("mod \"x.pack\";"));
         assert!(!text.contains("mod \"m2.pack\";"));
         assert!(text.contains("exclude_pack_file \"mv.pack\";"));
+    }
+
+    /// Nexus installs load in place from the manager's folder, like extra folders.
+    #[test]
+    fn nexus_packs_load_from_their_folder() {
+        let dir = r"C:\appdata\TKModManager\nexus\77\200";
+        let scan = vec![
+            entry("nx:77/cool.pack", "cool.pack", dir, ModSource::Nexus, PackType::Mod),
+            entry("nx:77/cool_movie.pack", "cool_movie.pack", dir, ModSource::Nexus, PackType::Movie),
+        ];
+        let profile = Profile {
+            name: "p".into(),
+            entries: vec![pe("nx:77/cool.pack"), ProfileEntry { key: "nx:77/cool_movie.pack".into(), enabled: false, label: None, collapsed: false }],
+            dll: false,
+            skip_intro: false,
+            last_played: None,
+        };
+        let text = modlist::build(&list_input_for(&profile, &scan));
+        assert!(text.contains("add_working_directory \"C:/appdata/TKModManager/nexus/77/200\";"), "{text}");
+        assert!(text.contains("mod \"cool.pack\";"));
+        assert!(text.contains("exclude_pack_file \"cool_movie.pack\";"));
     }
 
     /// A Workshop item that ships a mod pack and a movie pack: enabling only the mod still adds

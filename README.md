@@ -23,11 +23,30 @@ Script extender: enable it in the launch panel (right column). After the game re
 injected once; the DLL verifies the game build itself and the launch panel shows the result.
 A DLL built for another game build is never injected.
 
+## Mods from Nexus Mods
+
+Paste your personal API key in **Settings > Nexus Mods** (the "Get my key…" button opens the
+page), then click **Handle Mod Manager Download links**. The **Mod Manager Download** button on
+a mod's Files tab then installs it in one click. A .zip, .7z or .rar you downloaded yourself
+installs with **Actions > Install mod from archive…**.
+
+Nexus mods are unpacked into `%APPDATA%\TKModManager\nexus` and load from there, just like
+Workshop packs. The game folder is never touched. Installing another file of the same mod keeps
+both copies: right-click the mod and use **Version** to switch, and the load order stays the same.
+The manager checks installed Nexus mods for newer files and marks them with the red dot.
+
+## Forcing a Workshop update
+
+Steam downloads Workshop updates whenever it gets round to it. Right-click a mod with a red dot
+and pick **Force update from Steam**, or use **Actions > Force update pending Workshop mods**,
+to download it now. This runs a short helper through Valve's `steam_api64.dll`, so for a few
+seconds Steam shows you as playing Three Kingdoms.
+
 ## Mod status
 
 Each mod has a status dot. Green means up to date. Amber means it was last updated before
-the current game build, which is informational. Red means Steam has a newer version than the
-installed one. Grey means a local pack or no data. An **SE** chip marks mods that need the
+the current game build, which is informational. Red means Steam (or Nexus Mods) has a newer
+version than the installed one. Grey means a local pack or no data. An **SE** chip marks mods that need the
 script extender, and it turns red when the current launch would not provide it.
 
 ### Declaring that your mod needs the script extender

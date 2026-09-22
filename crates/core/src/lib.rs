@@ -2,6 +2,7 @@
 //! modules; long-running calls (network, hashing, pack scans) are blocking and meant to run on
 //! worker threads.
 
+pub mod archive;
 pub mod cli;
 pub mod conflicts;
 pub mod context;
@@ -17,6 +18,7 @@ pub mod launch;
 pub mod logs;
 pub mod meta;
 pub mod modlist;
+pub mod nexus;
 pub mod ops;
 pub mod options_pack;
 pub mod packs;
@@ -26,6 +28,7 @@ pub mod profiles;
 pub mod se_scan;
 pub mod settings;
 pub mod status;
+pub mod steam_ugc;
 pub mod steam_acf;
 pub mod sync;
 pub mod update;

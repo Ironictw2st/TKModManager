@@ -46,6 +46,16 @@ pub struct SettingsUi {
     dll_updates: QBox<QCheckBox>,
     cache_hours: QBox<QSpinBox>,
     density: QBox<QComboBox>,
+    // nexus
+    nexus_key: QBox<QLineEdit>,
+    nexus_save: QBox<QPushButton>,
+    nexus_get_key: QBox<QPushButton>,
+    nexus_user: QBox<QLabel>,
+    nexus_handler: QBox<QLabel>,
+    nexus_register: QBox<QPushButton>,
+    nexus_archive: QBox<QPushButton>,
+    nexus_check: QBox<QPushButton>,
+    nexus_folder: QBox<QPushButton>,
     // script extender
     dll_game: QBox<QLabel>,
     dll_list: QBox<QTreeWidget>,
@@ -81,6 +91,8 @@ pub struct SettingsUi {
     check_app: QBox<QPushButton>,
 
     remote: RefCell<Option<RemoteDll>>,
+    /// Last `reg query` of the nxm handler: (when, command). Refreshes are frequent; reg.exe is not.
+    nxm_seen: RefCell<Option<(std::time::Instant, Option<String>)>>,
     /// Version to pin once its download finishes ("Install and use" in the catalog).
     pending_pin: RefCell<Option<String>>,
 }
@@ -200,6 +212,41 @@ impl SettingsUi {
             dr.add_widget(&density);
             dr.add_stretch_1a(1);
             b.add_widget(&label("The look follows the Windows light / dark setting."));
+            v.add_widget(&g);
+
+            // Nexus Mods.
+            let g = QGroupBox::from_q_string(&qs("Nexus Mods"));
+            let n = QGridLayout::new_1a(&g);
+            n.set_column_stretch(1, 1);
+            row(&n, 0, "API key");
+            let nexus_key = QLineEdit::new();
+            nexus_key.set_echo_mode(qt_widgets::q_line_edit::EchoMode::Password);
+            nexus_key.set_placeholder_text(&qs("paste your personal API key"));
+            n.add_widget_3a(&nexus_key, 0, 1);
+            let nexus_save = button("Save and check");
+            let nexus_get_key = button("Get my key…");
+            nexus_get_key.set_tool_tip(&qs("Opens nexusmods.com > Site preferences > API keys; copy the Personal API Key at the bottom"));
+            n.add_widget_3a(&nexus_save, 0, 2);
+            n.add_widget_3a(&nexus_get_key, 0, 3);
+            let nexus_user = label("");
+            n.add_widget_5a(&nexus_user, 1, 1, 1, 3);
+            row(&n, 2, "Download links");
+            let nexus_handler = label("");
+            n.add_widget_3a(&nexus_handler, 2, 1);
+            let nexus_register = button("Handle Mod Manager Download links");
+            nexus_register.set_tool_tip(&qs("Make the \"Mod Manager Download\" button on nexusmods.com open this app (per user, no admin rights)"));
+            n.add_widget_5a(&nexus_register, 2, 2, 1, 2);
+            let nr = QHBoxLayout::new_0a();
+            n.add_layout_5a(&nr, 3, 1, 1, 3);
+            let nexus_archive = button("Install from archive…");
+            let nexus_check = button("Check for updates");
+            let nexus_folder = button("Open Nexus folder");
+            for w in [&nexus_archive, &nexus_check, &nexus_folder] {
+                nr.add_widget(w);
+            }
+            nr.add_stretch_1a(1);
+            let hint = label("Mods from Nexus are unpacked into the manager's own folder and load from there, like extra folders; the game folder is never touched. Installing another file of the same mod keeps both: switch with right-click > Version.");
+            n.add_widget_5a(&hint, 4, 1, 1, 3);
             v.add_widget(&g);
 
             // Script extender.
@@ -344,6 +391,15 @@ impl SettingsUi {
                 dll_updates,
                 cache_hours,
                 density,
+                nexus_key,
+                nexus_save,
+                nexus_get_key,
+                nexus_user,
+                nexus_handler,
+                nexus_register,
+                nexus_archive,
+                nexus_check,
+                nexus_folder,
                 dll_game,
                 dll_list,
                 dll_folder,
@@ -374,6 +430,7 @@ impl SettingsUi {
                 open_data,
                 check_app,
                 remote: RefCell::new(None),
+                nxm_seen: RefCell::new(None),
                 pending_pin: RefCell::new(None),
             }
         }
@@ -437,6 +494,44 @@ impl SettingsUi {
             }
         });
         on_click!(self.refresh_mods, |a: &Rc<App>| a.rescan());
+        on_click!(self.nexus_save, |a: &Rc<App>| {
+            let key = a.settings.nexus_key.text().to_std_string().trim().to_string();
+            SettingsUi::update_settings(a, |s| s.nexus_api_key = key.clone());
+            if key.is_empty() {
+                a.settings.nexus_user.set_text(&qs("No key: Nexus installs are off."));
+                return;
+            }
+            a.settings.nexus_user.set_text(&qs("Checking the key…"));
+            a.bus.spawn(move |_| Some(UiEvent::NexusUser(tkmm_core::nexus::validate(&key))));
+        });
+        on_click!(self.nexus_get_key, |_a: &Rc<App>| crate::details::open_url("https://next.nexusmods.com/settings/api-keys"));
+        on_click!(self.nexus_register, |a: &Rc<App>| {
+            let Ok(exe) = std::env::current_exe() else { return };
+            let ours = tkmm_core::nexus::handler_command(&exe);
+            let current = tkmm_core::nexus::nxm_handler();
+            if current.as_deref() == Some(ours.as_str()) {
+                return;
+            }
+            let text = match &current {
+                Some(c) => format!("Nexus download links currently open:\n\n{c}\n\nSwitch them to TK Mod Manager? The other manager can take them back from its own settings."),
+                None => "Make the \"Mod Manager Download\" button on nexusmods.com open TK Mod Manager?".to_string(),
+            };
+            if !crate::dialogs::confirm(&a.window, "Nexus download links", &text) {
+                return;
+            }
+            if let Err(e) = tkmm_core::nexus::register_nxm_handler(&exe) {
+                crate::dialogs::error(&a.window, &format!("Could not register the link handler: {e}"));
+            }
+            *a.settings.nxm_seen.borrow_mut() = None;
+            a.mark(DIRTY_ALL);
+        });
+        on_click!(self.nexus_archive, |a: &Rc<App>| a.pick_archive());
+        on_click!(self.nexus_check, |a: &Rc<App>| a.check_nexus_updates(true));
+        on_click!(self.nexus_folder, |_a: &Rc<App>| {
+            let dir = tkmm_core::nexus::root();
+            let _ = std::fs::create_dir_all(&dir);
+            crate::details::open_url(&format!("file:///{}", dir.to_string_lossy().replace('\\', "/")));
+        });
         on_click!(self.folder_add, |a: &Rc<App>| {
             let d = QFileDialog::get_existing_directory_2a(&a.window, &qs("Select a folder that holds .pack files")).to_std_string();
             if !d.is_empty() {
@@ -973,8 +1068,37 @@ impl SettingsUi {
     }
 
     /// Fill the page from the current settings / state.
+    pub unsafe fn on_nexus_user(&self, _app: &Rc<App>, r: Result<tkmm_core::nexus::User, String>) {
+        let text = match r {
+            Ok(u) if u.premium => format!("Signed in as {} (Premium: installs from any Files tab button).", u.name),
+            Ok(u) => format!("Signed in as {}. Use the \"Mod Manager Download\" buttons on nexusmods.com to install.", u.name),
+            Err(e) => e,
+        };
+        self.nexus_user.set_text(&qs(text));
+    }
+
     pub unsafe fn refresh(&self, app: &Rc<App>) {
         let s = app.ctx.settings();
+        if !self.nexus_key.has_focus() {
+            self.nexus_key.set_text(&qs(&s.nexus_api_key));
+        }
+        if self.nexus_user.text().is_empty() {
+            self.nexus_user.set_text(&qs(if s.nexus_api_key.is_empty() { "No key: Nexus installs are off." } else { "Key saved." }));
+        }
+        let ours = std::env::current_exe().ok().map(|e| tkmm_core::nexus::handler_command(&e));
+        let fresh = self.nxm_seen.borrow().as_ref().filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(5)).map(|(_, h)| h.clone());
+        let handler = fresh.unwrap_or_else(|| {
+            let h = tkmm_core::nexus::nxm_handler();
+            *self.nxm_seen.borrow_mut() = Some((std::time::Instant::now(), h.clone()));
+            h
+        });
+        let is_ours = handler.is_some() && handler == ours;
+        self.nexus_handler.set_text(&qs(match &handler {
+            _ if is_ours => "Handled by TK Mod Manager.".to_string(),
+            Some(h) => format!("Handled by another program: {h}"),
+            None => "Not handled by any program.".to_string(),
+        }));
+        self.nexus_register.set_enabled(!is_ours);
         let st = app.st.borrow();
         self.game_root.set_text(&qs(format!(
             "{}{}",

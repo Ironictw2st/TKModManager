@@ -143,7 +143,7 @@ impl ModListUi {
             search.set_clear_button_enabled(true);
             search.set_minimum_width(200);
             bar.add_widget(&search);
-            let source = combo(&[("All sources", "all"), ("Workshop", "workshop"), ("data/", "data"), ("Folders", "folder")]);
+            let source = combo(&[("All sources", "all"), ("Workshop", "workshop"), ("data/", "data"), ("Folders", "folder"), ("Nexus", "nexus")]);
             let pack_type = combo(&[("Mods + movies", "all"), ("Mod packs", "mod"), ("Movie packs", "movie")]);
             let enabled = combo(&[("Enabled + disabled", "all"), ("Enabled", "enabled"), ("Disabled", "disabled"), ("Updated since last played", "updated")]);
             let status = combo(&[("Any status", "all"), ("Update pending", "pending"), ("Older than game patch", "old"), ("Needs script extender", "se")]);
@@ -604,6 +604,7 @@ impl ModListUi {
             menu.add_separator();
             let m = app.st.borrow().module(&key).cloned();
             let ws = m.as_ref().and_then(|m| m.workshop_id.clone());
+            let ws_ids = ws.clone();
             let this = app.clone();
             add("Open in Workshop", ws.is_some(), Box::new(move || {
                 if let Some(id) = &ws {
@@ -611,6 +612,29 @@ impl ModListUi {
                 }
                 let _ = &this;
             }));
+            let this = app.clone();
+            add("Force update from Steam", ws_ids.is_some() &&!running && !app.steam_busy.get(), Box::new(move || {
+                if let Some(id) = &ws_ids {
+                    this.force_update(vec![id.clone()]);
+                }
+            }));
+            if let Some(nx) = m.as_ref().and_then(|m| m.nexus.clone()) {
+                if let Some(id) = nx.mod_id {
+                    add("Open on Nexus Mods", true, Box::new(move || crate::details::open_url(&tkmm_core::nexus::mod_page(id))));
+                }
+                let versions = menu.add_menu_q_string(&qs("Version"));
+                for f in &nx.versions {
+                    let label = version_label(f);
+                    let a = versions.add_action_q_string(&qs(&label));
+                    a.set_checkable(true);
+                    a.set_checked(f.dir == nx.active.dir);
+                    a.set_enabled(!running);
+                    let (this, slot, dir) = (app.clone(), nx.slot.clone(), f.dir.clone());
+                    a.triggered().connect(&SlotNoArgs::new(&menu, move || this.nexus_set_active(&slot, &dir)));
+                }
+                let (this, slot, dir, label) = (app.clone(), nx.slot.clone(), nx.active.dir.clone(), version_label(&nx.active));
+                add("Delete this version…", !running, Box::new(move || this.nexus_remove(&slot, &dir, &label)));
+            }
             let path = m.as_ref().map(|m| m.path.clone());
             add("Show file in Explorer", path.is_some(), Box::new(move || {
                 if let Some(p) = &path {
@@ -1017,11 +1041,27 @@ impl ModListUi {
     }
 }
 
+/// "1.2 · Main file · installed 2026-09-22"
+pub fn version_label(f: &tkmm_core::nexus::InstalledFile) -> String {
+    let mut bits = Vec::new();
+    if !f.version.is_empty() {
+        bits.push(f.version.clone());
+    }
+    if !f.name.is_empty() && f.name != f.version {
+        bits.push(f.name.clone());
+    }
+    if f.installed > 0 {
+        bits.push(format!("installed {}", tkmm_core::fmt::format_date(f.installed)));
+    }
+    if bits.is_empty() { f.dir.clone() } else { bits.join(" · ") }
+}
+
 fn source_value(s: ModSource) -> &'static str {
     match s {
         ModSource::Workshop => "workshop",
         ModSource::Data => "data",
         ModSource::Folder => "folder",
+        ModSource::Nexus => "nexus",
     }
 }
 

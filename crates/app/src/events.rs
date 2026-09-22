@@ -8,9 +8,11 @@ use tkmm_core::conflicts::ConflictReport;
 use tkmm_core::dll::{CatalogEntry, DllStatus, InstalledDll, RemoteDll};
 use tkmm_core::hash::{PackHash, Progress};
 use tkmm_core::launch::{LaunchStatus, SaveGame};
+use tkmm_core::nexus::{InstallError, InstallRequest, Installed, User};
 use tkmm_core::packs::ModEntry;
 use tkmm_core::paths::{GameInstall, GamePaths};
 use tkmm_core::se_scan::SeInfo;
+use tkmm_core::steam_ugc;
 use tkmm_core::update::UpdateMeta;
 use tkmm_core::workshop::{CollectionResult, WorkshopItem};
 
@@ -43,6 +45,17 @@ pub enum UiEvent {
     UpdateProgress(f64),
     UpdateInstalled(Result<(), String>),
     Cli(StartupArgs),
+    /// Text for the background-task line under the header ("" hides it).
+    Task(String),
+    /// A Nexus download or archive install finished. `downloaded` = the archive is ours to
+    /// delete once it is installed.
+    NexusInstalled { result: Result<Installed, InstallError>, archive: std::path::PathBuf, request: InstallRequest, downloaded: bool },
+    NexusFailed(String),
+    /// Update check of installed Nexus mods: how many have a newer file. `true` = user asked.
+    NexusChecked(Result<usize, String>, bool),
+    NexusUser(Result<User, String>),
+    SteamDl(steam_ugc::Event),
+    SteamDlDone(Result<(), String>),
 }
 
 #[derive(Clone)]

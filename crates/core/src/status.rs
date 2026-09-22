@@ -59,6 +59,9 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
     let Some(m) = m else {
         return ModStatus { kind: StatusKind::Unknown, text: "Not installed".into(), latest: None, installed: None };
     };
+    if let Some(nx) = m.nexus.as_ref().filter(|_| m.source == ModSource::Nexus) {
+        return nexus_status(nx);
+    }
     if m.source != ModSource::Workshop {
         let text = if m.source == ModSource::Data {
             "Local pack in data/: no Workshop version to compare"
@@ -75,7 +78,7 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
             return ModStatus {
                 kind: StatusKind::Pending,
                 text: format!(
-                    "Update pending: Steam has the {} version, {} is installed. Steam downloads it the next time it updates Workshop items (restart Steam or open its Downloads page).",
+                    "Update pending: Steam has the {} version, {} is installed. Use \"Force update from Steam\" to download it now.",
                     format_date(l),
                     format_date(i)
                 ),
@@ -96,6 +99,27 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
         };
     }
     ModStatus { kind: StatusKind::Ok, text: format!("Up to date (updated {})", format_date(published)), latest, installed }
+}
+
+fn nexus_status(nx: &crate::nexus::NexusRef) -> ModStatus {
+    let have = if nx.active.version.is_empty() { "unknown version".to_string() } else { format!("version {}", nx.active.version) };
+    let installed = Some(nx.active.uploaded).filter(|v| *v > 0);
+    if let Some(n) = &nx.newer {
+        return ModStatus {
+            kind: StatusKind::Pending,
+            text: format!(
+                "Update on Nexus Mods: {} ({}) is available, {have} is installed. Download it with \"Mod Manager Download\" on the mod's Files tab.",
+                if n.version.is_empty() { n.name.clone() } else { format!("version {}", n.version) },
+                format_date(n.uploaded)
+            ),
+            latest: Some(n.uploaded),
+            installed,
+        };
+    }
+    if nx.mod_id.is_none() {
+        return ModStatus { kind: StatusKind::Local, text: "Installed from an archive: no Nexus page to compare".into(), latest: None, installed };
+    }
+    ModStatus { kind: StatusKind::Ok, text: format!("From Nexus Mods, {have}"), latest: installed, installed }
 }
 
 /// What a mod asks of the script extender.
@@ -270,6 +294,7 @@ mod tests {
             preview_path: None,
             installed_updated: installed,
             latest_updated: latest,
+            nexus: None,
         }
     }
 
@@ -285,6 +310,29 @@ mod tests {
         assert_eq!(mod_status(Some(&m(ModSource::Data, None, None)), None, 500).kind, StatusKind::Local);
         assert_eq!(mod_status(Some(&m(ModSource::Folder, None, None)), None, 500).kind, StatusKind::Local);
         assert_eq!(mod_status(None, None, 500).kind, StatusKind::Unknown);
+    }
+
+    #[test]
+    fn nexus_status_kinds() {
+        use crate::nexus::{InstalledFile, NexusRef, RemoteFile};
+        let mut e = m(ModSource::Nexus, None, None);
+        let nx = NexusRef {
+            slot: "7".into(),
+            mod_id: Some(7),
+            mod_name: "M".into(),
+            author: String::new(),
+            active: InstalledFile { version: "1.0".into(), uploaded: 100, ..Default::default() },
+            versions: Vec::new(),
+            newer: None,
+        };
+        e.nexus = Some(nx.clone());
+        assert_eq!(mod_status(Some(&e), None, 500).kind, StatusKind::Ok);
+        e.nexus = Some(NexusRef { newer: Some(RemoteFile { version: "2.0".into(), uploaded: 200, ..Default::default() }), ..nx.clone() });
+        let st = mod_status(Some(&e), None, 500);
+        assert_eq!(st.kind, StatusKind::Pending);
+        assert!(st.text.contains("2.0"));
+        e.nexus = Some(NexusRef { mod_id: None, ..nx });
+        assert_eq!(mod_status(Some(&e), None, 500).kind, StatusKind::Local);
     }
 
     fn info(min: Option<&str>, max: Option<&str>) -> SeInfo {

@@ -147,7 +147,42 @@ pub unsafe fn refresh(app: &Rc<App>) {
     };
     let (frame, l) = section(stat.kind.label(), color.as_ref());
     l.add_widget(&small(&stat.text));
+    if stat.kind == StatusKind::Pending {
+        if let Some(id) = m.workshop_id.clone() {
+            let b = QPushButton::from_q_string(&qs("Force update from Steam"));
+            b.set_enabled(!st.game_running && !app.steam_busy.get());
+            let a = app.clone();
+            b.clicked().connect(&SlotNoArgs::new(&b, move || a.force_update(vec![id.clone()])));
+            let row = QHBoxLayout::new_0a();
+            l.add_layout_1a(&row);
+            row.add_widget(&b);
+            row.add_stretch_1a(1);
+        }
+    }
     v.add_widget(&frame);
+
+    // Nexus Mods origin and installed versions.
+    if let Some(nx) = &m.nexus {
+        let (frame, l) = section("Nexus Mods", None);
+        let mut line = vec![];
+        if !nx.author.is_empty() {
+            line.push(format!("by {}", nx.author));
+        }
+        line.push(crate::mod_list::version_label(&nx.active));
+        l.add_widget(&small(&line.join(" · ")));
+        if nx.versions.len() > 1 {
+            l.add_widget(&small(&format!("{} versions installed: right-click the mod > Version to switch.", nx.versions.len())));
+        }
+        if let Some(id) = nx.mod_id {
+            let b = QPushButton::from_q_string(&qs("Open on Nexus Mods"));
+            b.clicked().connect(&SlotNoArgs::new(&b, move || open_url(&tkmm_core::nexus::mod_page(id))));
+            let row = QHBoxLayout::new_0a();
+            l.add_layout_1a(&row);
+            row.add_widget(&b);
+            row.add_stretch_1a(1);
+        }
+        v.add_widget(&frame);
+    }
 
     // Script extender.
     let req = st.se_req(&key);

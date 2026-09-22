@@ -25,7 +25,7 @@ pub enum SortKey {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Filters {
     pub search: String,
-    /// "all" | "workshop" | "data" | "folder"
+    /// "all" | "workshop" | "data" | "folder" | "nexus"
     pub source: String,
     /// "all" | "mod" | "movie"
     pub pack_type: String,
@@ -140,6 +140,7 @@ impl State {
             ModSource::Data => "data/",
             ModSource::Folder if self.paths.mods_dir.as_deref().map(|d| d.eq_ignore_ascii_case(&m.dir)).unwrap_or(false) => "mods/",
             ModSource::Folder => "Extra folder",
+            ModSource::Nexus => "Nexus",
         }
     }
 
@@ -149,6 +150,10 @@ impl State {
 
     pub fn title_of(&self, key: &str) -> String {
         match self.module(key) {
+            Some(m) if m.nexus.as_ref().map(|n| !n.mod_name.is_empty()).unwrap_or(false) => {
+                let nx = m.nexus.as_ref().map(|n| (n.mod_name.clone(), n.active.packs.len())).unwrap_or_default();
+                if nx.1 > 1 { format!("{} · {}", nx.0, m.file.trim_end_matches(".pack")) } else { nx.0 }
+            }
             Some(m) => self.ws_of(m).map(|w| w.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| m.file.trim_end_matches(".pack").to_string()),
             None => key.to_string(),
         }

@@ -51,6 +51,9 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory $stage | Out-Null
 $exe = Join-Path $stage 'TKModManager.exe'
 Copy-Item target\release\tkmm.exe $exe
+# Valve's redistributable Steam API, loaded at run time by "Force update" (not in the import table,
+# so the dep walk below never finds it).
+Copy-Item redist\steam_api64.dll $stage
 
 & C:\CraftRoot\bin\windeployqt6.exe --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-quick-import --compiler-runtime --dir $stage $exe | Out-Null
 if ($LASTEXITCODE) { throw "windeployqt failed" }

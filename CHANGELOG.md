@@ -4,6 +4,27 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-22
+
+### Added
+- **Install mods from Nexus Mods.** Add your Nexus API key in Settings > Nexus Mods and let the
+  manager handle "Mod Manager Download" links: one click on a mod's Files tab installs it. Free
+  and Premium accounts both work. Archives you downloaded yourself (.zip, .7z, .rar) install
+  with **Actions > Install mod from archive…**. Nexus mods live in the manager's own folder and
+  load from there; the game folder is never touched. If an archive ships alternative versions
+  of the same pack in different folders, you pick which one you want.
+- **Switch between versions of a Nexus mod.** Installing another file of a mod keeps the old one.
+  Right-click the mod > **Version** switches between them, and the load order and on/off state
+  stay as they were. **Delete this version…** removes one.
+- **Nexus update check.** Installed Nexus mods get the red dot when the author uploads a newer
+  file. It runs at startup (with the same cache age as Workshop data), or on demand with
+  **Actions > Check Nexus mods for updates**.
+- **Force a Workshop update.** **Force update from Steam** (right-click a Workshop mod, or the
+  button on a mod with a pending update) makes Steam download the newest version now. **Actions >
+  Force update pending Workshop mods** does it for every mod with the red dot.
+- **Crash log.** If the manager ever closes because of an internal error, it writes
+  `crash.log` in its data folder and shows it at the next start.
+
 ## [0.5.1] - 2026-09-20
 
 ### Changed

@@ -60,6 +60,12 @@ pub struct App {
     pub notes_pending: RefCell<Option<(String, String, Instant)>>,
     pub verify_text: RefCell<String>,
     pub update_meta: RefCell<Option<update::UpdateMeta>>,
+    /// Keys a Nexus install just added: enabled in the active profile once a scan finds them.
+    pub pending_enable: RefCell<Vec<String>>,
+    pub steam_busy: Cell<bool>,
+    /// When the task line's result message should disappear.
+    pub task_expires: Cell<Option<Instant>>,
+    pub steam_results: RefCell<Vec<(u64, bool, String)>>,
 
     pub window: QBox<QMainWindow>,
     pub tabs: QBox<QTabBar>,
@@ -71,6 +77,8 @@ pub struct App {
     pub update_bar: QBox<QWidget>,
     pub update_label: QBox<QLabel>,
     pub update_btn: QBox<QPushButton>,
+    /// One line for background work (Nexus downloads, Steam force updates).
+    pub task_label: QBox<QLabel>,
     pub stack: QBox<QStackedWidget>,
     pub details_area: QBox<QScrollArea>,
     pub launch_layout: QBox<QVBoxLayout>,
@@ -168,6 +176,11 @@ impl App {
             update_bar.set_visible(false);
             left_layout.add_widget(&update_bar);
 
+            let task_label = QLabel::new();
+            task_label.set_word_wrap(true);
+            task_label.set_visible(false);
+            left_layout.add_widget(&task_label);
+
             let stack = QStackedWidget::new_0a();
             let ml = mod_list::ModListUi::build();
             let conflicts = tabs::ConflictsUi::build();
@@ -225,6 +238,10 @@ impl App {
                 notes_pending: RefCell::new(None),
                 verify_text: RefCell::new(String::new()),
                 update_meta: RefCell::new(None),
+                pending_enable: RefCell::new(Vec::new()),
+                steam_busy: Cell::new(false),
+                task_expires: Cell::new(None),
+                steam_results: RefCell::new(Vec::new()),
                 window,
                 tabs,
                 profile_combo,
@@ -235,6 +252,7 @@ impl App {
                 update_bar,
                 update_label,
                 update_btn,
+                task_label,
                 stack,
                 details_area,
                 launch_layout,
@@ -330,6 +348,30 @@ impl App {
         if !self.hidden_ok.get() {
             self.window.show();
         }
+        self.notice_crash_log();
+    }
+
+    /// Tell the user once about a crash.log newer than the last one they saw.
+    unsafe fn notice_crash_log(self: &Rc<Self>) {
+        let path = crate::jobs::crash_log_path();
+        let Some(modified) = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()) else {
+            return;
+        };
+        let mut s = self.ctx.settings();
+        if modified <= s.last_crash_seen {
+            return;
+        }
+        s.last_crash_seen = modified;
+        let _ = self.ctx.set_settings(s);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        let tail = lines[lines.len().saturating_sub(80)..].join("\n");
+        crate::dialogs::show_text(
+            &self.window,
+            "TK Mod Manager crashed last time",
+            &format!("The manager closed because of an internal error. Details are in {} - please attach them to a bug report.", path.display()),
+            &tail,
+        );
     }
 
     // ------------------------------------------------------------------ background jobs
@@ -549,6 +591,20 @@ impl App {
         add("Delete", Box::new(move || this.profile_delete()));
         m.add_separator();
         let this = self.clone();
+        add("Install mod from archive…", Box::new(move || this.pick_archive()));
+        let this = self.clone();
+        add("Check Nexus mods for updates", Box::new(move || this.check_nexus_updates(true)));
+        let this = self.clone();
+        add("Force update pending Workshop mods", Box::new(move || {
+            let ids = this.pending_workshop_ids();
+            if ids.is_empty() {
+                crate::dialogs::info(&this.window, "Workshop", "No Workshop mod has a pending update.");
+            } else {
+                this.force_update(ids);
+            }
+        }));
+        m.add_separator();
+        let this = self.clone();
         add("Create desktop shortcut", Box::new(move || {
             let name = this.st.borrow().profiles.active.clone();
             match tkmm_core::cli::create_profile_shortcut(&name) {
@@ -618,6 +674,9 @@ impl App {
     pub unsafe fn apply_args(self: &Rc<Self>, args: StartupArgs) {
         if !args.minimized {
             self.show_window();
+        }
+        if let Some(url) = &args.nxm {
+            self.install_nxm(url);
         }
         if args.launch {
             self.launch(args.profile);
@@ -694,6 +753,10 @@ impl App {
 
         self.ml.flush_drop(self);
 
+        if self.task_expires.get().map(|t| Instant::now() > t).unwrap_or(false) {
+            self.set_task("");
+        }
+
         let mut bits = self.dirty.replace(0);
         if bits == 0 {
             return;
@@ -740,6 +803,7 @@ impl App {
                     st.installs = installs;
                     st.set_mods(mods);
                 }
+                self.enable_pending();
                 {
                     let mut guard = self.st.borrow_mut();
                     let st = &mut *guard;
@@ -780,8 +844,9 @@ impl App {
                     self.fetch_workshop();
                     self.refresh_saves();
                     self.seed_from_ca_launcher();
+                    self.check_nexus_updates(false);
                     if let Some(args) = self.startup.borrow_mut().take() {
-                        if args.launch || args.profile.is_some() {
+                        if args.launch || args.profile.is_some() || args.nxm.is_some() {
                             self.apply_args(args);
                         }
                     }
@@ -872,6 +937,13 @@ impl App {
                 }
             },
             UiEvent::Cli(args) => self.apply_args(args),
+            UiEvent::Task(t) => self.set_task(&t),
+            UiEvent::NexusInstalled { result, archive, request, downloaded } => self.on_nexus_installed(result, archive, request, downloaded),
+            UiEvent::NexusFailed(e) => self.on_nexus_failed(&e),
+            UiEvent::NexusChecked(r, verbose) => self.on_nexus_checked(r, verbose),
+            UiEvent::NexusUser(r) => self.settings.on_nexus_user(self, r),
+            UiEvent::SteamDl(e) => self.on_steam_event(e),
+            UiEvent::SteamDlDone(r) => self.on_steam_done(r),
         }
     }
 

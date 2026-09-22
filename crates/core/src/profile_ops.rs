@@ -215,6 +215,7 @@ mod tests {
             preview_path: None,
             installed_updated: None,
             latest_updated: None,
+            nexus: None,
         }
     }
 

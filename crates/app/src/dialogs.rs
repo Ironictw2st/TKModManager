@@ -63,6 +63,17 @@ pub fn clip_notes(notes: &str) -> String {
     format!("{}\n…", lines[..MAX_LINES].join("\n"))
 }
 
+/// Pick one of `items`; None when cancelled.
+pub unsafe fn choose(parent: &QBox<QMainWindow>, title: &str, label: &str, items: &[String]) -> Option<String> {
+    let list = qt_core::QListOfQString::new_0a();
+    for i in items {
+        list.append_q_string(&qs(i));
+    }
+    let mut ok = false;
+    let s = QInputDialog::get_item_7a(parent, &qs(title), &qs(label), &list, 0, false, &mut ok).to_std_string();
+    ok.then_some(s)
+}
+
 /// Single-line text input; None when cancelled or empty.
 pub unsafe fn ask_text(parent: &QBox<QMainWindow>, title: &str, label: &str, initial: &str) -> Option<String> {
     let mut ok = false;
