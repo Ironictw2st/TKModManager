@@ -1,7 +1,7 @@
 //! Installs from Nexus Mods (nxm:// links and archives on disk), switching between installed
 //! Nexus files, and "Force update" of Workshop items through the Steam helper process.
 
-use crate::app::{App, DIRTY_ALL, DIRTY_DETAILS, DIRTY_LIST};
+use crate::app::{App, DIRTY_ALL, DIRTY_DETAILS, DIRTY_LAUNCH, DIRTY_LIST};
 use crate::events::UiEvent;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -91,20 +91,9 @@ impl App {
                     done.packs.iter().map(|p| format!("nx:{}/{}", done.slot, p)).filter(|k| !st.by_key.contains_key(k)).collect()
                 };
                 self.pending_enable.borrow_mut().extend(keys);
-                let clash = self.name_clashes(&done);
                 let name = if done.mod_name.is_empty() { done.slot.clone() } else { done.mod_name.clone() };
                 let version = if request.file.version.is_empty() { String::new() } else { format!(" {}", request.file.version) };
                 self.set_task_done(&format!("Installed {name}{version} ({} pack{}).", done.packs.len(), if done.packs.len() == 1 { "" } else { "s" }));
-                if !clash.is_empty() {
-                    crate::dialogs::info(
-                        &self.window,
-                        "Same pack name twice",
-                        &format!(
-                            "{name} installs packs that are also installed from somewhere else:\n\n{}\n\nThe game loads packs by file name, so only enable one copy of each.",
-                            clash.join("\n")
-                        ),
-                    );
-                }
                 self.rescan();
             }
             Err(InstallError::Variants(folders)) => {
@@ -137,20 +126,9 @@ impl App {
         crate::dialogs::error(&self.window, &format!("Install failed: {e}"));
     }
 
-    /// Installed packs from other sources that share a file name with this install.
-    fn name_clashes(&self, done: &Installed) -> Vec<String> {
-        let st = self.st.borrow();
-        let prefix = format!("nx:{}/", done.slot);
-        let mut out = Vec::new();
-        for p in &done.packs {
-            for m in st.mods.iter().filter(|m| m.file.eq_ignore_ascii_case(p) && !m.key.starts_with(&prefix)) {
-                out.push(format!("{} ({})", m.file, st.source_label(m)));
-            }
-        }
-        out
-    }
-
-    /// Called after every scan: switch on what an install just added.
+    /// Called after every scan: switch on what an install just added. The game loads packs by
+    /// file name, so a new pack that is already enabled from elsewhere (Workshop, data/, an older
+    /// install) takes that copy's place in the load order and the old copy is switched off.
     pub fn enable_pending(self: &Rc<Self>) {
         let keys: Vec<String> = {
             let st = self.st.borrow();
@@ -163,7 +141,31 @@ impl App {
         if self.st.borrow().game_running {
             return;
         }
-        self.st.borrow_mut().update_active(|p| tkmm_core::profile_ops::toggle(&mut p.entries, &keys, Some(true)));
+        let mut replaced = Vec::new();
+        {
+            let mut st = self.st.borrow_mut();
+            let active = st.active();
+            for key in &keys {
+                let Some(file) = st.module(key).map(|m| m.file.clone()) else { continue };
+                let old: Vec<String> = active
+                    .entries
+                    .iter()
+                    .filter(|e| e.enabled && e.key != *key)
+                    .filter(|e| st.module(&e.key).map(|m| m.file.eq_ignore_ascii_case(&file)).unwrap_or(false))
+                    .map(|e| e.key.clone())
+                    .collect();
+                for k in &old {
+                    if let Some(m) = st.module(k) {
+                        replaced.push(format!("{} ({})", m.file, st.source_label(m)));
+                    }
+                }
+                st.update_active(|p| tkmm_core::profile_ops::replace_in_place(&mut p.entries, key, &old));
+            }
+            st.toggle(&keys, Some(true));
+        }
+        if !replaced.is_empty() {
+            unsafe { self.set_task_done(&format!("Switched off the old copy of {}; the new install loads in its place.", replaced.join(", "))) };
+        }
         self.mark(DIRTY_ALL);
     }
 
@@ -277,6 +279,30 @@ impl App {
                 .collect()
         };
         let ok = results.iter().filter(|r| r.1).count();
+        // A launch was waiting on this update: never block it, only say what did not update.
+        if self.launch_after_steam.replace(false) {
+            let problem = match &r {
+                Err(e) => Some(e.clone()),
+                Ok(()) if !failed.is_empty() => Some(failed.join("\n")),
+                Ok(()) => None,
+            };
+            self.set_task("");
+            let go = match problem {
+                None => true,
+                Some(p) => crate::dialogs::confirm(
+                    &self.window,
+                    "Workshop update",
+                    &format!("Steam could not bring every Workshop mod up to date, so some may load an older version:\n\n{p}\n\nStart anyway?"),
+                ),
+            };
+            if go {
+                self.launch_now();
+            } else {
+                self.set_launch_message("idle", "");
+            }
+            self.mark(DIRTY_LIST | DIRTY_DETAILS | DIRTY_LAUNCH);
+            return;
+        }
         match r {
             Err(e) => {
                 self.set_task("");

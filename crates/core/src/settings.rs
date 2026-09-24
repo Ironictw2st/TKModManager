@@ -30,6 +30,9 @@ pub struct Settings {
     pub app_channel: String,
     /// Closing the window hides it to the tray instead of quitting.
     pub minimize_to_tray: bool,
+    /// Before a launch, ask Steam to bring the enabled Workshop items up to date (what CA's
+    /// launcher does). Starting the exe directly skips Steam's own pre-launch update.
+    pub update_workshop_on_launch: bool,
     /// Unix seconds: Workshop mods last updated before this count as "older than the game
     /// patch". None = the game exe's build date.
     pub outdated_before: Option<u64>,
@@ -61,6 +64,7 @@ impl Default for Settings {
             dll_channel: "stable".into(),
             app_channel: "stable".into(),
             minimize_to_tray: false,
+            update_workshop_on_launch: true,
             outdated_before: None,
             skipped_app_version: String::new(),
             skipped_dll_version: String::new(),

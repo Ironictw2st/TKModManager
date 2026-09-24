@@ -328,7 +328,7 @@ impl ModListUi {
             if key.is_empty() || groups::is_separator_key(&key) || this.st.borrow().module(&key).is_none() {
                 return;
             }
-            this.st.borrow_mut().update_active(|p| profile_ops::toggle(&mut p.entries, &[key], None));
+            this.st.borrow_mut().toggle(&[key], None);
             this.mark(DIRTY_LIST | DIRTY_DETAILS | DIRTY_LAUNCH | DIRTY_HEADER);
         }));
 
@@ -373,7 +373,7 @@ impl ModListUi {
                     st.update_active(|p| groups::toggle_group(&mut p.entries, &key, on));
                 } else {
                     let keys = if selected.len() > 1 && selected.contains(&key) { selected } else { vec![key] };
-                    st.update_active(|p| profile_ops::toggle(&mut p.entries, &keys, Some(on)));
+                    st.toggle(&keys, Some(on));
                 }
             }
             this.mark(DIRTY_LIST | DIRTY_DETAILS | DIRTY_LAUNCH | DIRTY_HEADER);
@@ -594,7 +594,7 @@ impl ModListUi {
             for (label, on) in [("Enable", true), ("Disable", false)] {
                 let (this, ks) = (app.clone(), keys.clone());
                 add(&format!("{label}{n}"), !running && !ks.is_empty(), Box::new(move || {
-                    this.st.borrow_mut().update_active(|p| profile_ops::toggle(&mut p.entries, &ks, Some(on)));
+                    this.st.borrow_mut().toggle(&ks, Some(on));
                     this.mark(DIRTY_LIST | DIRTY_LAUNCH | DIRTY_HEADER | DIRTY_DETAILS);
                 }));
             }

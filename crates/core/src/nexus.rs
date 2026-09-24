@@ -297,7 +297,28 @@ fn install_from_staging(root: &Path, archive: &Path, staging: &Path, req: &Insta
         return Err(InstallError::Variants(folders));
     }
 
-    let slot_dir = root.join(&req.slot);
+    // An archive without a Nexus name gets a slot from its file name, so `MyMod_v2.zip` would
+    // become a second mod next to `MyMod_v1.zip`, both loading the same packs. Join the local
+    // slot that already holds exactly these packs instead, as a new version of it.
+    let slot = if req.slot.starts_with("local-") && !root.join(&req.slot).join(INDEX).is_file() {
+        let mut want: Vec<String> = found.iter().map(|(_, p)| lower(p)).collect();
+        want.sort();
+        slots(root)
+            .into_iter()
+            .find(|(s, idx)| {
+                s.starts_with("local-")
+                    && idx.active_file().map(|f| {
+                        let mut have: Vec<String> = f.packs.iter().map(|p| p.to_lowercase()).collect();
+                        have.sort();
+                        have == want
+                    }) == Some(true)
+            })
+            .map(|(s, _)| s)
+            .unwrap_or_else(|| req.slot.clone())
+    } else {
+        req.slot.clone()
+    };
+    let slot_dir = root.join(&slot);
     let target = slot_dir.join(&req.file.dir);
     let _ = std::fs::remove_dir_all(&target);
     std::fs::create_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
@@ -328,7 +349,7 @@ fn install_from_staging(root: &Path, archive: &Path, staging: &Path, req: &Insta
     index.files.push(file);
     index.active = req.file.dir.clone();
     save_index(&slot_dir, &index)?;
-    Ok(Installed { slot: req.slot.clone(), dir: req.file.dir.clone(), packs: copied, mod_name: index.mod_name })
+    Ok(Installed { slot, dir: req.file.dir.clone(), packs: copied, mod_name: index.mod_name })
 }
 
 /// Slot/folder names are file names: keep them short and plain.
@@ -343,6 +364,7 @@ fn safe_name(s: &str) -> String {
 /// (version dots become dashes). Returns (name, mod id, version, upload time).
 pub fn parse_nexus_archive_name(file_name: &str) -> Option<(String, u64, String, u64)> {
     let stem = Path::new(file_name).file_stem()?.to_string_lossy().into_owned();
+    let stem = strip_copy_suffix(&stem);
     let parts: Vec<&str> = stem.split('-').collect();
     if parts.len() < 3 {
         return None;
@@ -353,6 +375,20 @@ pub fn parse_nexus_archive_name(file_name: &str) -> Option<(String, u64, String,
     let mod_id: u64 = parts[i].parse().ok()?;
     let version = parts[i + 1..parts.len() - 1].join(".");
     Some((parts[..i].join("-").trim().to_string(), mod_id, version, uploaded))
+}
+
+/// Drop the ` (1)` a browser adds to a second download of the same file.
+fn strip_copy_suffix(stem: &str) -> &str {
+    let t = stem.trim_end();
+    if let Some(open) = t.rfind(" (") {
+        let inner = &t[open + 2..];
+        if let Some(n) = inner.strip_suffix(')') {
+            if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
+                return &t[..open];
+            }
+        }
+    }
+    t
 }
 
 /// Install request for an archive picked from disk. A Nexus-named archive joins that mod's
@@ -369,6 +405,7 @@ pub fn request_for_local(archive: &Path) -> InstallRequest {
         };
     }
     let stem = archive.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = strip_copy_suffix(&stem).to_string();
     InstallRequest {
         slot: format!("local-{}", safe_name(&stem)),
         mod_id: None,
@@ -779,5 +816,33 @@ mod tests {
         let r = request_for_local(Path::new(r"C:\dl\my stuff!.rar"));
         assert_eq!(r.slot, "local-my_stuff");
         assert_eq!(r.mod_id, None);
+        // A second browser download of the same Nexus file is still recognised.
+        let r = request_for_local(Path::new(r"C:\dl\Cool Mod-77-1-2-1726800000 (1).zip"));
+        assert_eq!((r.slot.as_str(), r.file.dir.as_str()), ("77", "t1726800000"));
+        let r = request_for_local(Path::new(r"C:\dl\my stuff (2).zip"));
+        assert_eq!(r.slot, "local-my_stuff");
+        assert_eq!(strip_copy_suffix("v (beta)"), "v (beta)");
+    }
+
+    /// `MyMod_v1.zip` then `MyMod_v2.zip`: the second joins the first slot as a new version
+    /// instead of becoming a second mod with the same pack enabled twice.
+    #[test]
+    fn local_archive_with_the_same_packs_joins_the_existing_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("nexus");
+        let local = |name: &str, dir: &str| {
+            let a = tmp.path().join(name);
+            zip_with(&a, &[("190/!!190.pack", pack_bytes(3))]);
+            let mut req = request_for_local(&a);
+            req.file.dir = dir.into();
+            install_archive(&root, &a, &req, None).unwrap()
+        };
+        assert_eq!(local("MyMod_v1.zip", "l1").slot, "local-MyMod_v1");
+        let done = local("MyMod_v2.zip", "l2").slot;
+        assert_eq!(done, "local-MyMod_v1");
+        let scanned = scan(&root);
+        assert_eq!(scanned.len(), 1);
+        assert!(scanned[0].dir.ends_with("l2"));
+        assert_eq!(scanned[0].nexus.as_ref().unwrap().versions.len(), 2);
     }
 }

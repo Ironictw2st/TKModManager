@@ -88,6 +88,43 @@ pub fn toggle(entries: &mut [ProfileEntry], keys: &[String], enabled: Option<boo
     }
 }
 
+/// [`toggle`], then keep one enabled copy per pack file name: the game loads packs by name, so a
+/// pack switched on here switches off every other copy of the same file (an old copy in data/,
+/// another Workshop item, an older Nexus install). The first of `keys` wins within the selection.
+pub fn toggle_exclusive(entries: &mut [ProfileEntry], keys: &[String], enabled: Option<bool>, file_of: &HashMap<String, String>) {
+    toggle(entries, keys, enabled);
+    let name = |k: &str| file_of.get(k).map(|f| f.to_ascii_lowercase());
+    let mut winners: HashMap<String, &str> = HashMap::new();
+    for k in keys {
+        let on = entries.iter().any(|e| e.enabled && e.key == *k);
+        if let (true, Some(n)) = (on, name(k)) {
+            winners.entry(n).or_insert(k.as_str());
+        }
+    }
+    for e in entries.iter_mut().filter(|e| e.enabled && !e.is_separator()) {
+        if let Some(winner) = name(&e.key).and_then(|n| winners.get(&n)) {
+            if *winner != e.key {
+                e.enabled = false;
+            }
+        }
+    }
+}
+
+/// Put `new` where the first enabled entry named in `old` sits (keeping its place in the load
+/// order) and switch the old ones off. Used when an install replaces a copy of the same pack.
+pub fn replace_in_place(entries: &mut Vec<ProfileEntry>, new: &str, old: &[String]) {
+    if !entries.iter().any(|e| e.enabled && old.contains(&e.key)) {
+        return;
+    }
+    let mut moved = entries.iter().position(|e| e.key == new).map(|i| entries.remove(i)).unwrap_or_else(|| entry(new, true));
+    moved.enabled = true;
+    let pos = entries.iter().position(|e| e.enabled && old.contains(&e.key)).unwrap_or(entries.len());
+    entries.insert(pos, moved);
+    for e in entries.iter_mut().filter(|e| old.contains(&e.key)) {
+        e.enabled = false;
+    }
+}
+
 /// Alphabetical by pack file name inside each group.
 pub fn sort_alpha(entries: &[ProfileEntry], file_of: &HashMap<String, String>) -> Vec<ProfileEntry> {
     map_segments(entries, |mut seg| {
@@ -293,6 +330,33 @@ mod tests {
         assert_eq!(keys(&v), vec!["a", "sep:1", "c", "b"]);
         assert!(!nudge(&mut v, &["a".into()], -1));
         assert_eq!(keys(&enable_first(&v, &["b".into(), "x".into()])), vec!["b", "x", "a", "sep:1", "c"]);
+    }
+
+    #[test]
+    fn enabling_a_pack_switches_off_its_other_copies() {
+        let files: HashMap<String, String> =
+            [("data:a.pack", "a.pack"), ("ws:1/A.pack", "A.pack"), ("ws:2/b.pack", "b.pack"), ("nx:x/a.pack", "a.pack")].iter().map(|(k, f)| (k.to_string(), f.to_string())).collect();
+        let mut v = vec![entry("data:a.pack", true), entry("ws:1/A.pack", false), entry("ws:2/b.pack", true), entry("nx:x/a.pack", false)];
+        toggle_exclusive(&mut v, &["ws:1/A.pack".into()], Some(true), &files);
+        assert_eq!(v.iter().map(|e| e.enabled).collect::<Vec<_>>(), vec![false, true, true, false]);
+        // Several copies in one selection: the first one wins.
+        toggle_exclusive(&mut v, &["nx:x/a.pack".into(), "data:a.pack".into()], Some(true), &files);
+        assert_eq!(v.iter().map(|e| e.enabled).collect::<Vec<_>>(), vec![false, false, true, true]);
+        // Switching off touches nothing else.
+        toggle_exclusive(&mut v, &["nx:x/a.pack".into()], Some(false), &files);
+        assert_eq!(v.iter().map(|e| e.enabled).collect::<Vec<_>>(), vec![false, false, true, false]);
+    }
+
+    #[test]
+    fn replace_in_place_takes_the_old_copys_slot() {
+        let mut v = vec![entry("ws:2/b.pack", true), entry("ws:1/a.pack", true), entry("c", true), entry("nx:x/a.pack", false)];
+        replace_in_place(&mut v, "nx:x/a.pack", &["ws:1/a.pack".into()]);
+        assert_eq!(keys(&v), vec!["ws:2/b.pack", "nx:x/a.pack", "ws:1/a.pack", "c"]);
+        assert_eq!(v.iter().map(|e| e.enabled).collect::<Vec<_>>(), vec![true, true, false, true]);
+        // Nothing enabled to replace: no change.
+        let before = v.clone();
+        replace_in_place(&mut v, "new", &["zz".into()]);
+        assert_eq!(keys(&v), keys(&before));
     }
 
     #[test]

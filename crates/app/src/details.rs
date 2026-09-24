@@ -9,7 +9,6 @@ use std::rc::Rc;
 use std::time::Instant;
 use tkmm_core::fmt::{format_bytes, format_date};
 use tkmm_core::packs::PackType;
-use tkmm_core::profile_ops;
 use tkmm_core::status::{self, StatusKind};
 
 pub fn open_url(url: &str) {
@@ -215,6 +214,26 @@ pub unsafe fn refresh(app: &Rc<App>) {
         v.add_widget(&w);
     }
 
+    // Other copies of the same file name: the game resolves packs by name, so they compete.
+    let copies: Vec<String> = st
+        .mods
+        .iter()
+        .filter(|o| o.key != m.key && o.file.eq_ignore_ascii_case(&m.file))
+        .map(|o| {
+            let age = if tkmm_core::ops::freshness(o) > tkmm_core::ops::freshness(&m) { "newer" } else { "older or same" };
+            let at = o.workshop_id.as_ref().filter(|_| o.source == tkmm_core::packs::ModSource::Workshop).map(|id| format!(" {id}")).unwrap_or_default();
+            format!("{}{at} ({age})", st.source_label(o))
+        })
+        .collect();
+    if !copies.is_empty() {
+        let w = small(&format!(
+            "Same file name also in: {}. The game loads packs by name, so only one copy loads; enabling this one switches the others off. A copy in data/ can still win, so delete old ones from there.",
+            copies.join(", ")
+        ));
+        colored(&w, &icons::amber());
+        v.add_widget(&w);
+    }
+
     let facts = vec![
         st.source_label(&m).to_string(),
         if m.pack_type == PackType::Movie { "movie pack".into() } else { "mod pack".into() },
@@ -276,7 +295,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
             let b = QPushButton::from_q_string(&qs("Enable all required items"));
             let this = app.clone();
             b.clicked().connect(&SlotNoArgs::new(&b, move || {
-                this.st.borrow_mut().update_active(|p| profile_ops::toggle(&mut p.entries, &off, Some(true)));
+                this.st.borrow_mut().toggle(&off, Some(true));
                 this.mark(DIRTY_LIST | DIRTY_DETAILS | DIRTY_LAUNCH | DIRTY_HEADER);
             }));
             l.add_widget(&b);

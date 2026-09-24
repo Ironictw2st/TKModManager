@@ -50,7 +50,14 @@ pub unsafe fn refresh(app: &Rc<App>) {
     line.set_frame_shape(qt_widgets::q_frame::Shape::HLine);
     v.add_widget(&line);
 
-    let play = QPushButton::from_q_string(&qs(if running { "Running…" } else { "▶  Play" }));
+    let waiting = app.launch_after_steam.get();
+    let play = QPushButton::from_q_string(&qs(if running {
+        "Running…"
+    } else if waiting {
+        "▶  Play without waiting"
+    } else {
+        "▶  Play"
+    }));
     play.set_minimum_height(40);
     let f = qt_gui::QFont::new_copy(play.font());
     f.set_bold(true);
@@ -58,7 +65,13 @@ pub unsafe fn refresh(app: &Rc<App>) {
     play.set_font(&f);
     play.set_default(true);
     play.set_enabled(!running && st.paths.game_root.is_some());
-    play.set_tool_tip(&qs(if running { "The game is already running".to_string() } else { format!("Launch {} with {enabled} mods", profile.name) }));
+    play.set_tool_tip(&qs(if running {
+        "The game is already running".to_string()
+    } else if waiting {
+        "Steam is still updating Workshop mods; start now and some may load their old version".to_string()
+    } else {
+        format!("Launch {} with {enabled} mods", profile.name)
+    }));
     let this = app.clone();
     play.clicked().connect(&SlotNoArgs::new(&play, move || this.launch(None)));
     v.add_widget(&play);

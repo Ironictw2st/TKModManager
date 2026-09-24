@@ -4,6 +4,30 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-24
+
+### Added
+- **Workshop mods update before each launch.** Steam and CA's launcher bring Workshop mods up
+  to date before starting the game, and now the manager does too: Play asks Steam for any
+  pending updates of the enabled mods first, then starts the game. Pressing **Play without
+  waiting** starts it straight away. Turn it off in Settings with "Update enabled Workshop mods
+  through Steam before each launch".
+
+### Changed
+- **One copy per pack name.** The game loads packs by file name, so two copies of the same pack
+  (a Workshop item and a Nexus install, or an old copy in data/) competed and the older one
+  often won. Only the newest enabled copy is loaded now, switching one copy on switches the
+  others off, and a newly installed pack takes the old copy's place in the load order. The mod
+  details list the other copies and warn about ones in data/.
+- A second download of the same archive (`MyMod (1).zip`, or `MyMod_v2.zip` with the same packs)
+  is added as a new version of the installed mod instead of a second mod.
+
+### Fixed
+- **No more false "Update pending".** When Steam's Workshop manifest goes out of sync (a Steam
+  client update can do this), a mod you already have the newest version of could keep the red
+  dot, and Force update could not clear it. A pack downloaded after the newest version came out
+  now counts as up to date.
+
 ## [0.6.0] - 2026-09-22
 
 ### Added

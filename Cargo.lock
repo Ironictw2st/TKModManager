@@ -2900,7 +2900,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tkmm"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "cpp_core",
  "qt_core",
@@ -2913,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "tkmm_core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "directories",
  "hex",

@@ -44,6 +44,7 @@ pub struct SettingsUi {
     app_updates: QBox<QCheckBox>,
     app_channel: QBox<QComboBox>,
     dll_updates: QBox<QCheckBox>,
+    ws_updates: QBox<QCheckBox>,
     cache_hours: QBox<QSpinBox>,
     density: QBox<QComboBox>,
     // nexus
@@ -197,6 +198,9 @@ impl SettingsUi {
             ar.add_widget(&app_channel);
             ar.add_stretch_1a(1);
             b.add_widget(&dll_updates);
+            let ws_updates = QCheckBox::from_q_string(&qs("Update enabled Workshop mods through Steam before each launch"));
+            ws_updates.set_tool_tip(&qs("Steam and CA's launcher do this before starting the game; without it an update Steam has not downloaded yet leaves the old version in place"));
+            b.add_widget(&ws_updates);
             let hr = QHBoxLayout::new_0a();
             b.add_layout_1a(&hr);
             hr.add_widget(QLabel::from_q_string(&qs("Re-fetch Workshop titles and dates after")).into_ptr());
@@ -389,6 +393,7 @@ impl SettingsUi {
                 app_updates,
                 app_channel,
                 dll_updates,
+                ws_updates,
                 cache_hours,
                 density,
                 nexus_key,
@@ -561,13 +566,14 @@ impl SettingsUi {
         }));
         on_click!(self.cutoff_reset, |a: &Rc<App>| SettingsUi::update_settings(a, |s| s.outdated_before = None));
 
-        for (cb, which) in [(&self.tray, 0), (&self.app_updates, 1), (&self.dll_updates, 2), (&self.dll_auto, 3)] {
+        for (cb, which) in [(&self.tray, 0), (&self.app_updates, 1), (&self.dll_updates, 2), (&self.ws_updates, 4), (&self.dll_auto, 3)] {
             let this = app.clone();
             cb.clicked().connect(&SlotOfBool::new(w, move |on| {
                 SettingsUi::update_settings(&this, |s| match which {
                     0 => s.minimize_to_tray = on,
                     1 => s.check_app_updates = on,
                     2 => s.check_dll_updates = on,
+                    4 => s.update_workshop_on_launch = on,
                     _ => s.auto_inject_external = on,
                 })
             }));
@@ -1156,6 +1162,7 @@ impl SettingsUi {
         self.tray.set_checked(s.minimize_to_tray);
         self.app_updates.set_checked(s.check_app_updates);
         self.dll_updates.set_checked(s.check_dll_updates);
+        self.ws_updates.set_checked(s.update_workshop_on_launch);
         self.dll_auto.set_checked(s.auto_inject_external);
         self.cache_hours.set_value(s.workshop_cache_hours as i32);
         let di = self.density.find_data_1a(&QVariant::from_q_string(&qs(&s.list_density)));

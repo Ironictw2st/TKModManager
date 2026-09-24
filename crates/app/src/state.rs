@@ -181,6 +181,18 @@ impl State {
         self.save_profiles();
     }
 
+    /// Switch packs on/off (flip when `on` is None) in the active profile, keeping one enabled
+    /// copy per pack file name (see `profile_ops::toggle_exclusive`).
+    pub fn toggle(&mut self, keys: &[String], on: Option<bool>) {
+        let files = self.file_of();
+        self.update_active(|p| profile_ops::toggle_exclusive(&mut p.entries, keys, on, &files));
+    }
+
+    /// Pack file name by key, for every installed pack.
+    pub fn file_of(&self) -> HashMap<String, String> {
+        self.mods.iter().map(|m| (m.key.clone(), m.file.clone())).collect()
+    }
+
     pub fn save_profiles(&mut self) {
         if !self.profiles_ok {
             return; // the file on disk could not be read; never write over it blind

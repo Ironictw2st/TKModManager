@@ -66,6 +66,8 @@ pub struct App {
     /// When the task line's result message should disappear.
     pub task_expires: Cell<Option<Instant>>,
     pub steam_results: RefCell<Vec<(u64, bool, String)>>,
+    /// A launch is waiting for the pre-launch Workshop update to finish.
+    pub launch_after_steam: Cell<bool>,
 
     pub window: QBox<QMainWindow>,
     pub tabs: QBox<QTabBar>,
@@ -242,6 +244,7 @@ impl App {
                 steam_busy: Cell::new(false),
                 task_expires: Cell::new(None),
                 steam_results: RefCell::new(Vec::new()),
+                launch_after_steam: Cell::new(false),
                 window,
                 tabs,
                 profile_combo,
@@ -512,6 +515,41 @@ impl App {
             }
             self.switch_profile(&name);
         }
+        // Steam brings Workshop items up to date when it starts a game itself, and so does CA's
+        // launcher; starting the exe directly skips that, so an update Steam has not fetched yet
+        // would load the old version. Ask Steam first and launch once it is done. Pressing Play
+        // again while it runs starts the game without waiting.
+        if self.launch_after_steam.replace(false) {
+            self.set_task("");
+        } else if !self.steam_busy.get() && !self.st.borrow().game_running {
+            let ids = self.enabled_workshop_ids();
+            let steam = self.st.borrow().paths.store == tkmm_core::paths::GameStore::Steam;
+            if steam && !ids.is_empty() && self.ctx.settings().update_workshop_on_launch && tkmm_core::steam_ugc::dll_path().is_some() {
+                self.launch_after_steam.set(true);
+                self.set_launch_message("writing", "Checking Workshop mods for updates…");
+                self.force_update(ids);
+                self.mark(DIRTY_LAUNCH);
+                return;
+            }
+        }
+        self.launch_now();
+    }
+
+    /// Workshop ids of the packs the active profile loads.
+    pub fn enabled_workshop_ids(&self) -> Vec<String> {
+        let st = self.st.borrow();
+        let mut ids: Vec<String> = ops::enabled_packs(&st.active(), &st.mods)
+            .into_iter()
+            .filter(|m| m.source == tkmm_core::packs::ModSource::Workshop)
+            .filter_map(|m| m.workshop_id.clone())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Write the list and start the game with the active profile.
+    pub unsafe fn launch_now(self: &Rc<Self>) {
         let (profile, save) = {
             let st = self.st.borrow();
             (st.active(), Some(st.load_save.clone()).filter(|s| !s.is_empty()))
@@ -533,6 +571,29 @@ impl App {
             {
                 return;
             }
+        }
+        // The list names packs by file name only and data/ is never a listed folder, so an older
+        // copy left in data/ can load in place of the Workshop / Nexus pack the profile enables.
+        let shadowed: Vec<String> = {
+            let st = self.st.borrow();
+            ops::name_clashes(&profile, &st.mods)
+                .iter()
+                .filter(|c| st.module(&c.loaded).map(|m| m.source != tkmm_core::packs::ModSource::Data).unwrap_or(false))
+                .flat_map(|c| c.data_copies().filter(|d| !d.newer).map(|d| d.path.clone()).collect::<Vec<_>>())
+                .collect()
+        };
+        if !shadowed.is_empty()
+            && !crate::dialogs::confirm(
+                &self.window,
+                "Older copy in the data folder",
+                &format!(
+                    "The game loads packs by file name, and the data folder has an older copy of {} this profile enables from elsewhere:\n\n{}\n\nThe game may load the old copy instead of the new one. Delete or move it out of the data folder to be sure the newest version loads.\n\nStart anyway?",
+                    if shadowed.len() == 1 { "a pack" } else { "packs" },
+                    shadowed.join("\n")
+                ),
+            )
+        {
+            return;
         }
         self.set_launch_message("writing", "Starting…");
         let ctx = self.ctx.clone();

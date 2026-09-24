@@ -74,7 +74,9 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
     let latest = Some(m.latest_updated.unwrap_or(0).max(api)).filter(|v| *v > 0);
     let installed = m.installed_updated;
     if let (Some(l), Some(i)) = (latest, installed) {
-        if l > i {
+        // A pack written after the newest version was published is that version: Steam's
+        // manifest can go stale (client updates desync it) and keep an old `timeupdated`.
+        if l > i && m.mtime < l {
             return ModStatus {
                 kind: StatusKind::Pending,
                 text: format!(
@@ -304,6 +306,9 @@ mod tests {
         assert_eq!(mod_status(Some(&m(w, Some(1000), Some(1500))), None, 500).kind, StatusKind::Pending);
         assert_eq!(mod_status(Some(&m(w, Some(1000), Some(1000))), Some(&ws(2000, false)), 500).kind, StatusKind::Pending);
         assert_eq!(mod_status(Some(&m(w, Some(1000), Some(1000))), Some(&ws(2000, true)), 500).kind, StatusKind::Ok);
+        // Stale manifest: the pack on disk was written after the latest version came out.
+        let stale = ModEntry { mtime: 1600, ..m(w, Some(1000), Some(1500)) };
+        assert_eq!(mod_status(Some(&stale), None, 500).kind, StatusKind::Ok);
         assert_eq!(mod_status(Some(&m(w, Some(400), Some(400))), None, 500).kind, StatusKind::Old);
         assert_eq!(mod_status(Some(&m(w, Some(400), Some(400))), None, 0).kind, StatusKind::Ok);
         assert_eq!(mod_status(Some(&m(w, None, None)), None, 500).kind, StatusKind::Unknown);
