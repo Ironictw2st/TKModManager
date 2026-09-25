@@ -89,8 +89,8 @@ fn ws_pending(m: &ModEntry, ws: &HashMap<String, WorkshopItem>) -> bool {
     m.source == ModSource::Workshop && m.installed_updated.map(|i| ws_latest(m, ws) > i).unwrap_or(false)
 }
 
-/// Steam returned nothing for the id although we asked it just now: the item is hidden,
-/// private or removed, and nobody else can download that version.
+/// Steam's public API returned nothing for the id although we asked it just now: the item is
+/// unlisted, private or removed. Unlisted items still download for subscribers.
 fn ws_gone(m: &ModEntry, d: &ReportData) -> bool {
     m.source == ModSource::Workshop
         && d.workshop_live.is_ok()
@@ -122,10 +122,10 @@ fn pack_block(out: &mut String, n: usize, m: &ModEntry, d: &ReportData) {
             let _ = writeln!(out, "     Source:   Steam Workshop {id}  https://steamcommunity.com/sharedfiles/filedetails/?id={id}");
             let installed = m.installed_updated.unwrap_or(0);
             let latest = ws_latest(m, d.workshop);
-            let state = if ws_gone(m, d) {
-                "Steam has no public page for this item any more (hidden, private or removed)"
-            } else if ws_pending(m, d.workshop) {
+            let state = if ws_pending(m, d.workshop) {
                 "UPDATE PENDING: Steam has a newer version than the one installed"
+            } else if ws_gone(m, d) {
+                "not publicly listed on Steam (unlisted, private or removed)"
             } else if installed == 0 {
                 "installed version unknown"
             } else {
@@ -211,10 +211,20 @@ pub fn render(d: &ReportData) -> String {
     // Things worth a second look, first, so they are not lost under a long list.
     let mut notes: Vec<String> = Vec::new();
     for m in &enabled {
+        if ws_pending(m, d.workshop) {
+            notes.push(format!(
+                "{}: OUT OF DATE: installed version from {}, newest on Steam from {} (let Steam finish downloading, or use Force update).",
+                m.file,
+                when(m.installed_updated.unwrap_or(0)),
+                when(ws_latest(m, d.workshop))
+            ));
+        }
         if ws_gone(m, d) {
-            notes.push(format!("{}: Workshop item {} is not public on Steam any more; other players cannot get this version.", m.file, m.workshop_id.clone().unwrap_or_default()));
-        } else if ws_pending(m, d.workshop) {
-            notes.push(format!("{}: Steam has a newer version than the installed one (let Steam finish downloading, or use Force update).", m.file));
+            notes.push(format!(
+                "{}: Workshop item {} is not publicly listed (unlisted test build, private or removed); check it is the build the player should have.",
+                m.file,
+                m.workshop_id.clone().unwrap_or_default()
+            ));
         }
         if m.pack_type == PackType::Movie {
             notes.push(format!("{}: movie pack; the game loads it no matter where it sits in the load order.", m.file));
@@ -622,7 +632,7 @@ mod tests {
         let scan = vec![
             pack("ws:1/core.pack", ModSource::Workshop, Some("1"), PackType::Mod, Some(100), Some(100)),
             pack("ws:2/old.pack", ModSource::Workshop, Some("2"), PackType::Mod, Some(100), Some(200)),
-            pack("ws:3/gone.pack", ModSource::Workshop, Some("3"), PackType::Mod, Some(100), Some(100)),
+            pack("ws:3/gone.pack", ModSource::Workshop, Some("3"), PackType::Mod, Some(100), Some(300)),
             pack("ws:4/audio.pack", ModSource::Workshop, Some("4"), PackType::Movie, Some(100), Some(100)),
             pack("data:local.pack", ModSource::Data, None, PackType::Mod, None, None),
             pack("data:spare.pack", ModSource::Data, None, PackType::Mod, None, None),
@@ -645,8 +655,9 @@ mod tests {
         assert!(pos("  1. core.pack") < pos("  2. old.pack"));
         assert!(text.contains("Title:    Core Mod"));
         assert!(text.contains("https://steamcommunity.com/sharedfiles/filedetails/?id=1"));
-        assert!(text.contains("old.pack: Steam has a newer version"));
-        assert!(text.contains("gone.pack: Workshop item 3 is not public"));
+        assert!(text.contains("old.pack: OUT OF DATE"));
+        assert!(text.contains("gone.pack: Workshop item 3 is not publicly listed"));
+        assert!(text.contains("gone.pack: OUT OF DATE: installed version from 1970-01-01 00:01 UTC, newest on Steam from 1970-01-01 00:05 UTC"));
         assert!(text.contains("audio.pack: movie pack"));
         assert!(text.contains("ws:9/missing.pack: enabled in the profile but not installed"));
         assert!(text.contains("game data folder (copied in by hand"));
@@ -668,7 +679,7 @@ mod tests {
         };
         let (ws, se, game) = (HashMap::new(), HashMap::new(), paths::GamePaths::default());
         let text = render(&ReportData { now: 0, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Err("offline".into()), se: &se, game: &game, dll: None, launches: &[], extras: vec![] });
-        assert!(!text.contains("not public"));
+        assert!(!text.contains("not publicly listed"));
         assert!(text.contains("Steam could not be asked: offline"));
     }
 

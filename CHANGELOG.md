@@ -4,6 +4,16 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-25
+
+### Fixed
+- **Crash reports flag out-of-date mods first.** A Workshop mod whose installed copy is older
+  than the newest version on Steam is now always listed as out of date, with both dates.
+  Before, an unlisted item (such as a test build) was only reported as "not public", which
+  hid the real problem: a stale copy that Steam had not updated yet.
+- Unlisted Workshop items are no longer described as unavailable to other players; unlisted
+  items still download and update for everyone subscribed.
+
 ## [0.6.2] - 2026-09-25
 
 ### Added
