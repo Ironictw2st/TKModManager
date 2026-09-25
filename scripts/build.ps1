@@ -20,6 +20,9 @@ $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 
 Set-Location (Join-Path $PSScriptRoot '..')
 $profileArgs = @(); if ($Release) { $profileArgs = @('--release') }
+# "Send report" posts to this Discord webhook; the URL stays out of the public source.
+$hook = Join-Path (Get-Location) 'report_webhook.txt'
+if (Test-Path $hook) { $env:TKMM_REPORT_WEBHOOK = (Get-Content $hook -Raw).Trim() }
 
 if ($Test) { cargo test -p tkmm_core; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
 cargo build -p tkmm @profileArgs

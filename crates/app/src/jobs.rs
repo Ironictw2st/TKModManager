@@ -337,3 +337,66 @@ impl App {
 pub fn crash_log_path() -> PathBuf {
     tkmm_core::paths::app_data_dir().join("crash.log")
 }
+
+impl App {
+    /// "Create mod report": every loaded mod with its source and version, plus the game's crash
+    /// files and log ends, written to the Desktop for sending to a mod author.
+    pub unsafe fn create_report(self: &Rc<Self>) {
+        let profile = self.st.borrow().active();
+        let ctx = self.ctx.clone();
+        self.set_task("Creating mod report (asking Steam for the current versions)…");
+        self.bus.spawn(move |_| Some(UiEvent::Report(tkmm_core::report::save(&tkmm_core::report::build(&ctx, &profile)))));
+    }
+
+    pub unsafe fn on_report(self: &Rc<Self>, r: Result<PathBuf, String>) {
+        match r {
+            Ok(path) => {
+                self.set_task_done(&format!("Mod report saved: {}", path.display()));
+                crate::details::reveal(&path.to_string_lossy());
+            }
+            Err(e) => {
+                self.set_task("");
+                crate::dialogs::error(&self.window, &format!("Cannot create the mod report: {e}"));
+            }
+        }
+    }
+}
+
+/// Discord forum webhook for "Send report" (from report_webhook.txt at build time; absent in
+/// builds without it, which then have no Send button).
+pub const REPORT_WEBHOOK: Option<&str> = option_env!("TKMM_REPORT_WEBHOOK");
+
+impl App {
+    /// "Send report": ask what happened, then post the mod report and the newest crash dump as a
+    /// new thread in the mod's Discord forum.
+    pub unsafe fn send_report(self: &Rc<Self>) {
+        let Some(hook) = REPORT_WEBHOOK.filter(|h| !h.is_empty()) else { return };
+        let note = crate::dialogs::ask_multiline(
+            &self.window,
+            "Send report to Discord",
+            "This posts a new thread in the 190 Expanded Discord (a public forum) with:\n\
+             • the mod report: every loaded mod, its Workshop / Nexus version, file paths on this PC (they include your Windows user name), recent launches, the game's crash records and the ends of the game's logs\n\
+             • the newest game crash dump from the last 7 days, when it fits Discord's size limit\n\n\
+             What were you doing when it crashed? (optional; the first line becomes the thread title)",
+            "Send",
+        );
+        let Some(note) = note else { return };
+        let profile = self.st.borrow().active();
+        let ctx = self.ctx.clone();
+        self.set_task("Sending report to Discord…");
+        self.bus.spawn(move |_| Some(UiEvent::ReportSent(tkmm_core::report::send_to_discord(&ctx, &profile, hook, &note))));
+    }
+
+    pub unsafe fn on_report_sent(self: &Rc<Self>, r: Result<String, String>) {
+        match r {
+            Ok(msg) => {
+                self.set_task("");
+                crate::dialogs::info(&self.window, "Send report", &format!("{msg}\nThanks, the mod team can see it on Discord now."));
+            }
+            Err(e) => {
+                self.set_task("");
+                crate::dialogs::error(&self.window, &format!("The report could not be sent: {e}\n\nUse \"Create mod report\" and send the file by hand instead."));
+            }
+        }
+    }
+}

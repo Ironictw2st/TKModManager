@@ -14,7 +14,7 @@ directories = "6"
 # Read Total War `.pack` archives (headers + file indexes, lazily).
 rpfm_lib = "4.7"
 # Downloads (DLL releases, app updates, Steam metadata); blocking, called from worker threads.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "multipart"] }
 semver = "1"
 sha2 = "0.10"
 hex = "0.4"

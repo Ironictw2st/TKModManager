@@ -666,6 +666,12 @@ impl App {
         }));
         m.add_separator();
         let this = self.clone();
+        add("Create mod report", Box::new(move || this.create_report()));
+        if crate::jobs::REPORT_WEBHOOK.is_some() {
+            let this = self.clone();
+            add("Send report to Discord…", Box::new(move || this.send_report()));
+        }
+        let this = self.clone();
         add("Create desktop shortcut", Box::new(move || {
             let name = this.st.borrow().profiles.active.clone();
             match tkmm_core::cli::create_profile_shortcut(&name) {
@@ -1005,6 +1011,8 @@ impl App {
             UiEvent::NexusUser(r) => self.settings.on_nexus_user(self, r),
             UiEvent::SteamDl(e) => self.on_steam_event(e),
             UiEvent::SteamDlDone(r) => self.on_steam_done(r),
+            UiEvent::Report(r) => self.on_report(r),
+            UiEvent::ReportSent(r) => self.on_report_sent(r),
         }
     }
 

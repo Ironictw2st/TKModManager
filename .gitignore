@@ -13,3 +13,6 @@ Thumbs.db
 
 # Release staging and zips (scripts/release.ps1)
 /release
+
+# Discord webhook for "Send report" (compiled in by scriptsuild.ps1 / release.ps1; never commit)
+/report_webhook.txt

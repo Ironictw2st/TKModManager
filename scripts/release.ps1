@@ -42,6 +42,9 @@ Set-Location $root
 
 cargo test -p tkmm_core --quiet
 if ($LASTEXITCODE) { throw "core tests failed" }
+# "Send report" posts to this Discord webhook; the URL stays out of the public source.
+$hook = Join-Path $root 'report_webhook.txt'
+if (Test-Path $hook) { $env:TKMM_REPORT_WEBHOOK = (Get-Content $hook -Raw).Trim() } else { Write-Warning "report_webhook.txt missing: the release will have no Send report button" }
 cargo build --release -p tkmm
 if ($LASTEXITCODE) { throw "release build failed" }
 

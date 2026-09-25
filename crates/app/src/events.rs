@@ -56,6 +56,10 @@ pub enum UiEvent {
     NexusUser(Result<User, String>),
     SteamDl(steam_ugc::Event),
     SteamDlDone(Result<(), String>),
+    /// "Create mod report" finished: the file it wrote.
+    Report(Result<std::path::PathBuf, String>),
+    /// "Send report" finished (message for the user, or why it failed).
+    ReportSent(Result<String, String>),
 }
 
 #[derive(Clone)]

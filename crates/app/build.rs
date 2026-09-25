@@ -2,6 +2,8 @@
 // steam_api64.dll (used by "Force update", loaded at run time) next to it for dev runs.
 fn main() {
     println!("cargo:rerun-if-changed=../../redist/steam_api64.dll");
+    // Compiled in with option_env! for "Send report" (set by scripts/build.ps1 and release.ps1).
+    println!("cargo:rerun-if-env-changed=TKMM_REPORT_WEBHOOK");
     if let Ok(out) = std::env::var("OUT_DIR") {
         // OUT_DIR = target/<profile>/build/tkmm-<hash>/out
         if let Some(profile_dir) = std::path::Path::new(&out).ancestors().nth(3) {

@@ -4,6 +4,19 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-25
+
+### Added
+- **Send report to Discord.** When the game crashes, the new **Send report** button (also in the
+  profile menu) posts a crash report to the 190 Expanded Discord. You can say what you were
+  doing, and the mod team gets everything needed to find the cause:
+  - every loaded mod in load order, with its Workshop or Nexus page, the installed version
+    against the newest one, and the file on disk;
+  - warnings about common causes: Workshop items that are gone from Steam, pending updates,
+    required items that are missing, movie packs, and duplicate copies of a pack;
+  - the game's latest crash dump, Windows' crash record and the ends of the game's logs.
+- **Create mod report** saves the same report as a text file on your Desktop, to send by hand.
+
 ## [0.6.1] - 2026-09-24
 
 ### Added

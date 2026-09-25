@@ -204,6 +204,18 @@ pub unsafe fn refresh(app: &Rc<App>) {
         let this = app.clone();
         b.clicked().connect(&SlotNoArgs::new(&b, move || crate::tabs::crash_dialog(&this, id)));
         row.add_widget(&b);
+        let r = QPushButton::from_q_string(&qs("Mod report"));
+        r.set_tool_tip(&qs("Write a report of every loaded mod, the game's crash files and the logs to the Desktop, to send to a mod author"));
+        let this = app.clone();
+        r.clicked().connect(&SlotNoArgs::new(&r, move || this.create_report()));
+        row.add_widget(&r);
+        if crate::jobs::REPORT_WEBHOOK.is_some() {
+            let s = QPushButton::from_q_string(&qs("Send report"));
+            s.set_tool_tip(&qs("Post the mod report and the crash dump to the 190 Expanded Discord"));
+            let this = app.clone();
+            s.clicked().connect(&SlotNoArgs::new(&s, move || this.send_report()));
+            row.add_widget(&s);
+        }
         let x = QPushButton::from_q_string(&qs("Dismiss"));
         let this = app.clone();
         x.clicked().connect(&SlotNoArgs::new(&x, move || {
