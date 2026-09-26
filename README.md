@@ -21,7 +21,18 @@ you turn off are excluded with `exclude_pack_file`; files are never renamed or m
 
 Script extender: enable it in the launch panel (right column). After the game reaches the main menu the DLL is
 injected once; the DLL verifies the game build itself and the launch panel shows the result.
-A DLL built for another game build is never injected.
+A DLL built for another game build is never injected. The injection itself is done by
+`tkmm-inject.exe` next to the manager, which runs only for profiles that use the script extender.
+
+### Windows Security / antivirus
+
+Loading a DLL into another program is also what malware does, so Windows Security may block
+`tkmm-inject.exe` (for example as `Behavior:Win32/DefenseEvasion.A!ml`). This is a false positive.
+The manager itself keeps working; only the script extender is not loaded, and the launch panel
+says so. To allow it, open **Windows Security > Virus & threat protection > Protection history**,
+pick the entry and choose **Allow on device** (or restore the file), or add the manager's folder
+as an exclusion. False positives can be reported to Microsoft at
+<https://www.microsoft.com/wdsi/filesubmission>.
 
 ## Mods from Nexus Mods
 
@@ -41,6 +52,10 @@ Steam downloads Workshop updates whenever it gets round to it. Right-click a mod
 and pick **Force update from Steam**, or use **Actions > Force update pending Workshop mods**,
 to download it now. This runs a short helper through Valve's `steam_api64.dll`, so for a few
 seconds Steam shows you as playing Three Kingdoms.
+
+Before each launch the manager checks the enabled Workshop mods against Steam and asks Steam
+only for the ones with a newer version (setting: **Settings > Behaviour**). When nothing is out
+of date, the game starts right away and Steam downloads nothing.
 
 ## Mod status
 

@@ -25,7 +25,7 @@ $hook = Join-Path (Get-Location) 'report_webhook.txt'
 if (Test-Path $hook) { $env:TKMM_REPORT_WEBHOOK = (Get-Content $hook -Raw).Trim() }
 
 if ($Test) { cargo test -p tkmm_core; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
-cargo build -p tkmm @profileArgs
+cargo build -p tkmm -p tkmm_inject @profileArgs
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 if ($Run) {
     $exe = if ($Release) { 'target\release\tkmm.exe' } else { 'target\debug\tkmm.exe' }

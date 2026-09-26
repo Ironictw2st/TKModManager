@@ -103,6 +103,23 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
     ModStatus { kind: StatusKind::Ok, text: format!("Up to date (updated {})", format_date(published)), latest, installed }
 }
 
+/// Workshop ids among `mods` that have an update Steam has not installed yet (the red dot).
+/// Only these are worth asking Steam to download before a launch: `DownloadItem` fetches an
+/// item again even when it is already current.
+pub fn stale_workshop_ids<'a>(mods: impl IntoIterator<Item = &'a ModEntry>, ws: &std::collections::HashMap<String, WorkshopItem>) -> Vec<String> {
+    let mut ids: Vec<String> = mods
+        .into_iter()
+        .filter(|m| m.source == ModSource::Workshop)
+        .filter_map(|m| {
+            let id = m.workshop_id.as_ref()?;
+            (mod_status(Some(m), ws.get(id), 0).kind == StatusKind::Pending).then(|| id.clone())
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn nexus_status(nx: &crate::nexus::NexusRef) -> ModStatus {
     let have = if nx.active.version.is_empty() { "unknown version".to_string() } else { format!("version {}", nx.active.version) };
     let installed = Some(nx.active.uploaded).filter(|v| *v > 0);
@@ -315,6 +332,20 @@ mod tests {
         assert_eq!(mod_status(Some(&m(ModSource::Data, None, None)), None, 500).kind, StatusKind::Local);
         assert_eq!(mod_status(Some(&m(ModSource::Folder, None, None)), None, 500).kind, StatusKind::Local);
         assert_eq!(mod_status(None, None, 500).kind, StatusKind::Unknown);
+    }
+
+    #[test]
+    fn stale_ids_only_pending() {
+        let w = ModSource::Workshop;
+        let current = m(w, Some(1000), Some(1000));
+        let manifest_newer = ModEntry { workshop_id: Some("2".into()), ..m(w, Some(1000), Some(1500)) };
+        let api_newer = ModEntry { workshop_id: Some("3".into()), ..m(w, Some(1000), Some(1000)) };
+        let rewritten = ModEntry { workshop_id: Some("4".into()), mtime: 1600, ..m(w, Some(1000), Some(1500)) };
+        let local = ModEntry { workshop_id: Some("5".into()), ..m(ModSource::Data, Some(1000), Some(1500)) };
+        let mut api = std::collections::HashMap::new();
+        api.insert("3".to_string(), WorkshopItem { id: "3".into(), time_updated: 2000, ..Default::default() });
+        let mods = [current, manifest_newer.clone(), api_newer, rewritten, local, manifest_newer];
+        assert_eq!(stale_workshop_ids(&mods, &api), vec!["2".to_string(), "3".to_string()]);
     }
 
     #[test]

@@ -341,8 +341,8 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
     let log = dll.parent().map(|d| d.join(dll::LOG_NAME));
     let log_from = log.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0);
     emit(out, "menu", "Main menu up; injecting DLL", Some(pid));
-    match inject_core::inject(pid, dll) {
-        Ok(_) => emit(out, "injected", "DLL loaded; waiting for verification", Some(pid)),
+    match run_injector(pid, dll) {
+        Ok(()) => emit(out, "injected", "DLL loaded; waiting for verification", Some(pid)),
         Err(e) => {
             emit(out, "failed", format!("Injection failed: {e}"), Some(pid));
             return;
@@ -370,6 +370,54 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// The helper that does the actual injection, shipped next to the manager.
+pub const INJECTOR_EXE: &str = "tkmm-inject.exe";
+
+/// Windows' "Operation did not complete successfully because the file contains a virus or
+/// potentially unwanted software" (Defender blocking the start of a flagged exe).
+const ERROR_VIRUS_INFECTED: i32 = 225;
+const ERROR_VIRUS_DELETED: i32 = 226;
+
+fn injector_blocked(detail: &str) -> String {
+    format!(
+        "Script extender not loaded: Windows Security (or another antivirus) blocked or removed {INJECTOR_EXE} ({detail}). \
+         It loads script_extender.dll into the game, which antivirus programs treat as suspicious. \
+         Restore it under Windows Security > Virus & threat protection > Protection history and allow it, \
+         or add the manager's folder as an exclusion. The game keeps running without the script extender."
+    )
+}
+
+/// Load `dll` into `pid` through `tkmm-inject.exe`, so the manager itself never writes into
+/// another process. Blocking.
+fn run_injector(pid: u32, dll: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let helper = exe.parent().map(|d| d.join(INJECTOR_EXE)).ok_or("bad exe path")?;
+    if !helper.is_file() {
+        return Err(injector_blocked("the file is missing"));
+    }
+    let output = std::process::Command::new(&helper)
+        .args(["--pid", &pid.to_string(), "--dll"])
+        .arg(dll)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| match e.raw_os_error() {
+            Some(ERROR_VIRUS_INFECTED | ERROR_VIRUS_DELETED) => injector_blocked("flagged as a threat"),
+            Some(5) => injector_blocked("access denied"),
+            _ => format!("cannot start {INJECTOR_EXE}: {e}"),
+        })?;
+    parse_injector_reply(&String::from_utf8_lossy(&output.stdout))
+        .unwrap_or_else(|| Err(injector_blocked(&format!("it stopped without an answer, {}", output.status))))
+}
+
+/// The helper's one-line JSON answer: `{"ok": bool, "message": "..."}`.
+pub fn parse_injector_reply(stdout: &str) -> Option<Result<(), String>> {
+    let v: serde_json::Value = stdout.lines().rev().find_map(|l| serde_json::from_str(l.trim()).ok())?;
+    let ok = v["ok"].as_bool()?;
+    let message = v["message"].as_str().unwrap_or("").to_string();
+    Some(if ok { Ok(()) } else { Err(message) })
 }
 
 /// The log's text from `offset` on, so a previous run's lines are not read as this run's.
@@ -451,6 +499,16 @@ pub fn start_external_watcher(ctx: Ctx, out: Emit) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn injector_replies() {
+        assert_eq!(parse_injector_reply("{\"ok\":true,\"message\":\"DLL loaded\"}
+"), Some(Ok(())));
+        assert_eq!(parse_injector_reply("noise
+{\"ok\":false,\"message\":\"OpenProcess failed\"}"), Some(Err("OpenProcess failed".into())));
+        assert_eq!(parse_injector_reply(""), None);
+        assert_eq!(parse_injector_reply("garbage"), None);
+    }
 
     /// Only what the DLL wrote after this injection may be read, or a previous run's verdict
     /// is reported for this one.

@@ -296,7 +296,14 @@ impl App {
                 ),
             };
             if go {
-                self.launch_now();
+                // The helper was Three Kingdoms as far as Steam knew; let Steam close that
+                // session before the game starts (Play again skips the wait).
+                self.launch_after_steam.set(true);
+                self.set_launch_message("writing", "Waiting for Steam…");
+                self.bus.spawn(|_| {
+                    steam_ugc::wait_until_released(std::time::Duration::from_secs(2), std::time::Duration::from_secs(10));
+                    Some(UiEvent::LaunchChecked { items: Default::default(), stale: Vec::new() })
+                });
             } else {
                 self.set_launch_message("idle", "");
             }

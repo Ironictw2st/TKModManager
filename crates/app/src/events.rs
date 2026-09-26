@@ -54,6 +54,8 @@ pub enum UiEvent {
     /// Update check of installed Nexus mods: how many have a newer file. `true` = user asked.
     NexusChecked(Result<usize, String>, bool),
     NexusUser(Result<User, String>),
+    /// Pre-launch Workshop check: fresh details, and the enabled items with a pending update.
+    LaunchChecked { items: HashMap<String, WorkshopItem>, stale: Vec<String> },
     SteamDl(steam_ugc::Event),
     SteamDlDone(Result<(), String>),
     /// "Create mod report" finished: the file it wrote.

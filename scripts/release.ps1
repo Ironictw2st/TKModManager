@@ -1,7 +1,7 @@
 # Build the portable release zip and (optionally) publish it as a GitHub release.
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Publish] [-PreRelease]
 #
-#   1. cargo build --release -p tkmm inside the KDE Craft Qt 6 / MSVC environment
+#   1. cargo build --release -p tkmm -p tkmm_inject inside the KDE Craft Qt 6 / MSVC environment
 #   2. release\TKModManager\ = TKModManager.exe + windeployqt output + the non-Qt DLLs Craft's Qt
 #      links against (found by walking `dumpbin /dependents`) + the MSVC runtime
 #   3. smoke test: the staged exe must start with a PATH that has no Craft or Qt in it
@@ -45,7 +45,7 @@ if ($LASTEXITCODE) { throw "core tests failed" }
 # "Send report" posts to this Discord webhook; the URL stays out of the public source.
 $hook = Join-Path $root 'report_webhook.txt'
 if (Test-Path $hook) { $env:TKMM_REPORT_WEBHOOK = (Get-Content $hook -Raw).Trim() } else { Write-Warning "report_webhook.txt missing: the release will have no Send report button" }
-cargo build --release -p tkmm
+cargo build --release -p tkmm -p tkmm_inject
 if ($LASTEXITCODE) { throw "release build failed" }
 
 # --- stage ---
@@ -54,6 +54,13 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory $stage | Out-Null
 $exe = Join-Path $stage 'TKModManager.exe'
 Copy-Item target\release\tkmm.exe $exe
+# The script-extender loader: the only exe that writes into the game process (see
+# crates/injector). The manager itself must not import the injection APIs.
+Copy-Item target\release\tkmm-inject.exe $stage
+$imports = & dumpbin /nologo /imports $exe | Out-String
+foreach ($api in 'CreateRemoteThread', 'VirtualAllocEx', 'WriteProcessMemory') {
+    if ($imports -match $api) { throw "TKModManager.exe imports $api; injection must stay in tkmm-inject.exe" }
+}
 # Valve's redistributable Steam API, loaded at run time by "Force update" (not in the import table,
 # so the dep walk below never finds it).
 Copy-Item redist\steam_api64.dll $stage

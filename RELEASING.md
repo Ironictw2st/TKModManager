@@ -1,6 +1,8 @@
 # Releasing & auto-update
 
-TK Mod Manager ships as a **portable zip**, `TKModManager-x64.zip`: `TKModManager.exe`, the Qt 6
+TK Mod Manager ships as a **portable zip**, `TKModManager-x64.zip`: `TKModManager.exe`,
+`tkmm-inject.exe` (the script-extender loader; `release.ps1` fails if the injection APIs ever end
+up in `TKModManager.exe` itself), the Qt 6
 DLLs and plugins it needs, their Craft dependencies and the MSVC runtime. The running app checks
 this repo's latest GitHub release, downloads the zip and installs it over its own folder, then
 restarts. No installer, no signing key.

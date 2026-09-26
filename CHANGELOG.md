@@ -4,6 +4,24 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-09-26
+
+### Fixed
+- **No more Workshop downloads at every Play.** Before a launch the manager used to ask Steam to
+  download every enabled Workshop mod, and Steam fetched them all again each time. It now checks
+  the mods against Steam first and only updates the ones that really have a newer version. When
+  everything is current, the game starts right away.
+- **Likely fix for the game sometimes starting without DLC.** When an update ran, the game
+  started the moment the update helper closed, while Steam still counted the helper as the
+  running game. The launch now waits until Steam has let go (a few seconds at most), and most
+  launches no longer run the helper at all.
+
+### Changed
+- **The script extender is loaded by a separate `tkmm-inject.exe`.** Windows Security can flag
+  DLL injection as `Behavior:Win32/DefenseEvasion.A!ml`. The manager no longer does it itself, so
+  a block only stops the script extender, never the manager. When that happens, the launch panel
+  says so and explains how to allow the file.
+
 ## [0.6.3] - 2026-09-25
 
 ### Fixed

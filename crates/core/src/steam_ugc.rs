@@ -222,6 +222,35 @@ pub fn run_helper(ids: &[u64]) -> i32 {
     }
 }
 
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegGetValueW(key: isize, sub_key: *const u16, value: *const u16, flags: u32, typ: *mut u32, data: *mut c_void, len: *mut u32) -> i32;
+}
+
+/// Steam's own flag for "Three Kingdoms is running" (`HKCU\Software\Valve\Steam\Apps\<id>\Running`).
+/// `None` when it cannot be read (Steam not installed for this user).
+pub fn steam_app_running() -> Option<bool> {
+    const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
+    const RRF_RT_REG_DWORD: u32 = 0x10;
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let key = wide(&format!("Software\\Valve\\Steam\\Apps\\{}",crate::paths::STEAM_APP_ID));
+    let name = wide("Running");
+    let (mut data, mut len) = (0u32, 4u32);
+    let rc = unsafe { RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), (&mut data as *mut u32).cast(), &mut len) };
+    (rc == 0).then_some(data != 0)
+}
+
+/// After the helper exits, wait until Steam no longer counts the game as running, so the real
+/// game does not start while Steam is still closing the helper's session (the game's DLC
+/// check can come back empty then). At least `min`, at most `max`. Blocking.
+pub fn wait_until_released(min: Duration, max: Duration) {
+    let start = Instant::now();
+    std::thread::sleep(min.min(max));
+    while start.elapsed() < max && steam_app_running() == Some(true) {
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 /// Parse the helper's argument: comma-separated Workshop ids.
 pub fn parse_ids(arg: &str) -> Vec<u64> {
     arg.split(',').filter_map(|s| s.trim().parse().ok()).collect()

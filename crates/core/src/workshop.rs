@@ -104,6 +104,31 @@ pub fn workshop_fetch(ctx: &AppContext, ids: &[String], force: bool) -> Result<H
     Ok(cache.items.into_iter().filter(|(k, _)| ids.contains(k)).collect())
 }
 
+/// Fresh publish times for `ids`, for the pre-launch update check: one details request per 50
+/// items and no page scraping, so it is quick. The cache keeps its required items and its
+/// fetch time (the full refresh still runs on its own schedule). Blocking (network).
+pub fn workshop_latest(ids: &[String]) -> Result<HashMap<String, WorkshopItem>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut fresh = Vec::new();
+    for chunk in ids.chunks(50) {
+        fresh.extend(fetch_details(&client, chunk)?);
+    }
+    let mut cache = load_cache();
+    for mut item in fresh {
+        if let Some(old) = cache.items.get(&item.id) {
+            item.required_items = old.required_items.clone();
+            item.fetched_at = old.fetched_at;
+        }
+        cache.items.insert(item.id.clone(), item);
+    }
+    let _ = json_store::save(&cache_path(), &cache);
+    Ok(cache.items.into_iter().filter(|(k, _)| ids.contains(k)).collect())
+}
+
 fn fetch_details(client: &reqwest::blocking::Client, ids: &[String]) -> Result<Vec<WorkshopItem>, String> {
     let mut form: Vec<(String, String)> = vec![("itemcount".into(), ids.len().to_string())];
     for (i, id) in ids.iter().enumerate() {

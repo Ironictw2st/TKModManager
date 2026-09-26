@@ -527,12 +527,45 @@ impl App {
             if steam && !ids.is_empty() && self.ctx.settings().update_workshop_on_launch && tkmm_core::steam_ugc::dll_path().is_some() {
                 self.launch_after_steam.set(true);
                 self.set_launch_message("writing", "Checking Workshop mods for updates…");
-                self.force_update(ids);
+                self.check_workshop_before_launch(ids);
                 self.mark(DIRTY_LAUNCH);
                 return;
             }
         }
         self.launch_now();
+    }
+
+    /// Look up the newest publish times of `ids` and hand only the out-of-date ones to Steam
+    /// (`UiEvent::LaunchChecked`). Asking Steam for every item re-downloads them all.
+    fn check_workshop_before_launch(self: &Rc<Self>, ids: Vec<String>) {
+        let mods: Vec<tkmm_core::packs::ModEntry> = {
+            let st = self.st.borrow();
+            ops::enabled_packs(&st.active(), &st.mods).into_iter().cloned().collect()
+        };
+        self.bus.spawn(move |_| {
+            // Offline: the cache and Steam's own manifest still catch most pending updates.
+            let items = tkmm_core::workshop::workshop_latest(&ids).unwrap_or_else(|e| {
+                eprintln!("pre-launch Workshop check: {e}");
+                tkmm_core::workshop::workshop_cached()
+            });
+            let stale = tkmm_core::status::stale_workshop_ids(&mods, &items);
+            Some(UiEvent::LaunchChecked { items, stale })
+        });
+    }
+
+    /// The pre-launch Workshop check is done: update what is out of date, or start right away.
+    pub unsafe fn on_launch_checked(self: &Rc<Self>, stale: Vec<String>) {
+        // Play was pressed again meanwhile, and the game is already starting.
+        if !self.launch_after_steam.get() {
+            return;
+        }
+        if stale.is_empty() {
+            self.launch_after_steam.set(false);
+            self.launch_now();
+        } else {
+            self.force_update(stale);
+        }
+        self.mark(DIRTY_LAUNCH);
     }
 
     /// Workshop ids of the packs the active profile loads.
@@ -1011,6 +1044,11 @@ impl App {
             UiEvent::NexusUser(r) => self.settings.on_nexus_user(self, r),
             UiEvent::SteamDl(e) => self.on_steam_event(e),
             UiEvent::SteamDlDone(r) => self.on_steam_done(r),
+            UiEvent::LaunchChecked { items, stale } => {
+                self.st.borrow_mut().workshop.extend(items);
+                self.mark(DIRTY_LIST | DIRTY_DETAILS);
+                self.on_launch_checked(stale);
+            }
             UiEvent::Report(r) => self.on_report(r),
             UiEvent::ReportSent(r) => self.on_report_sent(r),
         }

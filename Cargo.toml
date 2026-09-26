@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/app"]
+members = ["crates/core", "crates/injector", "crates/app"]
 # The Qt app builds only on Windows with the Craft Qt environment (scripts/build.ps1).
-default-members = ["crates/core"]
+default-members = ["crates/core", "crates/injector"]
 
 [workspace.package]
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 authors = ["Ironictw2st"]
 license = "MIT"

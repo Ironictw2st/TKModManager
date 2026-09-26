@@ -29,6 +29,8 @@ The second main file is the [b]TK Script Extender[/b], a DLL that adds extra [b]
 
 [b]You do not need to download it separately.[/b] TK Mod Manager fetches the right version for your game and injects it when you turn on "Script extender" in the launch panel. The zip is here for manual use: start the game, wait for the main menu, then run [b]injector.exe script_extender.dll[/b].
 
+[b]Windows Security:[/b] loading a DLL into the game is also what malware does, so Windows Security may block the loader ([b]tkmm-inject.exe[/b], for example as "Behavior:Win32/DefenseEvasion.A!ml"). This is a false positive. The manager keeps working and only the script extender is not loaded. To allow it: Windows Security > Virus & threat protection > Protection history, pick the entry, then Allow on device.
+
 Scripting reference for mod authors: [url=https://github.com/Ironictw2st/TK-ScriptExtender/blob/master/docs/SCRIPTING.md]docs/SCRIPTING.md[/url]
 
 [size=4][b]For mod authors: requiring the Script Extender[/b][/size]
