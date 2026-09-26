@@ -121,11 +121,26 @@ pub unsafe fn show_text(parent: &QBox<QMainWindow>, title: &str, intro: &str, te
 
 /// Multi-line input (paste an export); None when cancelled.
 pub unsafe fn ask_multiline(parent: &QBox<QMainWindow>, title: &str, intro: &str, ok_label: &str) -> Option<String> {
+    multiline(parent, title, intro, ok_label, None)
+}
+
+/// Edit `initial` as plain text (monospace); None when cancelled.
+pub unsafe fn edit_text(parent: &QBox<QMainWindow>, title: &str, intro: &str, initial: &str) -> Option<String> {
+    multiline(parent, title, intro, "OK", Some(initial))
+}
+
+unsafe fn multiline(parent: &QBox<QMainWindow>, title: &str, intro: &str, ok_label: &str, initial: Option<&str>) -> Option<String> {
     let (d, l) = dialog(parent, title, 760, 460);
     let lab = QLabel::from_q_string(&qs(intro));
     lab.set_word_wrap(true);
     l.add_widget(&lab);
     let edit = QPlainTextEdit::new();
+    if let Some(text) = initial {
+        edit.set_plain_text(&qs(text));
+        let f = qt_gui::QFont::new_copy(edit.font());
+        f.set_family(&qs("Consolas"));
+        edit.set_font(&f);
+    }
     l.add_widget(&edit);
     let buttons = QDialogButtonBox::new();
     let ok = buttons.add_button_q_string_button_role(&qs(ok_label), qt_widgets::q_dialog_button_box::ButtonRole::AcceptRole);

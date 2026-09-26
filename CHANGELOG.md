@@ -4,6 +4,22 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-09-26
+
+### Added
+- **Script extender settings per profile.** Every setting in `script_extender.cfg` can now be
+  changed in the app: **Settings…** next to "Script extender" in the launch panel sets them for
+  one profile, and Settings > Script extender sets the default for the rest. The settings are
+  grouped into the ones every multiplayer player must match, local ones, and the main-menu text.
+  **Edit as text…** opens the whole file for anything else.
+- **Multiplayer: compare script extender settings.** A profile export now includes the settings
+  that change the campaign. "Verify against an export" lists any that differ (they keep players
+  out of each other's lobby), and importing an export offers to use your partner's.
+
+### Fixed
+- Saving the script extender's main-menu text no longer deletes every other line of
+  `script_extender.cfg`. Your existing file becomes the default settings, hand edits included.
+
 ## [0.6.4] - 2026-09-26
 
 ### Fixed

@@ -157,6 +157,13 @@ pub unsafe fn refresh(app: &Rc<App>) {
         this.mark(DIRTY_LAUNCH | DIRTY_LIST | DIRTY_DETAILS);
     }));
     se_row.add_widget(&se);
+    let se_cfg = QPushButton::from_q_string(&qs("Settings…"));
+    se_cfg.set_flat(true);
+    se_cfg.set_enabled(!running);
+    se_cfg.set_tool_tip(&qs("Script extender settings for this profile (script_extender.cfg)"));
+    let this = app.clone();
+    se_cfg.clicked().connect(&SlotNoArgs::new(&se_cfg, move || crate::se_settings::open(&this, crate::se_settings::Target::Profile)));
+    se_row.add_widget(&se_cfg);
     se_row.add_stretch_1a(1);
     let ver = QPushButton::from_q_string(&qs(have.as_ref().map(|v| format!("v{v}")).unwrap_or_else(|| "no DLL".into())));
     ver.set_flat(true);
@@ -164,6 +171,23 @@ pub unsafe fn refresh(app: &Rc<App>) {
     let this = app.clone();
     ver.clicked().connect(&SlotNoArgs::new(&ver, move || this.set_page(PAGE_SETTINGS)));
     se_row.add_widget(&ver);
+    if profile.dll {
+        if let Some(c) = &profile.se_config {
+            let changed = crate::settings_ui::se_changed(c);
+            let note = label(&if changed.is_empty() { "Own settings: script extender defaults".to_string() } else { format!("Own settings: {}", changed.join(", ")) });
+            colored(&note, &icons::grey());
+            fit(&note, width);
+            v.add_widget(&note);
+        }
+        // A cfg in the DLL's own folder wins over the one written for this profile.
+        let own_cfg = st.dll.as_ref().and_then(|d| d.selected.as_ref()).and_then(|d| tkmm_core::dll::cfg_override(std::path::Path::new(&d.path)));
+        if let Some(p) = own_cfg {
+            let warn = label(&format!("{} overrides these settings; delete or rename it to use them.", p.display()));
+            colored(&warn, &icons::amber());
+            fit(&warn, width);
+            v.add_widget(&warn);
+        }
+    }
 
     let skip = QCheckBox::from_q_string(&qs("Skip intro"));
     skip.set_checked(profile.skip_intro);

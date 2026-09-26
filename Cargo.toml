@@ -5,7 +5,7 @@ members = ["crates/core", "crates/injector", "crates/app"]
 default-members = ["crates/core", "crates/injector"]
 
 [workspace.package]
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 authors = ["Ironictw2st"]
 license = "MIT"

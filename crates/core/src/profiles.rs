@@ -46,6 +46,9 @@ pub struct Profile {
     /// Unix seconds of the last launch with this profile (drives the "updated" badges).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
+    /// Script-extender settings for this profile; None = the default from Settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub se_config: Option<crate::se_config::SeConfig>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -66,6 +69,7 @@ impl Default for ProfilesDoc {
                 dll: false,
                 skip_intro: false,
                 last_played: None,
+                se_config: None,
             }],
         }
     }

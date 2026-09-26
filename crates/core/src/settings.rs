@@ -46,6 +46,9 @@ pub struct Settings {
     pub nexus_api_key: String,
     /// Modified time (unix seconds) of the newest crash.log the user has been told about.
     pub last_crash_seen: u64,
+    /// Script-extender settings for profiles without their own. None = not set up yet: taken
+    /// from an existing `dll\script_extender.cfg` (`dll::default_se_config`).
+    pub se_config_default: Option<crate::se_config::SeConfig>,
 }
 
 impl Default for Settings {
@@ -71,6 +74,7 @@ impl Default for Settings {
             list_density: "normal".into(),
             nexus_api_key: String::new(),
             last_crash_seen: 0,
+            se_config_default: None,
         }
     }
 }

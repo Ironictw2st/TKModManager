@@ -2,10 +2,13 @@
 //!
 //! Export v2 (tab separated): `key<TAB>file<TAB>size<TAB>sha256` per enabled pack, in load order.
 //! v1 lines (`key` or `key<TAB># file`) are still accepted by the parser.
+//! Since 0.6.5 an export also carries the profile's script-extender simulation settings as
+//! `@se<TAB>key<TAB>value` lines (they must match for a shared multiplayer lobby); older
+//! versions skip those lines.
 
 use crate::hash::PackHash;
 use crate::packs::{ModEntry, ModSource};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportRow {
@@ -15,10 +18,28 @@ pub struct ExportRow {
     pub sha256: Option<String>,
 }
 
-pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str) -> String {
+pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &BTreeMap<String, String>) -> String {
     let mut out = vec![format!("# TK Mod Manager profile \"{profile_name}\" {date} v2")];
     out.extend(rows.iter().map(|r| format!("{}\t{}\t{}\t{}", r.key, r.file, r.size, r.sha256)));
+    out.extend(se_sim.iter().map(|(k, v)| format!("{SE_PREFIX}\t{k}\t{v}")));
     out.join("\n")
+}
+
+const SE_PREFIX: &str = "@se";
+
+/// The script-extender simulation settings in an export; None for an export without them
+/// (made by an older manager).
+pub fn parse_export_se(text: &str) -> Option<BTreeMap<String, String>> {
+    let map: BTreeMap<String, String> = text
+        .lines()
+        .filter_map(|l| {
+            let mut cols = l.split('\t').map(str::trim);
+            (cols.next()? == SE_PREFIX).then_some(())?;
+            Some((cols.next()?.to_string(), cols.next().unwrap_or("").to_string()))
+        })
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+    (!map.is_empty()).then_some(map)
 }
 
 pub fn parse_export(text: &str) -> Vec<ExportRow> {
@@ -161,8 +182,10 @@ mod tests {
 
     #[test]
     fn export_roundtrip_and_v1() {
-        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18");
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18", &BTreeMap::new());
         let rows = parse_export(&text);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(parse_export_se(&text), None);
         assert_eq!(rows[0], ExportRow { key: "ws:1/a.pack".into(), file: "a.pack".into(), size: Some(10), sha256: Some(h('a')) });
         assert_eq!(rows[1].file, "b c.pack");
         let v1 = parse_export("# old\nws:1/a.pack\t# a.pack\ndata:x.pack\nnot a key\n");
@@ -173,9 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn export_carries_se_settings() {
+        let mut c = crate::se_config::SeConfig::default();
+        c.set("marriage_inlaws", "0");
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values());
+        assert_eq!(parse_export(&text).len(), 1, "@se lines are not packs");
+        let theirs = parse_export_se(&text).unwrap();
+        assert_eq!(theirs.len(), 13);
+        let d = crate::se_config::diff_sim(&crate::se_config::SeConfig::default().sim_values(), &theirs);
+        assert_eq!(d, vec![("marriage_inlaws".to_string(), "1".to_string(), "0".to_string())]);
+    }
+
+    #[test]
     fn verify_statuses() {
         let mods = vec![m("ws:1/a.pack", "a.pack", 10, ModSource::Workshop), m("ext:z:/dev/b.pack", "b.pack", 20, ModSource::Folder), m("data:c.pack", "c.pack", 30, ModSource::Data)];
-        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d"));
+        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d", &BTreeMap::new()));
         let hashes = |a: char| -> HashMap<String, String> { [("ws:1/a.pack".to_string(), h(a)), ("ext:z:/dev/b.pack".to_string(), h('b'))].into_iter().collect() };
 
         let ok = verify_export(&rows, &mods, &["ws:1/a.pack".into(), "ext:z:/dev/b.pack".into()], &hashes('a'));

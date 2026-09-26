@@ -170,6 +170,7 @@ impl State {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         })
     }
 

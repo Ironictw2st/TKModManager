@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn problems_grouped() {
         let e = |k: &str, on: bool| ProfileEntry { key: k.into(), enabled: on, label: None, collapsed: false };
-        let prof = |dll: bool| Profile { name: "p".into(), entries: vec![e("a", true), e("b", true), e("c", false), e("d", true)], dll, skip_intro: false, last_played: None };
+        let prof = |dll: bool| Profile { name: "p".into(), entries: vec![e("a", true), e("b", true), e("c", false), e("d", true)], dll, skip_intro: false, last_played: None, se_config: None };
         let req = |k: &str| match k {
             "a" => se_requirement(Some(&info(Some("0.28"), Some("0.28")))),
             "c" => se_requirement(Some(&info(None, None))),

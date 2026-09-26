@@ -13,7 +13,7 @@ use qt_widgets::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use tkmm_core::dll::{self, CatalogEntry, DllConfig, InstalledDll, RemoteDll};
+use tkmm_core::dll::{self, CatalogEntry, InstalledDll, RemoteDll};
 use tkmm_core::fmt::{days_from_civil, format_bytes, ymd};
 use tkmm_core::hash::{PackHash, Progress};
 use tkmm_core::sync::{self, SyncStatus};
@@ -73,10 +73,8 @@ pub struct SettingsUi {
     dll_install: QBox<QPushButton>,
     dll_progress: QBox<QProgressBar>,
     dll_auto: QBox<QCheckBox>,
-    cfg_build: QBox<QLineEdit>,
-    cfg_short: QBox<QLineEdit>,
-    cfg_modified: QBox<QComboBox>,
-    cfg_save: QBox<QPushButton>,
+    se_defaults: QBox<QPushButton>,
+    se_summary: QBox<QLabel>,
     // mod list preview
     preview: QBox<QPlainTextEdit>,
     // profiles
@@ -304,27 +302,13 @@ impl SettingsUi {
             s.add_widget(&dll_progress);
             let dll_auto = QCheckBox::from_q_string(&qs("Also inject when the game was started outside the manager (while this app is running)"));
             s.add_widget(&dll_auto);
-            let cfg_title = label("Main-menu build text (script_extender.cfg)");
-            bold(&cfg_title);
-            s.add_widget(&cfg_title);
-            let cg = QGridLayout::new_0a();
-            s.add_layout_1a(&cg);
-            cg.set_column_stretch(1, 1);
-            cg.add_widget_3a(QLabel::from_q_string(&qs("Build number")).into_ptr(), 0, 0);
-            let cfg_build = QLineEdit::new();
-            cfg_build.set_placeholder_text(&qs("leave empty to keep the game's own text"));
-            cg.add_widget_3a(&cfg_build, 0, 1);
-            cg.add_widget_3a(QLabel::from_q_string(&qs("Short form")).into_ptr(), 1, 0);
-            let cfg_short = QLineEdit::new();
-            cg.add_widget_3a(&cfg_short, 1, 1);
-            cg.add_widget_3a(QLabel::from_q_string(&qs("\"Modified\" flag")).into_ptr(), 2, 0);
-            let cfg_modified = QComboBox::new_0a();
-            for (t, val) in [("Leave alone", ""), ("Show as unmodified", "0"), ("Show as modified", "1")] {
-                cfg_modified.add_item_q_string_q_variant(&qs(t), &QVariant::from_q_string(&qs(val)));
-            }
-            cg.add_widget_3a(&cfg_modified, 2, 1);
-            let cfg_save = button("Save");
-            cg.add_widget_3a(&cfg_save, 2, 2);
+            let se_row = QHBoxLayout::new_0a();
+            s.add_layout_1a(&se_row);
+            let se_defaults = button("Default script extender settings…");
+            se_defaults.set_tool_tip(&qs("script_extender.cfg for every profile without its own settings (a profile's own: the Settings… button next to \"Script extender\" in the launch panel)"));
+            se_row.add_widget(&se_defaults);
+            let se_summary = label("");
+            se_row.add_widget_2a(&se_summary, 1);
             v.add_widget(&g);
 
             // Generated mod list.
@@ -420,10 +404,8 @@ impl SettingsUi {
                 dll_install,
                 dll_progress,
                 dll_auto,
-                cfg_build,
-                cfg_short,
-                cfg_modified,
-                cfg_save,
+                se_defaults,
+                se_summary,
                 preview,
                 imp_ca,
                 imp_collection,
@@ -661,22 +643,9 @@ impl SettingsUi {
                 a.settings.install_dll(a, r, false);
             }
         });
-        on_click!(self.cfg_save, |a: &Rc<App>| {
-            let s = &a.settings;
-            let m = s.cfg_modified.current_data_0a().to_string().to_std_string();
-            let cfg = DllConfig {
-                build_number: s.cfg_build.text().to_std_string(),
-                build_number_short: s.cfg_short.text().to_std_string(),
-                build_modified: match m.as_str() {
-                    "0" => Some(false),
-                    "1" => Some(true),
-                    _ => None,
-                },
-            };
-            match dll::dll_write_cfg(cfg) {
-                Ok(()) => crate::dialogs::info(&a.window, "Saved", "Saved. It applies at the next injection."),
-                Err(e) => crate::dialogs::error(&a.window, &e),
-            }
+        on_click!(self.se_defaults, |a: &Rc<App>| {
+            crate::se_settings::open(a, crate::se_settings::Target::Default);
+            a.mark(DIRTY_ALL);
         });
 
         on_click!(self.imp_ca, |a: &Rc<App>| a.settings.import_ca(a));
@@ -910,13 +879,13 @@ impl SettingsUi {
         };
         match purpose {
             HashPurpose::Export => {
-                let (name, date) = {
+                let (name, date, se_sim) = {
                     let st = app.st.borrow();
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                     let (y, m, d) = ymd(now);
-                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"))
+                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values())
                 };
-                let text = sync::build_export(&name, &hashes, &date);
+                let text = sync::build_export(&name, &hashes, &date, &se_sim);
                 crate::dialogs::show_text(&app.window, "Export profile", "Send this to your co-op partner. They use \"Verify against an export\" to compare.", &text);
             }
             HashPurpose::Verify => {
@@ -929,10 +898,17 @@ impl SettingsUi {
                     (sync::verify_export(&rows, &st.mods, &enabled, &map), st.mods.len())
                 };
                 let _ = st_mods;
+                // Script-extender simulation settings: a difference keeps you out of each other's lobby.
+                let theirs_se = sync::parse_export_se(&text);
+                let se_diffs = theirs_se
+                    .as_ref()
+                    .map(|t| tkmm_core::se_config::diff_sim(&dll::se_config_for(&app.st.borrow().active(), &app.ctx.settings()).sim_values(), t))
+                    .unwrap_or_default();
+                let ok = result.ok && se_diffs.is_empty();
                 crate::dialogs::custom(&app.window, "Co-op sync check", 760, 520, |l, _| {
-                    let head = label(if result.ok { "In sync: same packs, same files, same order." } else { "Not in sync:" });
+                    let head = label(if ok { "In sync: same packs, same files, same order, same script extender settings." } else { "Not in sync:" });
                     bold(&head);
-                    colored(&head, &if result.ok { icons::green() } else { icons::red() });
+                    colored(&head, &if ok { icons::green() } else { icons::red() });
                     l.add_widget(&head);
                     let t = QTreeWidget::new_0a();
                     let h = QListOfQString::new_0a();
@@ -961,9 +937,22 @@ impl SettingsUi {
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::amber()));
                         t.add_top_level_item(it.into_ptr());
                     }
+                    for (key, mine, theirs) in &se_diffs {
+                        let name = tkmm_core::se_config::def(key).map(|d| d.label).unwrap_or(key);
+                        let it = QTreeWidgetItem::new();
+                        it.set_text(0, &qs("SE setting differs"));
+                        it.set_text(1, &qs(format!("{name} ({key}): you {mine}, them {theirs}")));
+                        it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
+                        t.add_top_level_item(it.into_ptr());
+                    }
                     l.add_widget_2a(&t, 1);
                     if result.order_differs {
                         l.add_widget(&label("The common packs load in a different order on your side."));
+                    }
+                    if !se_diffs.is_empty() {
+                        l.add_widget(&label("Script extender settings that change the campaign must be identical, or you cannot see each other's lobby. Change them with Settings… next to \"Script extender\" in the launch panel, or import your partner's export."));
+                    } else if theirs_se.is_none() {
+                        l.add_widget(&label("Your partner's export has no script extender settings (made with an older TK Mod Manager), so those were not compared."));
                     }
                 });
             }
@@ -1017,11 +1006,33 @@ impl SettingsUi {
         };
         let unknown = keys.iter().filter(|k| app.st.borrow().module(k).is_none()).count();
         match self.make_profile(app, &name, &keys) {
-            Ok(()) => self.profile_msg.set_text(&qs(format!(
-                "Imported {} mods into \"{name}\"{}",
-                keys.len() - unknown,
-                if unknown > 0 { format!("; {unknown} not installed (kept as missing)") } else { String::new() }
-            ))),
+            Ok(()) => {
+                self.profile_msg.set_text(&qs(format!(
+                    "Imported {} mods into \"{name}\"{}",
+                    keys.len() - unknown,
+                    if unknown > 0 { format!("; {unknown} not installed (kept as missing)") } else { String::new() }
+                )));
+                // The new profile is active now; offer the partner's campaign settings with it.
+                if let Some(theirs) = sync::parse_export_se(&text) {
+                    let base = dll::default_se_config(&app.ctx.settings());
+                    let diffs = tkmm_core::se_config::diff_sim(&base.sim_values(), &theirs);
+                    if !diffs.is_empty()
+                        && crate::dialogs::confirm(
+                            &app.window,
+                            "Script extender settings",
+                            &format!(
+                                "The export also carries script extender settings, and {} from your defaults:\n\n{}\n\nUse your partner's settings for \"{name}\"? (Needed to join each other's multiplayer lobby.)",
+                                if diffs.len() == 1 { "1 of them differs".to_string() } else { format!("{} of them differ", diffs.len()) },
+                                diffs.iter().map(|(k, a, b)| format!("{k}: you {a}, them {b}")).collect::<Vec<_>>().join("\n")
+                            ),
+                        )
+                    {
+                        let adopted = base.with_sim(&theirs);
+                        app.st.borrow_mut().update_active(|p| p.se_config = Some(adopted));
+                        app.mark(DIRTY_ALL);
+                    }
+                }
+            }
             Err(e) => crate::dialogs::error(&app.window, &e),
         }
     }
@@ -1198,15 +1209,8 @@ impl SettingsUi {
             }
             self.dll_unpin.set_enabled(d.pinned.is_some());
         }
-        let cfg = dll::dll_read_cfg();
-        self.cfg_build.set_text(&qs(&cfg.build_number));
-        self.cfg_short.set_text(&qs(&cfg.build_number_short));
-        let mi = self.cfg_modified.find_data_1a(&QVariant::from_q_string(&qs(match cfg.build_modified {
-            Some(false) => "0",
-            Some(true) => "1",
-            None => "",
-        })));
-        self.cfg_modified.set_current_index(mi.max(0));
+        let changed = se_changed(&dll::default_se_config(&app.ctx.settings()));
+        self.se_summary.set_text(&qs(if changed.is_empty() { "Default: all script extender defaults".to_string() } else { format!("Default changes: {}", changed.join(", ")) }));
 
         let profile = st.active();
         drop(st);
@@ -1222,3 +1226,10 @@ impl SettingsUi {
 
 #[allow(dead_code)]
 fn unused(_: QHBoxLayout) {}
+
+/// Labels of the keys that differ from the script extender's defaults.
+pub fn se_changed(c: &tkmm_core::se_config::SeConfig) -> Vec<String> {
+    let mut out: Vec<String> = tkmm_core::se_config::KEYS.iter().filter(|k| !c.is_default(k.key)).map(|k| k.label.to_string()).collect();
+    out.extend(c.unknown().map(|(k, _)| k.clone()));
+    out
+}

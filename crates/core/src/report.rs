@@ -644,6 +644,7 @@ mod tests {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         };
         let ws: HashMap<String, WorkshopItem> =
             [("1", "Core Mod", 100), ("2", "Old Mod", 200), ("4", "Audio", 100)].into_iter().map(|(i, t, u)| (i.to_string(), item(i, t, u))).collect();
@@ -676,6 +677,7 @@ mod tests {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         };
         let (ws, se, game) = (HashMap::new(), HashMap::new(), paths::GamePaths::default());
         let text = render(&ReportData { now: 0, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Err("offline".into()), se: &se, game: &game, dll: None, launches: &[], extras: vec![] });

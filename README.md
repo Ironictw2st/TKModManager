@@ -24,6 +24,21 @@ injected once; the DLL verifies the game build itself and the launch panel shows
 A DLL built for another game build is never injected. The injection itself is done by
 `tkmm-inject.exe` next to the manager, which runs only for profiles that use the script extender.
 
+### Script extender settings
+
+**Settings…** next to "Script extender" in the launch panel edits `script_extender.cfg` for the
+active profile; **Settings > Script extender > Default script extender settings…** edits the
+default for profiles without their own. Every key has its own control (multiplayer settings,
+local settings, main-menu text), and **Edit as text…** shows the whole file, including keys from
+a newer DLL that the manager doesn't know yet; those are kept. The file is written to
+`%APPDATA%\TKModManager\dll\script_extender.cfg` before each launch. A `script_extender.cfg`
+inside a DLL's own version folder overrides it, and the launch panel warns about that.
+
+The multiplayer settings change the campaign, so they are part of the version lock in the
+main-menu build text: players with different values can't see each other's lobbies. A profile
+export carries them, **Verify against an export** lists any that differ, and **Import from text**
+offers to use your partner's.
+
 ### Windows Security / antivirus
 
 Loading a DLL into another program is also what malware does, so Windows Security may block

@@ -209,6 +209,11 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
     } else {
         None
     };
+    // The DLL reads its settings at injection: write this profile's now.
+    if dll_path.is_some() {
+        dll::migrate_default_se_config(state);
+        dll::write_cfg(&dll::se_config_for(profile, &state.settings()))?;
+    }
 
     let enabled: Vec<&crate::packs::ModEntry> = profile
         .entries
@@ -485,6 +490,17 @@ pub fn start_external_watcher(ctx: Ctx, out: Emit) {
                 match selected {
                     Some(d) if winproc::has_module(pid, dll::DLL_NAME) == Some(false) => {
                         emit(&out2, "spawned", format!("Game started outside the manager (pid {pid})"), Some(pid));
+                        // No launch wrote the cfg: use the active profile's settings.
+                        dll::migrate_default_se_config(&ctx2);
+                        let settings = ctx2.settings();
+                        let config = crate::ops::load_profiles(ctx2.game_paths().store)
+                            .ok()
+                            .and_then(|doc| crate::profile_ops::active(&doc).cloned())
+                            .map(|p| dll::se_config_for(&p, &settings))
+                            .unwrap_or_else(|| dll::default_se_config(&settings));
+                        if let Err(e) = dll::write_cfg(&config) {
+                            emit(&out2, "spawned", format!("Could not write the script extender settings: {e}"), Some(pid));
+                        }
                         inject_flow(&out2, pid, Path::new(&d.path), true);
                     }
                     Some(_) => {}
@@ -502,10 +518,8 @@ mod tests {
 
     #[test]
     fn injector_replies() {
-        assert_eq!(parse_injector_reply("{\"ok\":true,\"message\":\"DLL loaded\"}
-"), Some(Ok(())));
-        assert_eq!(parse_injector_reply("noise
-{\"ok\":false,\"message\":\"OpenProcess failed\"}"), Some(Err("OpenProcess failed".into())));
+        assert_eq!(parse_injector_reply("{\"ok\":true,\"message\":\"DLL loaded\"}\n"), Some(Ok(())));
+        assert_eq!(parse_injector_reply("noise\n{\"ok\":false,\"message\":\"OpenProcess failed\"}"), Some(Err("OpenProcess failed".into())));
         assert_eq!(parse_injector_reply(""), None);
         assert_eq!(parse_injector_reply("garbage"), None);
     }

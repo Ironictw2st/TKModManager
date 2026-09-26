@@ -196,7 +196,7 @@ pub fn create(doc: &mut ProfilesDoc, name: &str, from: Option<&Profile>, mods: &
     let profile = match from {
         Some(p) => Profile { name: name.into(), last_played: None, ..p.clone() },
         None => {
-            let mut p = Profile { name: name.into(), entries: vec![], dll: false, skip_intro: false, last_played: None };
+            let mut p = Profile { name: name.into(), entries: vec![], dll: false, skip_intro: false, last_played: None, se_config: None };
             reconcile(&mut p, mods);
             p
         }
@@ -257,7 +257,7 @@ mod tests {
     }
 
     fn p(entries: Vec<ProfileEntry>) -> Profile {
-        Profile { name: "x".into(), entries, dll: false, skip_intro: false, last_played: None }
+        Profile { name: "x".into(), entries, dll: false, skip_intro: false, last_played: None, se_config: None }
     }
 
     fn keys(v: &[ProfileEntry]) -> Vec<&str> {

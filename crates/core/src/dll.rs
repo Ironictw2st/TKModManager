@@ -6,6 +6,7 @@
 
 use crate::fingerprint::{self, ExeFingerprint};
 use crate::paths;
+use crate::se_config::SeConfig;
 use crate::context::AppContext;
 use crate::update::{download_bytes, download_to, fetch_releases, pick_release, Release};
 use serde::{Deserialize, Serialize};
@@ -377,82 +378,57 @@ pub fn dll_read_log(dir: String) -> Result<String, String> {
     std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-/// `dll\script_extender.cfg`: the DLL reads it from its own folder or the parent, so one file
-/// here serves every installed version. `key=value` lines, `#` comments.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct DllConfig {
-    pub build_number: String,
-    pub build_number_short: String,
-    /// None = leave the game's own "modified" flag alone.
-    pub build_modified: Option<bool>,
-}
-
 pub const CFG_NAME: &str = "script_extender.cfg";
 
-pub fn parse_cfg(text: &str) -> DllConfig {
-    let mut c = DllConfig::default();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else { continue };
-        let v = v.trim();
-        match k.trim() {
-            "build_number" => c.build_number = v.to_string(),
-            "build_number_short" => c.build_number_short = v.to_string(),
-            "build_modified" => c.build_modified = Some(v == "1" || v.eq_ignore_ascii_case("true")),
-            _ => {}
-        }
-    }
-    c
+/// `dll\script_extender.cfg`: the DLL reads it when its own version folder has none, so one
+/// file here serves every installed version. Rewritten before each injection from the
+/// profile's settings (`se_config`).
+pub fn cfg_path() -> PathBuf {
+    dll_root().join(CFG_NAME)
 }
 
-pub fn render_cfg(c: &DllConfig) -> String {
-    let mut out = String::from("# Script extender settings (written by TK Mod Manager)\n");
-    if !c.build_number.trim().is_empty() {
-        out.push_str(&format!("build_number={}\n", c.build_number.trim()));
-    }
-    if !c.build_number_short.trim().is_empty() {
-        out.push_str(&format!("build_number_short={}\n", c.build_number_short.trim()));
-    }
-    if let Some(m) = c.build_modified {
-        out.push_str(&format!("build_modified={}\n", if m { 1 } else { 0 }));
-    }
-    out
+/// The script-extender settings for profiles without their own. Until the user saves one, it
+/// is whatever the `dll\` cfg holds now (earlier versions wrote the menu text there, and people
+/// edit it by hand).
+pub fn default_se_config(s: &crate::settings::Settings) -> SeConfig {
+    s.se_config_default
+        .clone()
+        .unwrap_or_else(|| std::fs::read_to_string(cfg_path()).map(|t| SeConfig::parse(&t)).unwrap_or_default())
 }
 
-pub fn dll_read_cfg() -> DllConfig {
-    std::fs::read_to_string(dll_root().join(CFG_NAME)).map(|t| parse_cfg(&t)).unwrap_or_default()
+/// Keep the default in settings.json from now on: `write_cfg` overwrites the file it was read
+/// from, and a later read would pick up the last profile's settings as the default. Runs at
+/// startup and before every write.
+pub fn migrate_default_se_config(ctx: &AppContext) {
+    let mut s = ctx.settings();
+    if s.se_config_default.is_none() {
+        s.se_config_default = Some(default_se_config(&s));
+        let _ = ctx.set_settings(s);
+    }
 }
 
-pub fn dll_write_cfg(config: DllConfig) -> Result<(), String> {
+/// The settings a launch with `profile` uses.
+pub fn se_config_for(profile: &crate::profiles::Profile, s: &crate::settings::Settings) -> SeConfig {
+    profile.se_config.clone().unwrap_or_else(|| default_se_config(s))
+}
+
+/// Write the cfg the DLL will read at injection.
+pub fn write_cfg(config: &SeConfig) -> Result<PathBuf, String> {
     let dir = dll_root();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let path = dir.join(CFG_NAME);
-    if config == DllConfig::default() {
-        // Nothing set: remove the file so the DLL leaves the build number alone.
-        return match std::fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
-        };
-    }
-    std::fs::write(&path, render_cfg(&config)).map_err(|e| format!("{}: {e}", path.display()))
+    let path = cfg_path();
+    std::fs::write(&path, config.render()).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// A cfg inside the DLL's own version folder: the DLL reads that one instead of ours.
+pub fn cfg_override(dll: &Path) -> Option<PathBuf> {
+    dll.parent().map(|d| d.join(CFG_NAME)).filter(|p| p.is_file())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cfg_roundtrip() {
-        let c = DllConfig { build_number: "v1.7.2 Build 25370317 (190E)".into(), build_number_short: "190E".into(), build_modified: Some(false) };
-        assert_eq!(parse_cfg(&render_cfg(&c)), c);
-        assert_eq!(parse_cfg("# only a comment\n\nunknown=1\n"), DllConfig::default());
-        assert_eq!(parse_cfg("build_modified = true").build_modified, Some(true));
-    }
 
     #[test]
     fn pinned_version_wins_only_when_it_matches() {

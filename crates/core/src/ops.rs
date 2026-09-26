@@ -255,6 +255,7 @@ mod tests {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         };
         let input = list_input_for(&profile, &scan);
         assert_eq!(input.enabled.len(), 3);
@@ -280,6 +281,7 @@ mod tests {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         };
         let text = modlist::build(&list_input_for(&profile, &scan));
         assert!(text.contains("add_working_directory \"C:/appdata/TKModManager/nexus/77/200\";"), "{text}");
@@ -307,6 +309,7 @@ mod tests {
             dll: false,
             skip_intro: false,
             last_played: None,
+            se_config: None,
         };
         let input = list_input_for(&profile, &scan);
         assert_eq!(input.excluded_data_movies, vec!["thing_movie.pack"]);
@@ -317,7 +320,7 @@ mod tests {
     }
 
     fn profile_of(entries: Vec<ProfileEntry>) -> Profile {
-        Profile { name: "p".into(), entries, dll: false, skip_intro: false, last_played: None }
+        Profile { name: "p".into(), entries, dll: false, skip_intro: false, last_played: None, se_config: None }
     }
 
     /// Two enabled copies of one pack name (an old Nexus slot and the Workshop item): only the
