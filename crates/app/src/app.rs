@@ -337,10 +337,13 @@ impl App {
         let s = self.ctx.settings();
         // Startup checks offer each update in a popup. The DLL check waits for the app
         // check's answer (see UiEvent::AppUpdate) so the two popups never stack.
+        // The Coop check comes last, after the DLL popup (`after_dll_startup_check`).
         if s.check_app_updates {
             self.check_app_update(false);
         } else if s.check_dll_updates {
             self.settings.check_dll(self, true);
+        } else {
+            self.after_dll_startup_check();
         }
         let bus = self.bus.clone();
         let emit: Emit = Arc::new(move |st| bus.send(UiEvent::Launch(st)));
@@ -393,6 +396,22 @@ impl App {
     pub fn refresh_dll(self: &Rc<Self>) {
         let ctx = self.ctx.clone();
         self.bus.spawn(move |_| Some(UiEvent::Dll(dll::dll_status(&ctx))));
+    }
+
+    /// Look for Three Kingdoms Coop in the current game folder.
+    pub fn refresh_coop(self: &Rc<Self>) {
+        let ctx = self.ctx.clone();
+        self.bus.spawn(move |_| {
+            let root = ctx.game_paths().game_root;
+            Some(UiEvent::Coop(root.and_then(|r| tkmm_core::coop::detect(std::path::Path::new(&r)))))
+        });
+    }
+
+    /// The last startup check: a newer Coop Setup, only for players who have Coop installed.
+    pub fn after_dll_startup_check(self: &Rc<Self>) {
+        if self.ctx.settings().check_coop_updates {
+            self.settings.check_coop(self, true);
+        }
     }
 
     pub fn refresh_se_scan(self: &Rc<Self>) {
@@ -615,6 +634,11 @@ impl App {
                 .flat_map(|c| c.data_copies().filter(|d| !d.newer).map(|d| d.path.clone()).collect::<Vec<_>>())
                 .collect()
         };
+        // Coop: a launch that cannot give the player what the profile is set up for.
+        let coop: Vec<String> = self.st.borrow().coop_problems().iter().filter(|p| p.blocking()).map(|p| p.text().to_string()).collect();
+        if !coop.is_empty() && !crate::dialogs::confirm(&self.window, "Three Kingdoms Coop", &format!("{}\n\nStart anyway?", coop.join("\n\n"))) {
+            return;
+        }
         if !shadowed.is_empty()
             && !crate::dialogs::confirm(
                 &self.window,
@@ -931,6 +955,7 @@ impl App {
                 };
                 self.mark(DIRTY_ALL);
                 self.refresh_se_scan();
+                self.refresh_coop();
                 if !first && unseen {
                     self.fetch_workshop();
                 }
@@ -1018,8 +1043,12 @@ impl App {
                     Err(e) if verbose => crate::dialogs::error(&self.window, &format!("Update check failed: {e}")),
                     _ => {}
                 }
-                if !verbose && !updating && self.ctx.settings().check_dll_updates {
-                    self.settings.check_dll(self, true);
+                if !verbose && !updating {
+                    if self.ctx.settings().check_dll_updates {
+                        self.settings.check_dll(self, true);
+                    } else {
+                        self.after_dll_startup_check();
+                    }
                 }
             }
             UiEvent::UpdateProgress(f) => self.update_label.set_text(&qs(format!("Downloading update… {}%", (f * 100.0).round()))),
@@ -1051,6 +1080,16 @@ impl App {
             }
             UiEvent::Report(r) => self.on_report(r),
             UiEvent::ReportSent(r) => self.on_report_sent(r),
+            UiEvent::Coop(c) => {
+                self.st.borrow_mut().coop = c;
+                self.mark(DIRTY_ALL);
+            }
+            UiEvent::CoopRemote(r, startup) => self.settings.on_coop_remote(self, r, startup),
+            UiEvent::CoopProgress(f) => self.settings.on_coop_progress(f),
+            UiEvent::CoopSetupDone(r) => {
+                self.settings.on_coop_setup_done(self, r);
+                self.refresh_coop();
+            }
         }
     }
 

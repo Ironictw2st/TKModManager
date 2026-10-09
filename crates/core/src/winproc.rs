@@ -71,6 +71,12 @@ impl ProcHandle {
         (!h.is_null()).then_some(ProcHandle(h))
     }
 
+    /// Take ownership of a process handle opened elsewhere (e.g. ShellExecuteEx); it is
+    /// closed on drop.
+    pub(crate) fn from_raw(h: Handle) -> Option<Self> {
+        (!h.is_null()).then_some(ProcHandle(h))
+    }
+
     pub fn is_running(&self) -> bool {
         unsafe { WaitForSingleObject(self.0, 0) == WAIT_TIMEOUT }
     }

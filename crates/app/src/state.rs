@@ -1,6 +1,7 @@
 //! Everything the UI shows, owned by the GUI thread. Persistence goes through `tkmm_core::ops`.
 
 use std::collections::HashMap;
+use tkmm_core::coop::{self, CoopInstall, CoopProblem};
 use tkmm_core::dll::DllStatus;
 use tkmm_core::launch::{LaunchStatus, SaveGame};
 use tkmm_core::meta::{MetaDoc, ModMeta};
@@ -79,6 +80,8 @@ pub struct State {
     pub workshop: HashMap<String, WorkshopItem>,
     pub se_scan: HashMap<String, SeInfo>,
     pub dll: Option<DllStatus>,
+    /// Three Kingdoms Coop in the current game folder (None = not installed).
+    pub coop: Option<CoopInstall>,
     pub launch: Option<LaunchStatus>,
     pub game_running: bool,
     pub saves: Vec<SaveGame>,
@@ -217,6 +220,22 @@ impl State {
 
     pub fn dll_version(&self) -> Option<String> {
         self.dll.as_ref().and_then(|d| d.selected.as_ref()).map(|d| d.version.clone())
+    }
+
+    /// Does the active profile load the tw3k_coop pack (Workshop or a local copy)?
+    pub fn coop_pack_enabled(&self) -> bool {
+        ops::enabled_packs(&self.active(), &self.mods).iter().any(|m| m.file.eq_ignore_ascii_case(coop::PACK))
+    }
+
+    /// Coop runs on this copy of the game (Steam 1.7.2).
+    pub fn coop_supported(&self) -> bool {
+        coop::build_supported(self.paths.store, self.dll.as_ref().and_then(|d| d.game_fingerprint.as_ref()))
+    }
+
+    /// Coop warnings for a launch of the active profile.
+    pub fn coop_problems(&self) -> Vec<CoopProblem> {
+        let se_wanted = self.active().dll && self.dll_version().is_some();
+        coop::problems(self.coop.as_ref(), self.coop_pack_enabled(), self.coop_supported(), se_wanted)
     }
 
     pub fn cutoff(&self, settings_cutoff: Option<u64>) -> u64 {

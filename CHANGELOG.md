@@ -4,6 +4,18 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-10-09
+
+### Added
+- **Three Kingdoms Coop support** (3-4 player campaigns, a separate mod by Thom-Ernst).
+  Settings > Three Kingdoms Coop shows whether it is installed and active, and can install or
+  update it: the manager downloads Coop's official Setup from GitHub, checks its SHA256, asks
+  first and runs it. The manager checks for Coop updates at startup when Coop is installed.
+  The launch panel warns when the tw3k_coop pack is enabled without Coop's DLL, when Steam has
+  put the original amd_ags_x64.dll back, and when Coop's Debug build would clash with the script
+  extender. Profile exports record the Coop version, and the co-op sync check compares it. Mod
+  reports include it.
+
 ## [0.6.5] - 2026-09-26
 
 ### Added

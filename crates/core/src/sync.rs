@@ -5,6 +5,8 @@
 //! Since 0.6.5 an export also carries the profile's script-extender simulation settings as
 //! `@se<TAB>key<TAB>value` lines (they must match for a shared multiplayer lobby); older
 //! versions skip those lines.
+//! After 0.6.5 an `@coop<TAB>version<TAB><ver>` line records the Three Kingdoms Coop runtime
+//! (`0.9.0`, `0.9.0-debug`, or `none`); every player needs the same one.
 
 use crate::hash::PackHash;
 use crate::packs::{ModEntry, ModSource};
@@ -18,14 +20,36 @@ pub struct ExportRow {
     pub sha256: Option<String>,
 }
 
-pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &BTreeMap<String, String>) -> String {
+/// `coop`: our Coop runtime (`CoopInstall::sync_version`), None when it is not installed.
+pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &BTreeMap<String, String>, coop: Option<&str>) -> String {
     let mut out = vec![format!("# TK Mod Manager profile \"{profile_name}\" {date} v2")];
     out.extend(rows.iter().map(|r| format!("{}\t{}\t{}\t{}", r.key, r.file, r.size, r.sha256)));
     out.extend(se_sim.iter().map(|(k, v)| format!("{SE_PREFIX}\t{k}\t{v}")));
+    out.push(format!("{COOP_PREFIX}\tversion\t{}", coop.unwrap_or(COOP_NONE)));
     out.join("\n")
 }
 
 const SE_PREFIX: &str = "@se";
+const COOP_PREFIX: &str = "@coop";
+const COOP_NONE: &str = "none";
+
+/// The Coop runtime an export records: `Some(None)` = the exporter has none, `None` = made by a
+/// manager that does not record Coop.
+pub fn parse_export_coop(text: &str) -> Option<Option<String>> {
+    text.lines().find_map(|l| {
+        let mut cols = l.split('\t').map(str::trim);
+        (cols.next()? == COOP_PREFIX && cols.next()? == "version").then_some(())?;
+        let v = cols.next().unwrap_or("");
+        Some((!v.is_empty() && v != COOP_NONE).then(|| v.to_string()))
+    })
+}
+
+/// (theirs, ours) as display text when the export's Coop runtime differs from ours; None when
+/// they agree or the export does not say.
+pub fn coop_mismatch(theirs: Option<Option<String>>, ours: Option<&str>) -> Option<(String, String)> {
+    let theirs = theirs?;
+    (theirs.as_deref() != ours).then(|| (theirs.unwrap_or_else(|| "not installed".into()), ours.unwrap_or("not installed").to_string()))
+}
 
 /// The script-extender simulation settings in an export; None for an export without them
 /// (made by an older manager).
@@ -182,7 +206,7 @@ mod tests {
 
     #[test]
     fn export_roundtrip_and_v1() {
-        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18", &BTreeMap::new());
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18", &BTreeMap::new(), None);
         let rows = parse_export(&text);
         assert_eq!(rows.len(), 2);
         assert_eq!(parse_export_se(&text), None);
@@ -199,7 +223,7 @@ mod tests {
     fn export_carries_se_settings() {
         let mut c = crate::se_config::SeConfig::default();
         c.set("marriage_inlaws", "0");
-        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values());
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values(), Some("0.9.0"));
         assert_eq!(parse_export(&text).len(), 1, "@se lines are not packs");
         let theirs = parse_export_se(&text).unwrap();
         assert_eq!(theirs.len(), 13);
@@ -208,9 +232,26 @@ mod tests {
     }
 
     #[test]
+    fn export_carries_coop_version() {
+        let with = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &BTreeMap::new(), Some("0.9.0-debug"));
+        let without = build_export("MP", &[], "d", &BTreeMap::new(), None);
+        assert_eq!(parse_export(&with).len(), 1, "@coop lines are not packs");
+        assert_eq!(parse_export_se(&with), None, "@coop lines are not SE settings");
+        assert_eq!(parse_export_coop(&with), Some(Some("0.9.0-debug".into())));
+        assert_eq!(parse_export_coop(&without), Some(None));
+        assert_eq!(parse_export_coop("# old export\nws:1/a.pack\ta.pack\t1\t"), None);
+
+        assert_eq!(coop_mismatch(parse_export_coop(&with), Some("0.9.0-debug")), None);
+        assert_eq!(coop_mismatch(parse_export_coop(&with), Some("0.9.0")), Some(("0.9.0-debug".into(), "0.9.0".into())));
+        assert_eq!(coop_mismatch(parse_export_coop(&without), Some("0.9.0")), Some(("not installed".into(), "0.9.0".into())));
+        assert_eq!(coop_mismatch(parse_export_coop(&without), None), None);
+        assert_eq!(coop_mismatch(None, Some("0.9.0")), None, "an older export cannot tell");
+    }
+
+    #[test]
     fn verify_statuses() {
         let mods = vec![m("ws:1/a.pack", "a.pack", 10, ModSource::Workshop), m("ext:z:/dev/b.pack", "b.pack", 20, ModSource::Folder), m("data:c.pack", "c.pack", 30, ModSource::Data)];
-        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d", &BTreeMap::new()));
+        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d", &BTreeMap::new(), None));
         let hashes = |a: char| -> HashMap<String, String> { [("ws:1/a.pack".to_string(), h(a)), ("ext:z:/dev/b.pack".to_string(), h('b'))].into_iter().collect() };
 
         let ok = verify_export(&rows, &mods, &["ws:1/a.pack".into(), "ext:z:/dev/b.pack".into()], &hashes('a'));

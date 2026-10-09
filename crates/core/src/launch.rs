@@ -358,11 +358,25 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
     loop {
         if let Some(text) = read_log_from(&log, log_from) {
             if text.contains("hook installed") || text.contains("bootstrap complete") {
-                emit(out, "verified", "Script extender active", Some(pid));
+                let msg = if winproc::has_module(pid, crate::coop::RUNTIME_DLL) == Some(true) {
+                    "Script extender active, alongside Three Kingdoms Coop"
+                } else {
+                    "Script extender active"
+                };
+                emit(out, "verified", msg, Some(pid));
                 return;
             }
             if text.contains("fingerprint mismatch") || text.contains("refusing to run") {
-                emit(out, "mismatch", "DLL refused this game build (see the Logs tab)", Some(pid));
+                // Coop's Debug build hooks the SE's pre-battle vote function; SEs without
+                // optional anchors refuse the whole table for that one address.
+                let coop = winproc::has_module(pid, crate::coop::RUNTIME_DLL) == Some(true);
+                let msg = if coop && text.contains("prebattle_set_vote") {
+                    "Script extender refused to start: Three Kingdoms Coop's Debug build hooks a function it uses. \
+                     Install Coop's normal Setup, or a newer script extender"
+                } else {
+                    "DLL refused this game build (see the Logs tab)"
+                };
+                emit(out, "mismatch", msg, Some(pid));
                 return;
             }
         }

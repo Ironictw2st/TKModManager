@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tkmm_core::cli::StartupArgs;
 use tkmm_core::conflicts::ConflictReport;
+use tkmm_core::coop::{CoopInstall, CoopRelease};
 use tkmm_core::dll::{CatalogEntry, DllStatus, InstalledDll, RemoteDll};
 use tkmm_core::hash::{PackHash, Progress};
 use tkmm_core::launch::{LaunchStatus, SaveGame};
@@ -62,6 +63,13 @@ pub enum UiEvent {
     Report(Result<std::path::PathBuf, String>),
     /// "Send report" finished (message for the user, or why it failed).
     ReportSent(Result<String, String>),
+    /// Three Kingdoms Coop found in the game folder (None = not installed).
+    Coop(Option<CoopInstall>),
+    /// Newest Coop release (None = no release with a Setup). `true` = the startup check.
+    CoopRemote(Result<Option<CoopRelease>, String>, bool),
+    CoopProgress(f64),
+    /// Setup was downloaded, verified and has exited: its exit code, or why it never ran.
+    CoopSetupDone(Result<u32, String>),
 }
 
 #[derive(Clone)]

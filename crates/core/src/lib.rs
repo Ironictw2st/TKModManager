@@ -6,6 +6,7 @@ pub mod archive;
 pub mod cli;
 pub mod conflicts;
 pub mod context;
+pub mod coop;
 pub mod dll;
 pub mod empty_vp8;
 pub mod fmt;

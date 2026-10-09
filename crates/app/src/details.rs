@@ -208,6 +208,25 @@ pub unsafe fn refresh(app: &Rc<App>) {
     }
     v.add_widget(&frame);
 
+    // The Coop pack only works together with Coop's DLL, which its own Setup installs.
+    if m.file.eq_ignore_ascii_case(tkmm_core::coop::PACK) {
+        let active = st.coop.as_ref().map(|c| c.active()).unwrap_or(false);
+        let color = if active { icons::green() } else { icons::red() };
+        let (frame, l) = section("Three Kingdoms Coop", Some(&color));
+        l.add_widget(&small(&match &st.coop {
+            Some(c) => format!("Coop DLL {}.", c.summary()),
+            None => "Coop's DLL is not installed. This pack needs it for the extra lobby seats: install it from Settings > Three Kingdoms Coop.".to_string(),
+        }));
+        let b = QPushButton::from_q_string(&qs("Coop settings"));
+        let this = app.clone();
+        b.clicked().connect(&SlotNoArgs::new(&b, move || this.set_page(crate::app::PAGE_SETTINGS)));
+        let row = QHBoxLayout::new_0a();
+        l.add_layout_1a(&row);
+        row.add_widget(&b);
+        row.add_stretch_1a(1);
+        v.add_widget(&frame);
+    }
+
     if m.pack_type == PackType::Movie {
         let w = small("Movie packs load after every mod pack and cannot be ordered. Enabled = loaded; disabled = excluded through the mod list. Files are never renamed or moved.");
         colored(&w, &icons::amber());

@@ -40,6 +40,10 @@ pub struct Settings {
     pub skipped_app_version: String,
     /// Same for the script-extender DLL.
     pub skipped_dll_version: String,
+    /// Check GitHub for a newer Three Kingdoms Coop Setup on startup (only when Coop is installed).
+    pub check_coop_updates: bool,
+    /// Coop release the user chose "Skip this version" for.
+    pub skipped_coop_version: String,
     /// Mod list row size: "compact" | "normal" | "large".
     pub list_density: String,
     /// Personal Nexus Mods API key (nexusmods.com > Site preferences > API Access).
@@ -71,6 +75,8 @@ impl Default for Settings {
             outdated_before: None,
             skipped_app_version: String::new(),
             skipped_dll_version: String::new(),
+            check_coop_updates: true,
+            skipped_coop_version: String::new(),
             list_density: "normal".into(),
             nexus_api_key: String::new(),
             last_crash_seen: 0,

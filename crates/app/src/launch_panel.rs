@@ -8,6 +8,7 @@ use qt_core::{qs, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt};
 use qt_widgets::{QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLayoutItem, QPushButton, QVBoxLayout, QWidget};
 use std::rc::Rc;
 use tkmm_core::fmt::format_date;
+use tkmm_core::coop::CoopProblem;
 use tkmm_core::status::{self, SeUnmet};
 
 unsafe fn clear_layout(l: &qt_core::QBox<QVBoxLayout>) {
@@ -139,6 +140,29 @@ pub unsafe fn refresh(app: &Rc<App>) {
             } else {
                 this.set_page(PAGE_SETTINGS);
             }
+        }));
+        l.add_widget(&b);
+        v.add_widget(&frame);
+    }
+
+    // Three Kingdoms Coop problems for this launch.
+    for p in st.coop_problems() {
+        let frame = QFrame::new_0a();
+        frame.set_frame_shape(qt_widgets::q_frame::Shape::StyledPanel);
+        let l = QVBoxLayout::new_1a(&frame);
+        l.set_contents_margins_4a(8, 6, 8, 6);
+        let head = label(p.text());
+        colored(&head, &if p.blocking() { icons::red() } else { icons::amber() });
+        fit(&head, width);
+        l.add_widget(&head);
+        let b = QPushButton::from_q_string(&qs(match p {
+            CoopProblem::PackWithoutRuntime | CoopProblem::ProxyReset | CoopProblem::DebugWithScriptExtender => "Coop settings",
+            CoopProblem::UnsupportedBuild => "About Coop",
+        }));
+        let this = app.clone();
+        b.clicked().connect(&SlotNoArgs::new(&b, move || match p {
+            CoopProblem::UnsupportedBuild => crate::details::open_url(&tkmm_core::coop::repo_url()),
+            _ => this.set_page(PAGE_SETTINGS),
         }));
         l.add_widget(&b);
         v.add_widget(&frame);

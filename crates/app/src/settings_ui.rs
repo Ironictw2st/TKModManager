@@ -13,6 +13,7 @@ use qt_widgets::{
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use tkmm_core::coop::{self, CoopInstall, CoopRelease};
 use tkmm_core::dll::{self, CatalogEntry, InstalledDll, RemoteDll};
 use tkmm_core::fmt::{days_from_civil, format_bytes, ymd};
 use tkmm_core::hash::{PackHash, Progress};
@@ -75,6 +76,16 @@ pub struct SettingsUi {
     dll_auto: QBox<QCheckBox>,
     se_defaults: QBox<QPushButton>,
     se_summary: QBox<QLabel>,
+    // three kingdoms coop
+    coop_status: QBox<QLabel>,
+    coop_install: QBox<QPushButton>,
+    coop_check: QBox<QPushButton>,
+    coop_workshop: QBox<QPushButton>,
+    coop_project: QBox<QPushButton>,
+    coop_uninstall: QBox<QPushButton>,
+    coop_latest: QBox<QLabel>,
+    coop_progress: QBox<QProgressBar>,
+    coop_updates: QBox<QCheckBox>,
     // mod list preview
     preview: QBox<QPlainTextEdit>,
     // profiles
@@ -94,6 +105,32 @@ pub struct SettingsUi {
     nxm_seen: RefCell<Option<(std::time::Instant, Option<String>)>>,
     /// Version to pin once its download finishes ("Install and use" in the catalog).
     pending_pin: RefCell<Option<String>>,
+    /// Newest Coop release from the last check.
+    coop_remote: RefCell<Option<CoopRelease>>,
+    /// "Install…" was pressed before a check had run: ask once the check answers.
+    coop_install_pending: std::cell::Cell<bool>,
+    /// A Coop Setup is downloading or running.
+    coop_busy: std::cell::Cell<bool>,
+}
+
+/// Question shown before a Coop Setup is downloaded and run.
+fn coop_install_text(r: &CoopRelease, installed: Option<&CoopInstall>) -> String {
+    let what = match installed {
+        Some(c) if c.active() => format!("Update Three Kingdoms Coop from {} to v{}?", c.version.as_deref().map(|v| format!("v{v}")).unwrap_or_else(|| "the installed version".into()), r.version),
+        Some(_) => format!("Repair Three Kingdoms Coop with Setup v{}?", r.version),
+        None => format!("Install Three Kingdoms Coop v{}?", r.version),
+    };
+    let text = format!(
+        "{what}\n\nThis downloads {} from github.com/{}/{} (checked against the release's SHA256SUMS.txt) and starts it. \
+         Setup asks for administrator rights, replaces amd_ags_x64.dll in your game folder (keeping Steam's original as amd_ags_x64_orig.dll) \
+         and adds tw3k_coop.dll. Remove it later from Windows Settings > Apps.\n\n\
+         Coop is a separate mod by Thom-Ernst. Every player needs the same version, plus the tw3k_coop pack from the Workshop.\n\n{}",
+        r.setup_name,
+        coop::OWNER,
+        coop::REPO,
+        crate::dialogs::clip_notes(&r.notes)
+    );
+    text.trim_end().to_string()
 }
 
 /// Question shown before a DLL download. `pin`: the catalog's "Install and use".
@@ -311,6 +348,36 @@ impl SettingsUi {
             se_row.add_widget_2a(&se_summary, 1);
             v.add_widget(&g);
 
+            // Three Kingdoms Coop.
+            let g = QGroupBox::from_q_string(&qs("Three Kingdoms Coop (multiplayer with up to 4 players)"));
+            let c = QVBoxLayout::new_1a(&g);
+            let coop_status = label("");
+            c.add_widget(&coop_status);
+            let cr = QHBoxLayout::new_0a();
+            c.add_layout_1a(&cr);
+            let coop_install = button("Install…");
+            coop_install.set_tool_tip(&qs("Download Coop's official Setup from GitHub (you are asked first) and run it"));
+            let coop_check = button("Check for updates");
+            let coop_workshop = button("Workshop pack");
+            coop_workshop.set_tool_tip(&qs("Open the tw3k_coop pack in Steam to subscribe"));
+            let coop_project = button("Project page");
+            let coop_uninstall = button("Uninstall…");
+            coop_uninstall.set_tool_tip(&qs("Opens Windows Settings > Apps; remove \"Three Kingdoms Coop\" there. Its uninstaller puts Steam's amd_ags_x64.dll back."));
+            for w in [&coop_install, &coop_check, &coop_workshop, &coop_project, &coop_uninstall] {
+                cr.add_widget(w);
+            }
+            cr.add_stretch_1a(1);
+            let coop_latest = label("");
+            c.add_widget(&coop_latest);
+            let coop_progress = QProgressBar::new_0a();
+            coop_progress.set_range(0, 100);
+            coop_progress.set_visible(false);
+            c.add_widget(&coop_progress);
+            let coop_updates = QCheckBox::from_q_string(&qs("Check for Coop updates on startup (only when Coop is installed)"));
+            c.add_widget(&coop_updates);
+            c.add_widget(&label("Coop is a separate mod by Thom-Ernst. Its DLL loads by itself whenever the game starts, from this manager too, and runs alongside the script extender. Steam version 1.7.2 only. The manager never changes the game folder itself: installing runs Coop's own Setup."));
+            v.add_widget(&g);
+
             // Generated mod list.
             let g = QGroupBox::from_q_string(&qs("Generated mod list"));
             let p = QVBoxLayout::new_1a(&g);
@@ -406,6 +473,15 @@ impl SettingsUi {
                 dll_auto,
                 se_defaults,
                 se_summary,
+                coop_status,
+                coop_install,
+                coop_check,
+                coop_workshop,
+                coop_project,
+                coop_uninstall,
+                coop_latest,
+                coop_progress,
+                coop_updates,
                 preview,
                 imp_ca,
                 imp_collection,
@@ -419,6 +495,9 @@ impl SettingsUi {
                 remote: RefCell::new(None),
                 nxm_seen: RefCell::new(None),
                 pending_pin: RefCell::new(None),
+                coop_remote: RefCell::new(None),
+                coop_install_pending: std::cell::Cell::new(false),
+                coop_busy: std::cell::Cell::new(false),
             }
         }
     }
@@ -643,6 +722,20 @@ impl SettingsUi {
                 a.settings.install_dll(a, r, false);
             }
         });
+        on_click!(self.coop_check, |a: &Rc<App>| a.settings.check_coop(a, false));
+        on_click!(self.coop_install, |a: &Rc<App>| {
+            if a.settings.coop_remote.borrow().is_some() {
+                a.settings.confirm_coop_install(a);
+            } else {
+                a.settings.coop_install_pending.set(true);
+                a.settings.check_coop(a, false);
+            }
+        });
+        on_click!(self.coop_workshop, |_a: &Rc<App>| crate::details::open_url(&coop::workshop_uri()));
+        on_click!(self.coop_project, |_a: &Rc<App>| crate::details::open_url(&coop::repo_url()));
+        on_click!(self.coop_uninstall, |_a: &Rc<App>| crate::details::open_url("ms-settings:appsfeatures"));
+        let this = app.clone();
+        self.coop_updates.clicked().connect(&SlotOfBool::new(w, move |on| SettingsUi::update_settings(&this, |s| s.check_coop_updates = on)));
         on_click!(self.se_defaults, |a: &Rc<App>| {
             crate::se_settings::open(a, crate::se_settings::Target::Default);
             a.mark(DIRTY_ALL);
@@ -731,6 +824,126 @@ impl SettingsUi {
                 self.dll_install.set_visible(false);
             }
         }
+        if startup {
+            app.after_dll_startup_check();
+        }
+    }
+
+    /// `startup`: only for an installed Coop, and a newer release is offered in a popup.
+    pub fn check_coop(&self, app: &Rc<App>, startup: bool) {
+        if !startup {
+            unsafe { self.coop_latest.set_text(&qs("Checking GitHub…")) };
+        }
+        let ctx = app.ctx.clone();
+        app.bus.spawn(move |_| {
+            let installed = ctx.game_paths().game_root.and_then(|r| coop::detect(std::path::Path::new(&r)));
+            if startup && installed.is_none() {
+                return None;
+            }
+            // the same flavour as installed: a Debug build is only replaced by a Debug build
+            let debug = installed.map(|c| c.debug).unwrap_or(false);
+            Some(UiEvent::CoopRemote(coop::latest(false, debug), startup))
+        });
+    }
+
+    pub unsafe fn on_coop_remote(&self, app: &Rc<App>, r: Result<Option<CoopRelease>, String>, startup: bool) {
+        let pending = self.coop_install_pending.replace(false);
+        let remote = match r {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                self.coop_latest.set_text(&qs("No Coop release with a Setup was found on GitHub."));
+                return;
+            }
+            Err(e) => {
+                self.coop_latest.set_text(&qs(format!("Coop update check failed: {e}")));
+                return;
+            }
+        };
+        let installed = app.st.borrow().coop.clone();
+        let newer = coop::is_newer(&remote.version, installed.as_ref().and_then(|c| c.version.as_deref()));
+        let current = installed.as_ref().map(|c| c.active() && !newer).unwrap_or(false);
+        self.coop_latest.set_text(&qs(format!(
+            "Latest: v{}{}{}",
+            remote.version,
+            if remote.published.is_empty() { String::new() } else { format!(" ({})", remote.published) },
+            if current { ", installed" } else { "" }
+        )));
+        self.coop_latest.set_tool_tip(&qs(crate::dialogs::clip_notes(&remote.notes)));
+        *self.coop_remote.borrow_mut() = Some(remote.clone());
+        if pending {
+            self.confirm_coop_install(app);
+        } else if startup && newer && installed.is_some() && app.ctx.settings().skipped_coop_version != remote.version {
+            match crate::dialogs::ask_update(&app.window, "Three Kingdoms Coop update", &coop_install_text(&remote, installed.as_ref())) {
+                UpdateChoice::Install => self.install_coop(app, remote),
+                UpdateChoice::Skip => SettingsUi::update_settings(app, |s| s.skipped_coop_version = remote.version.clone()),
+                UpdateChoice::Later => {}
+            }
+        }
+    }
+
+    /// Ask, then download and run the Setup of the last checked release.
+    unsafe fn confirm_coop_install(&self, app: &Rc<App>) {
+        let Some(remote) = self.coop_remote.borrow().clone() else { return };
+        let installed = app.st.borrow().coop.clone();
+        if crate::dialogs::confirm(&app.window, "Three Kingdoms Coop", &coop_install_text(&remote, installed.as_ref())) {
+            self.install_coop(app, remote);
+        }
+    }
+
+    /// Download, verify and run Setup (no questions; callers have asked).
+    unsafe fn install_coop(&self, app: &Rc<App>, r: CoopRelease) {
+        let Some(root) = app.st.borrow().paths.game_root.clone() else {
+            return crate::dialogs::error(&app.window, "The game folder was not found, so Coop's Setup has nowhere to install.");
+        };
+        if app.st.borrow().game_running {
+            return crate::dialogs::error(&app.window, "Close the game first: Coop's Setup cannot replace its files while it runs.");
+        }
+        self.coop_busy.set(true);
+        self.coop_progress.set_value(0);
+        self.coop_progress.set_visible(true);
+        self.coop_latest.set_text(&qs(format!("Downloading {}…", r.setup_name)));
+        app.mark(DIRTY_ALL);
+        app.bus.spawn(move |bus| {
+            let b = bus.clone();
+            let setup = match coop::download_setup(&r, &move |f| b.send(UiEvent::CoopProgress(f))) {
+                Ok(p) => p,
+                Err(e) => return Some(UiEvent::CoopSetupDone(Err(e))),
+            };
+            bus.send(UiEvent::CoopProgress(1.0));
+            bus.send(UiEvent::Task("Three Kingdoms Coop Setup is running; finish it to continue…".into()));
+            Some(UiEvent::CoopSetupDone(coop::run_setup(&setup, std::path::Path::new(&root))))
+        });
+    }
+
+    pub unsafe fn on_coop_progress(&self, f: f64) {
+        self.coop_progress.set_value((f * 100.0) as i32);
+        if f >= 1.0 {
+            self.coop_latest.set_text(&qs("Setup is running. Follow its window (it may ask for administrator rights)."));
+        }
+    }
+
+    pub unsafe fn on_coop_setup_done(&self, app: &Rc<App>, r: Result<u32, String>) {
+        self.coop_busy.set(false);
+        self.coop_progress.set_visible(false);
+        app.set_task("");
+        match r {
+            Ok(code) => {
+                let outcome = coop::setup_outcome(code);
+                self.coop_latest.set_text(&qs(outcome));
+                if code == 0 && !app.st.borrow().coop_pack_enabled() {
+                    crate::dialogs::info(
+                        &app.window,
+                        "Three Kingdoms Coop",
+                        &format!("{outcome}\n\nCoop also needs its pack: subscribe to tw3k_coop on the Workshop (\"Workshop pack\" button), then enable it in the profile you play multiplayer with."),
+                    );
+                }
+            }
+            Err(e) => {
+                self.coop_latest.set_text(&qs("Coop install failed"));
+                crate::dialogs::error(&app.window, &e);
+            }
+        }
+        app.mark(DIRTY_ALL);
     }
 
     /// Startup offer: Install / Skip this version / Not now.
@@ -879,13 +1092,13 @@ impl SettingsUi {
         };
         match purpose {
             HashPurpose::Export => {
-                let (name, date, se_sim) = {
+                let (name, date, se_sim, coop) = {
                     let st = app.st.borrow();
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                     let (y, m, d) = ymd(now);
-                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values())
+                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values(), st.coop.as_ref().map(|c| c.sync_version()))
                 };
-                let text = sync::build_export(&name, &hashes, &date, &se_sim);
+                let text = sync::build_export(&name, &hashes, &date, &se_sim, coop.as_deref());
                 crate::dialogs::show_text(&app.window, "Export profile", "Send this to your co-op partner. They use \"Verify against an export\" to compare.", &text);
             }
             HashPurpose::Verify => {
@@ -904,7 +1117,10 @@ impl SettingsUi {
                     .as_ref()
                     .map(|t| tkmm_core::se_config::diff_sim(&dll::se_config_for(&app.st.borrow().active(), &app.ctx.settings()).sim_values(), t))
                     .unwrap_or_default();
-                let ok = result.ok && se_diffs.is_empty();
+                // Coop: every player needs the same runtime build.
+                let ours_coop = app.st.borrow().coop.as_ref().map(|c| c.sync_version());
+                let coop_diff = sync::coop_mismatch(sync::parse_export_coop(&text), ours_coop.as_deref());
+                let ok = result.ok && se_diffs.is_empty() && coop_diff.is_none();
                 crate::dialogs::custom(&app.window, "Co-op sync check", 760, 520, |l, _| {
                     let head = label(if ok { "In sync: same packs, same files, same order, same script extender settings." } else { "Not in sync:" });
                     bold(&head);
@@ -945,7 +1161,17 @@ impl SettingsUi {
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
+                    if let Some((theirs, mine)) = &coop_diff {
+                        let it = QTreeWidgetItem::new();
+                        it.set_text(0, &qs("Coop differs"));
+                        it.set_text(1, &qs(format!("Three Kingdoms Coop: you {mine}, them {theirs}")));
+                        it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
+                        t.add_top_level_item(it.into_ptr());
+                    }
                     l.add_widget_2a(&t, 1);
+                    if coop_diff.is_some() {
+                        l.add_widget(&label("Every player needs the same Three Kingdoms Coop build (Settings > Three Kingdoms Coop)."));
+                    }
                     if result.order_differs {
                         l.add_widget(&label("The common packs load in a different order on your side."));
                     }
@@ -1211,6 +1437,44 @@ impl SettingsUi {
         }
         let changed = se_changed(&dll::default_se_config(&app.ctx.settings()));
         self.se_summary.set_text(&qs(if changed.is_empty() { "Default: all script extender defaults".to_string() } else { format!("Default changes: {}", changed.join(", ")) }));
+
+        let supported = st.coop_supported();
+        let pack = if st.coop_pack_enabled() {
+            "the tw3k_coop pack is enabled in this profile"
+        } else if st.mods.iter().any(|m| m.file.eq_ignore_ascii_case(coop::PACK)) {
+            "the tw3k_coop pack is installed but not enabled in this profile"
+        } else {
+            "the tw3k_coop pack is not installed (subscribe on the Workshop)"
+        };
+        let (status, color) = match (&st.coop, supported) {
+            (_, false) if !steam => (format!("Not available on the {} copy: Coop only works on the Steam version 1.7.2.", store.label()), icons::grey()),
+            (Some(c), false) => (format!("Coop {}, but it stays inactive: this game build is not the Steam 1.7.2 build it supports.", c.summary()), icons::amber()),
+            (None, false) => ("This game build is not the Steam 1.7.2 build Coop supports.".to_string(), icons::grey()),
+            (Some(c), true) if c.active() => (format!("Coop {}; {pack}.", c.summary()), if c.debug { icons::amber() } else { icons::green() }),
+            (Some(c), true) => (format!("Coop {}.", c.summary()), icons::red()),
+            (None, true) => (format!("Not installed; {pack}."), icons::grey()),
+        };
+        self.coop_status.set_text(&qs(status));
+        colored(&self.coop_status, &color);
+        let busy = self.coop_busy.get();
+        let can_install = supported && st.paths.game_root.is_some() && !st.game_running && !busy;
+        self.coop_install.set_text(&qs(match &st.coop {
+            Some(c) if c.active() => "Update…",
+            Some(_) => "Repair…",
+            None => "Install…",
+        }));
+        self.coop_install.set_enabled(can_install);
+        self.coop_install.set_tool_tip(&qs(if !supported {
+            "Coop only works on the Steam version 1.7.2"
+        } else if st.game_running {
+            "Close the game first"
+        } else {
+            "Download Coop's official Setup from GitHub (you are asked first) and run it"
+        }));
+        self.coop_check.set_enabled(!busy);
+        self.coop_workshop.set_enabled(steam);
+        self.coop_uninstall.set_enabled(st.coop.is_some());
+        self.coop_updates.set_checked(s.check_coop_updates);
 
         let profile = st.active();
         drop(st);

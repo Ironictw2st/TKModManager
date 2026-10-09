@@ -30,6 +30,8 @@ pub struct ReportData<'a> {
     pub game: &'a paths::GamePaths,
     /// Script-extender DLL a launch would inject, if any.
     pub dll: Option<String>,
+    /// Three Kingdoms Coop in the game folder (`coop::CoopInstall::summary`), None = not installed.
+    pub coop: Option<String>,
     pub launches: &'a [history::LaunchRecord],
     /// Extra sections read from this PC (crash files, Windows error events, log ends), as
     /// (heading, body). Appended as they are.
@@ -188,6 +190,7 @@ pub fn render(d: &ReportData) -> String {
             (true, None) => "on, but no DLL matching this game build is installed".to_string(),
         }
     );
+    let _ = writeln!(out, "Coop (3-4 MP):    {}", d.coop.as_deref().unwrap_or("not installed"));
     let _ = writeln!(out, "Skip intro:       {}", if d.profile.skip_intro { "on" } else { "off" });
     let _ = writeln!(
         out,
@@ -433,7 +436,8 @@ pub fn build(ctx: &AppContext, profile: &Profile) -> String {
     let launches = history::launch_history();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let extras = extras(ctx, &game);
-    render(&ReportData { now, profile, scan: &scan, workshop: &ws, workshop_live: live, se: &se, game: &game, dll, launches: &launches, extras })
+    let coop = game.game_root.as_deref().and_then(|r| crate::coop::detect(std::path::Path::new(r))).map(|c| c.summary());
+    render(&ReportData { now, profile, scan: &scan, workshop: &ws, workshop_live: live, se: &se, game: &game, dll, coop, launches: &launches, extras })
 }
 
 /// Write the report to the Desktop (or the app folder when there is none) and return its path.
@@ -650,7 +654,7 @@ mod tests {
             [("1", "Core Mod", 100), ("2", "Old Mod", 200), ("4", "Audio", 100)].into_iter().map(|(i, t, u)| (i.to_string(), item(i, t, u))).collect();
         let game = paths::GamePaths::default();
         let se = HashMap::new();
-        let text = render(&ReportData { now: 1_758_000_000, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Ok(()), se: &se, game: &game, dll: None, launches: &[], extras: vec![] });
+        let text = render(&ReportData { now: 1_758_000_000, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Ok(()), se: &se, game: &game, dll: None, coop: None, launches: &[], extras: vec![] });
 
         let pos = |s: &str| text.find(s).unwrap_or_else(|| panic!("missing {s:?} in\n{text}"));
         assert!(pos("  1. core.pack") < pos("  2. old.pack"));
@@ -680,7 +684,7 @@ mod tests {
             se_config: None,
         };
         let (ws, se, game) = (HashMap::new(), HashMap::new(), paths::GamePaths::default());
-        let text = render(&ReportData { now: 0, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Err("offline".into()), se: &se, game: &game, dll: None, launches: &[], extras: vec![] });
+        let text = render(&ReportData { now: 0, profile: &profile, scan: &scan, workshop: &ws, workshop_live: Err("offline".into()), se: &se, game: &game, dll: None, coop: None, launches: &[], extras: vec![] });
         assert!(!text.contains("not publicly listed"));
         assert!(text.contains("Steam could not be asked: offline"));
     }

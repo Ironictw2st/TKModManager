@@ -49,6 +49,31 @@ pick the entry and choose **Allow on device** (or restore the file), or add the 
 as an exclusion. False positives can be reported to Microsoft at
 <https://www.microsoft.com/wdsi/filesubmission>.
 
+## Three Kingdoms Coop (3-4 player campaigns)
+
+[Three Kingdoms Coop](https://github.com/Thom-Ernst/ThreeKingdoms-Coop) by Thom-Ernst is a
+separate mod for multiplayer campaigns with up to four players. It has two parts: a DLL that its
+own Setup installs into the game folder (it replaces `amd_ags_x64.dll` with a forwarder and keeps
+Steam's original as `amd_ags_x64_orig.dll`), and the `tw3k_coop` pack from the Workshop. The DLL
+loads by itself every time the game starts, also when the manager starts it, and runs alongside
+the script extender.
+
+**Settings > Three Kingdoms Coop** shows whether it is installed and active. **Install…** /
+**Update…** downloads Coop's official Setup from its GitHub release, checks it against the
+release's `SHA256SUMS.txt`, asks you first, and then runs it (it asks for administrator rights).
+The manager itself still writes nothing into the game folder except `tkmm_mods.txt`. Remove Coop
+from Windows **Settings > Apps**. When Coop is installed, the manager checks for a newer Setup at
+startup, after the app and DLL checks.
+
+The launch panel warns when the `tw3k_coop` pack is enabled without the DLL, and when a Steam
+update or file verification put the original `amd_ags_x64.dll` back (run Setup again). Coop only
+works on the Steam version 1.7.2, so on Epic or Game Pass it stays inactive. Every player needs
+the same Coop version: a profile export records it, and **Verify against an export** compares it.
+
+Coop's Debug ("Developer Build") Setup hooks a function the script extender also uses. Script
+extenders before the fix refuse to start with it; newer ones only turn off "one Delegate vote
+counts for every human". Use the normal Setup to keep both.
+
 ## Mods from Nexus Mods
 
 Paste your personal API key in **Settings > Nexus Mods** (the "Get my key…" button opens the
@@ -57,7 +82,7 @@ a mod's Files tab then installs it in one click. A .zip, .7z or .rar you downloa
 installs with **Actions > Install mod from archive…**.
 
 Nexus mods are unpacked into `%APPDATA%\TKModManager\nexus` and load from there, just like
-Workshop packs. The game folder is never touched. Installing another file of the same mod keeps
+Workshop packs. Nothing is put into the game folder. Installing another file of the same mod keeps
 both copies: right-click the mod and use **Version** to switch, and the load order stays the same.
 The manager checks installed Nexus mods for newer files and marks them with the red dot.
 
