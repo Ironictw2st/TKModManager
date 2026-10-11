@@ -37,11 +37,50 @@ const COOP_NONE: &str = "none";
 /// manager that does not record Coop.
 pub fn parse_export_coop(text: &str) -> Option<Option<String>> {
     text.lines().find_map(|l| {
-        let mut cols = l.split('\t').map(str::trim);
-        (cols.next()? == COOP_PREFIX && cols.next()? == "version").then_some(())?;
-        let v = cols.next().unwrap_or("");
+        let (prefix, name, v) = meta_cols(l)?;
+        (prefix == COOP_PREFIX && name == "version").then_some(())?;
         Some((!v.is_empty() && v != COOP_NONE).then(|| v.to_string()))
     })
+}
+
+/// `@prefix<TAB>name<TAB>value`. Discord turns tabs into spaces on paste, so a line without tabs
+/// is split on whitespace (the value keeps any spaces of its own).
+fn meta_cols(line: &str) -> Option<(&str, &str, String)> {
+    let line = line.trim();
+    if !line.starts_with('@') {
+        return None;
+    }
+    if line.contains('\t') {
+        let mut cols = line.split('\t').map(str::trim);
+        return Some((cols.next()?, cols.next()?, cols.next().unwrap_or("").to_string()));
+    }
+    let mut cols = line.split_whitespace();
+    Some((cols.next()?, cols.next()?, cols.collect::<Vec<_>>().join(" ")))
+}
+
+fn is_sha(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The columns of a pack line whose tabs became spaces (Discord does this on paste):
+/// `key file [size sha256]`. Key and file may both contain spaces, but the key always ends with
+/// the file name, which fixes where one stops and the other starts.
+fn respaced_pack_cols(line: &str) -> Vec<String> {
+    let mut toks: Vec<&str> = line.split_whitespace().collect();
+    let mut tail = Vec::new();
+    if toks.len() >= 4 && is_sha(toks[toks.len() - 1]) && toks[toks.len() - 2].parse::<u64>().is_ok() {
+        tail = toks.split_off(toks.len() - 2);
+    }
+    if let Some(j) = toks.iter().position(|t| *t == "#") {
+        return vec![toks[..j].join(" "), format!("# {}", toks[j + 1..].join(" "))];
+    }
+    for j in 1..toks.len() {
+        let (key, file) = (toks[..j].join(" "), toks[j..].join(" "));
+        if key.ends_with(&format!("/{file}")) || key.ends_with(&format!(":{file}")) {
+            return [key, file].into_iter().chain(tail.iter().map(|s| s.to_string())).collect();
+        }
+    }
+    vec![line.trim().to_string()]
 }
 
 /// (theirs, ours) as display text when the export's Coop runtime differs from ours; None when
@@ -57,9 +96,8 @@ pub fn parse_export_se(text: &str) -> Option<BTreeMap<String, String>> {
     let map: BTreeMap<String, String> = text
         .lines()
         .filter_map(|l| {
-            let mut cols = l.split('\t').map(str::trim);
-            (cols.next()? == SE_PREFIX).then_some(())?;
-            Some((cols.next()?.to_string(), cols.next().unwrap_or("").to_string()))
+            let (prefix, k, v) = meta_cols(l)?;
+            (prefix == SE_PREFIX).then(|| (k.to_string(), v))
         })
         .filter(|(k, _)| !k.is_empty())
         .collect();
@@ -73,7 +111,8 @@ pub fn parse_export(text: &str) -> Vec<ExportRow> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let cols: Vec<&str> = raw.split('\t').map(str::trim).collect();
+        let cols: Vec<String> = if raw.contains('\t') { raw.split('\t').map(|c| c.trim().to_string()).collect() } else { respaced_pack_cols(line) };
+        let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
         let key = cols[0];
         if !(key.starts_with("ws:") || key.starts_with("data:") || key.starts_with("ext:")) {
             continue;
@@ -88,7 +127,7 @@ pub fn parse_export(text: &str) -> Vec<ExportRow> {
             tail.trim_start_matches("data:").trim_start_matches("ext:").to_string()
         };
         let size = cols.get(2).and_then(|s| s.parse::<u64>().ok());
-        let sha256 = cols.get(3).filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())).map(|s| s.to_lowercase());
+        let sha256 = cols.get(3).filter(|s| is_sha(s)).map(|s| s.to_lowercase());
         out.push(ExportRow { key: key.to_string(), file, size, sha256 });
     }
     out
@@ -202,6 +241,21 @@ mod tests {
 
     fn ph(key: &str, file: &str, size: u64, c: char) -> PackHash {
         PackHash { key: key.into(), file: file.into(), size, sha256: h(c) }
+    }
+
+    #[test]
+    fn export_survives_tabs_turned_to_spaces() {
+        let mut se = BTreeMap::new();
+        se.insert("campaign_turns".to_string(), "2".to_string());
+        let packs = [ph("ws:3123/PUZZLE COMPLETE.pack", "PUZZLE COMPLETE.pack", 2013389712, 'a'), ph("data:!cz_bug_fix.pack", "!cz_bug_fix.pack", 168052689, 'b'), ph("ws:9/[mod]Lady_bian_FLC.pack", "[mod]Lady_bian_FLC.pack", 9, 'c')];
+        let text = build_export("MP", &packs, "d", &se, Some("0.9.0"));
+        // Discord's paste: every tab becomes a space.
+        let pasted = text.replace('\t', " ");
+        assert_eq!(parse_export(&pasted), parse_export(&text));
+        assert_eq!(parse_export(&pasted)[0], ExportRow { key: "ws:3123/PUZZLE COMPLETE.pack".into(), file: "PUZZLE COMPLETE.pack".into(), size: Some(2013389712), sha256: Some(h('a')) });
+        assert_eq!(parse_export_se(&pasted), Some(se));
+        assert_eq!(parse_export_coop(&pasted), Some(Some("0.9.0".into())));
+        assert_eq!(parse_export("ws:1/a b.pack # a b.pack")[0].file, "a b.pack");
     }
 
     #[test]
