@@ -4,6 +4,21 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-10-11
+
+### Added
+- **Co-op sync check compares the game build.** Profile exports now record which build of the
+  game you have (store, version and the exe's build fingerprint). "Verify against an export"
+  shows "Game build differs" when your game and your partner's are not the same build, for
+  example one of you is on a Steam beta branch or has not updated yet. Those keep you out of
+  each other's lobby even when every mod matches. Both players need 0.6.7 for this check.
+
+### Fixed
+- **Co-op sync check after pasting an export into Discord.** Discord turns the export's tabs
+  into spaces, so every pack was listed as "not installed" and again as "only on your side",
+  and the script extender and Coop settings were not compared. Pasted exports are now read
+  correctly, pack names with spaces included.
+
 ## [0.6.6] - 2026-10-09
 
 ### Added
