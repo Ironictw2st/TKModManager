@@ -7,9 +7,14 @@
 //! versions skip those lines.
 //! After 0.6.5 an `@coop<TAB>version<TAB><ver>` line records the Three Kingdoms Coop runtime
 //! (`0.9.0`, `0.9.0-debug`, or `none`); every player needs the same one.
+//! After 0.6.6 `@game<TAB>build<TAB><timestamp>/<size>` (the exe's PE fingerprint) and
+//! `@game<TAB>label<TAB><store> <file version>` record the game build: a Steam patch or store
+//! difference keeps players out of each other's lobby even with identical packs.
 
+use crate::fingerprint::ExeFingerprint;
 use crate::hash::PackHash;
 use crate::packs::{ModEntry, ModSource};
+use crate::paths::GameStore;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,18 +25,71 @@ pub struct ExportRow {
     pub sha256: Option<String>,
 }
 
+/// The game build an export records.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameBuild {
+    /// `<timestamp>/<size>` of the exe's PE headers: what decides whether two games match.
+    pub id: String,
+    /// "Steam 1.7.2.12345" for people.
+    pub label: String,
+}
+
+impl GameBuild {
+    /// None when the exe could not be read.
+    pub fn new(store: GameStore, version: Option<&str>, fp: Option<&ExeFingerprint>) -> Option<GameBuild> {
+        let fp = fp?;
+        let label = match version {
+            Some(v) => format!("{} {v}", store.label()),
+            None => store.label().to_string(),
+        };
+        Some(GameBuild { id: format!("{}/{}", fp.timestamp_hex(), fp.size_hex()), label })
+    }
+
+    fn display(&self) -> String {
+        format!("{} ({})", self.label, self.id)
+    }
+}
+
 /// `coop`: our Coop runtime (`CoopInstall::sync_version`), None when it is not installed.
-pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &BTreeMap<String, String>, coop: Option<&str>) -> String {
+/// `game`: our game build, None when the exe could not be read.
+pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &BTreeMap<String, String>, coop: Option<&str>, game: Option<&GameBuild>) -> String {
     let mut out = vec![format!("# TK Mod Manager profile \"{profile_name}\" {date} v2")];
     out.extend(rows.iter().map(|r| format!("{}\t{}\t{}\t{}", r.key, r.file, r.size, r.sha256)));
     out.extend(se_sim.iter().map(|(k, v)| format!("{SE_PREFIX}\t{k}\t{v}")));
     out.push(format!("{COOP_PREFIX}\tversion\t{}", coop.unwrap_or(COOP_NONE)));
+    if let Some(g) = game {
+        out.push(format!("{GAME_PREFIX}\tbuild\t{}", g.id));
+        out.push(format!("{GAME_PREFIX}\tlabel\t{}", g.label));
+    }
     out.join("\n")
 }
 
 const SE_PREFIX: &str = "@se";
 const COOP_PREFIX: &str = "@coop";
 const COOP_NONE: &str = "none";
+const GAME_PREFIX: &str = "@game";
+
+/// The game build an export records; None for an export without one (older manager, or the
+/// exporter's exe could not be read).
+pub fn parse_export_game(text: &str) -> Option<GameBuild> {
+    let mut id = None;
+    let mut label = String::new();
+    for (prefix, name, v) in text.lines().filter_map(meta_cols) {
+        match (prefix, name) {
+            (GAME_PREFIX, "build") if !v.is_empty() => id = Some(v),
+            (GAME_PREFIX, "label") => label = v,
+            _ => {}
+        }
+    }
+    Some(GameBuild { id: id?, label })
+}
+
+/// (theirs, ours) as display text when the export's game build differs from ours; None when
+/// they agree or either side does not know its build.
+pub fn game_mismatch(theirs: Option<&GameBuild>, ours: Option<&GameBuild>) -> Option<(String, String)> {
+    let (theirs, ours) = (theirs?, ours?);
+    (theirs.id != ours.id).then(|| (theirs.display(), ours.display()))
+}
 
 /// The Coop runtime an export records: `Some(None)` = the exporter has none, `None` = made by a
 /// manager that does not record Coop.
@@ -248,7 +306,7 @@ mod tests {
         let mut se = BTreeMap::new();
         se.insert("campaign_turns".to_string(), "2".to_string());
         let packs = [ph("ws:3123/PUZZLE COMPLETE.pack", "PUZZLE COMPLETE.pack", 2013389712, 'a'), ph("data:!cz_bug_fix.pack", "!cz_bug_fix.pack", 168052689, 'b'), ph("ws:9/[mod]Lady_bian_FLC.pack", "[mod]Lady_bian_FLC.pack", 9, 'c')];
-        let text = build_export("MP", &packs, "d", &se, Some("0.9.0"));
+        let text = build_export("MP", &packs, "d", &se, Some("0.9.0"), None);
         // Discord's paste: every tab becomes a space.
         let pasted = text.replace('\t', " ");
         assert_eq!(parse_export(&pasted), parse_export(&text));
@@ -259,8 +317,24 @@ mod tests {
     }
 
     #[test]
+    fn export_carries_game_build() {
+        let steam = GameBuild::new(GameStore::Steam, Some("1.7.2.18053"), Some(&ExeFingerprint { timestamp: 0x69ce4c84, size_of_image: 0x4836000 })).unwrap();
+        let epic = GameBuild::new(GameStore::Epic, None, Some(&ExeFingerprint { timestamp: 0x1234, size_of_image: 0x4836000 })).unwrap();
+        assert_eq!(steam.id, "0x69ce4c84/0x4836000");
+        assert_eq!(GameBuild::new(GameStore::Steam, None, None), None);
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &BTreeMap::new(), None, Some(&steam));
+        assert_eq!(parse_export(&text).len(), 1, "@game lines are not packs");
+        assert_eq!(parse_export_game(&text), Some(steam.clone()));
+        assert_eq!(parse_export_game(&text.replace('\t', " ")), Some(steam.clone()), "survives a Discord paste");
+        assert_eq!(parse_export_game(&build_export("MP", &[], "d", &BTreeMap::new(), None, None)), None);
+        assert_eq!(game_mismatch(Some(&steam), Some(&steam)), None);
+        assert_eq!(game_mismatch(None, Some(&steam)), None);
+        assert_eq!(game_mismatch(Some(&epic), Some(&steam)), Some(("Epic (0x1234/0x4836000)".into(), "Steam 1.7.2.18053 (0x69ce4c84/0x4836000)".into())));
+    }
+
+    #[test]
     fn export_roundtrip_and_v1() {
-        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18", &BTreeMap::new(), None);
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b c.pack", "b c.pack", 20, 'b')], "2026-09-18", &BTreeMap::new(), None, None);
         let rows = parse_export(&text);
         assert_eq!(rows.len(), 2);
         assert_eq!(parse_export_se(&text), None);
@@ -277,7 +351,7 @@ mod tests {
     fn export_carries_se_settings() {
         let mut c = crate::se_config::SeConfig::default();
         c.set("marriage_inlaws", "0");
-        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values(), Some("0.9.0"));
+        let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values(), Some("0.9.0"), None);
         assert_eq!(parse_export(&text).len(), 1, "@se lines are not packs");
         let theirs = parse_export_se(&text).unwrap();
         assert_eq!(theirs.len(), 13);
@@ -287,8 +361,8 @@ mod tests {
 
     #[test]
     fn export_carries_coop_version() {
-        let with = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &BTreeMap::new(), Some("0.9.0-debug"));
-        let without = build_export("MP", &[], "d", &BTreeMap::new(), None);
+        let with = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &BTreeMap::new(), Some("0.9.0-debug"), None);
+        let without = build_export("MP", &[], "d", &BTreeMap::new(), None, None);
         assert_eq!(parse_export(&with).len(), 1, "@coop lines are not packs");
         assert_eq!(parse_export_se(&with), None, "@coop lines are not SE settings");
         assert_eq!(parse_export_coop(&with), Some(Some("0.9.0-debug".into())));
@@ -305,7 +379,7 @@ mod tests {
     #[test]
     fn verify_statuses() {
         let mods = vec![m("ws:1/a.pack", "a.pack", 10, ModSource::Workshop), m("ext:z:/dev/b.pack", "b.pack", 20, ModSource::Folder), m("data:c.pack", "c.pack", 30, ModSource::Data)];
-        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d", &BTreeMap::new(), None));
+        let rows = parse_export(&build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a'), ph("data:b.pack", "b.pack", 20, 'b')], "d", &BTreeMap::new(), None, None));
         let hashes = |a: char| -> HashMap<String, String> { [("ws:1/a.pack".to_string(), h(a)), ("ext:z:/dev/b.pack".to_string(), h('b'))].into_iter().collect() };
 
         let ok = verify_export(&rows, &mods, &["ws:1/a.pack".into(), "ext:z:/dev/b.pack".into()], &hashes('a'));

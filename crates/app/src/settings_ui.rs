@@ -1092,13 +1092,13 @@ impl SettingsUi {
         };
         match purpose {
             HashPurpose::Export => {
-                let (name, date, se_sim, coop) = {
+                let (name, date, se_sim, coop, game) = {
                     let st = app.st.borrow();
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
                     let (y, m, d) = ymd(now);
-                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values(), st.coop.as_ref().map(|c| c.sync_version()))
+                    (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values(), st.coop.as_ref().map(|c| c.sync_version()), st.game_build())
                 };
-                let text = sync::build_export(&name, &hashes, &date, &se_sim, coop.as_deref());
+                let text = sync::build_export(&name, &hashes, &date, &se_sim, coop.as_deref(), game.as_ref());
                 crate::dialogs::show_text(&app.window, "Export profile", "Send this to your co-op partner. They use \"Verify against an export\" to compare.", &text);
             }
             HashPurpose::Verify => {
@@ -1120,9 +1120,12 @@ impl SettingsUi {
                 // Coop: every player needs the same runtime build.
                 let ours_coop = app.st.borrow().coop.as_ref().map(|c| c.sync_version());
                 let coop_diff = sync::coop_mismatch(sync::parse_export_coop(&text), ours_coop.as_deref());
-                let ok = result.ok && se_diffs.is_empty() && coop_diff.is_none();
+                // Game build: a different patch or store keeps you out of each other's lobby.
+                let theirs_game = sync::parse_export_game(&text);
+                let game_diff = sync::game_mismatch(theirs_game.as_ref(), app.st.borrow().game_build().as_ref());
+                let ok = result.ok && se_diffs.is_empty() && coop_diff.is_none() && game_diff.is_none();
                 crate::dialogs::custom(&app.window, "Co-op sync check", 760, 520, |l, _| {
-                    let head = label(if ok { "In sync: same packs, same files, same order, same script extender settings." } else { "Not in sync:" });
+                    let head = label(if ok { "In sync: same game build, packs, files, order and script extender settings." } else { "Not in sync:" });
                     bold(&head);
                     colored(&head, &if ok { icons::green() } else { icons::red() });
                     l.add_widget(&head);
@@ -1133,6 +1136,13 @@ impl SettingsUi {
                     t.set_header_labels(&h);
                     t.set_root_is_decorated(false);
                     t.header().set_section_resize_mode_2a(1, ResizeMode::Stretch);
+                    if let Some((theirs, mine)) = &game_diff {
+                        let it = QTreeWidgetItem::new();
+                        it.set_text(0, &qs("Game build differs"));
+                        it.set_text(1, &qs(format!("Total War: THREE KINGDOMS: you {mine}, them {theirs}")));
+                        it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
+                        t.add_top_level_item(it.into_ptr());
+                    }
                     for r in &result.rows {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs(r.status.label()));
@@ -1169,6 +1179,11 @@ impl SettingsUi {
                         t.add_top_level_item(it.into_ptr());
                     }
                     l.add_widget_2a(&t, 1);
+                    if game_diff.is_some() {
+                        l.add_widget(&label("Every player needs the same game build. Update the game in Steam (or Epic) on the older side, and check that nobody is on a Steam beta branch."));
+                    } else if theirs_game.is_none() {
+                        l.add_widget(&label("Your partner's export does not record the game build (made with an older TK Mod Manager), so it was not compared."));
+                    }
                     if coop_diff.is_some() {
                         l.add_widget(&label("Every player needs the same Three Kingdoms Coop build (Settings > Three Kingdoms Coop)."));
                     }

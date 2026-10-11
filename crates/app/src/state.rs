@@ -232,6 +232,11 @@ impl State {
         coop::build_supported(self.paths.store, self.dll.as_ref().and_then(|d| d.game_fingerprint.as_ref()))
     }
 
+    /// This copy of the game's build, for profile exports and the co-op sync check.
+    pub fn game_build(&self) -> Option<tkmm_core::sync::GameBuild> {
+        tkmm_core::sync::GameBuild::new(self.paths.store, self.paths.exe_version.as_deref(), self.dll.as_ref().and_then(|d| d.game_fingerprint.as_ref()))
+    }
+
     /// Coop warnings for a launch of the active profile.
     pub fn coop_problems(&self) -> Vec<CoopProblem> {
         let se_wanted = self.active().dll && self.dll_version().is_some();
