@@ -165,6 +165,15 @@ pub fn nudge(entries: &mut Vec<ProfileEntry>, keys: &[String], dir: i32) -> bool
     true
 }
 
+/// Put the packs in `order` into that order, using the places they already hold: every other
+/// entry (separators, disabled packs, packs not in `order`) stays where it is.
+pub fn adopt_order(entries: &[ProfileEntry], order: &[String]) -> Vec<ProfileEntry> {
+    let ks: HashSet<&str> = order.iter().map(String::as_str).collect();
+    let by_key: HashMap<&str, &ProfileEntry> = entries.iter().filter(|e| ks.contains(e.key.as_str())).map(|e| (e.key.as_str(), e)).collect();
+    let mut next = order.iter().filter_map(|k| by_key.get(k.as_str()));
+    entries.iter().map(|e| if ks.contains(e.key.as_str()) { next.next().map(|n| (*n).clone()).unwrap_or_else(|| e.clone()) } else { e.clone() }).collect()
+}
+
 /// Put `keys` first (enabled, in that order), everything else after (keeping its state/order).
 /// Used by every import (CA list, collection, text).
 pub fn enable_first(entries: &[ProfileEntry], keys: &[String]) -> Vec<ProfileEntry> {
@@ -237,6 +246,15 @@ pub fn delete(doc: &mut ProfilesDoc, name: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::packs::{ModSource, PackType};
+
+    #[test]
+    fn adopt_order_keeps_other_entries_in_place() {
+        let entries = vec![entry("sep:1", true), entry("c", true), entry("x", false), entry("a", true), entry("sep:2", true), entry("b", true), entry("own", true)];
+        let out = adopt_order(&entries, &["a".into(), "b".into(), "c".into()]);
+        let keys: Vec<&str> = out.iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(keys, vec!["sep:1", "a", "x", "b", "sep:2", "c", "own"]);
+        assert!(!out[2].enabled, "disabled packs keep their state");
+    }
 
     fn m(key: &str, file: &str, mtime: u64) -> ModEntry {
         ModEntry {

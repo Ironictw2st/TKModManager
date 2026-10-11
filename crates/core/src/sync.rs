@@ -230,27 +230,60 @@ pub struct SyncRow {
     pub row: ExportRow,
     pub local: Option<ModEntry>,
     pub status: SyncStatus,
+    /// 1-based place in the partner's load order.
+    pub theirs_pos: usize,
+    /// 1-based place in our load order (enabled packs only); None when not enabled here.
+    pub ours_pos: Option<usize>,
+    /// One of the packs to move to get the partner's order (the fewest such packs, so a single
+    /// moved pack is the only one marked rather than everything it skipped over).
+    pub moved: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct SyncResult {
     pub rows: Vec<SyncRow>,
-    /// Enabled locally but absent from the export.
-    pub extra: Vec<ModEntry>,
+    /// Enabled locally but absent from the export, with their 1-based place in our load order.
+    pub extra: Vec<(usize, ModEntry)>,
     /// Packs present on both sides load in a different order.
     pub order_differs: bool,
+    /// Our keys of the packs on both sides, in the partner's order (for `profile_ops::adopt_order`).
+    pub their_order: Vec<String>,
     pub ok: bool,
 }
 
+/// Indexes into `seq` of one longest strictly increasing subsequence.
+fn longest_increasing(seq: &[usize]) -> HashSet<usize> {
+    let n = seq.len();
+    let mut len = vec![1usize; n];
+    let mut prev = vec![usize::MAX; n];
+    for i in 0..n {
+        for j in 0..i {
+            if seq[j] < seq[i] && len[j] + 1 > len[i] {
+                len[i] = len[j] + 1;
+                prev[i] = j;
+            }
+        }
+    }
+    let mut keep = HashSet::new();
+    let mut at = (0..n).max_by_key(|&i| (len[i], std::cmp::Reverse(i)));
+    while let Some(i) = at {
+        keep.insert(i);
+        at = (prev[i] != usize::MAX).then(|| prev[i]);
+    }
+    keep
+}
+
 pub fn verify_export(rows: &[ExportRow], mods: &[ModEntry], enabled_in_order: &[String], local_hashes: &HashMap<String, String>) -> SyncResult {
-    let enabled: HashSet<&str> = enabled_in_order.iter().map(String::as_str).collect();
-    let out: Vec<SyncRow> = rows
+    let pos: HashMap<&str, usize> = enabled_in_order.iter().enumerate().map(|(i, k)| (k.as_str(), i + 1)).collect();
+    let mut out: Vec<SyncRow> = rows
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(i, row)| {
             let local = match_local(row, mods).cloned();
+            let ours_pos = local.as_ref().and_then(|l| pos.get(l.key.as_str()).copied());
             let status = match &local {
                 None => SyncStatus::Missing,
-                Some(l) if !enabled.contains(l.key.as_str()) => SyncStatus::Disabled,
+                Some(_) if ours_pos.is_none() => SyncStatus::Disabled,
                 Some(l) if row.size.map(|s| s != l.size).unwrap_or(false) => SyncStatus::Different,
                 Some(l) => match (&row.sha256, local_hashes.get(&l.key)) {
                     (Some(theirs), Some(ours)) if theirs == ours => SyncStatus::Match,
@@ -258,16 +291,28 @@ pub fn verify_export(rows: &[ExportRow], mods: &[ModEntry], enabled_in_order: &[
                     _ => SyncStatus::Unverified,
                 },
             };
-            SyncRow { row: row.clone(), local, status }
+            SyncRow { row: row.clone(), local, status, theirs_pos: i + 1, ours_pos, moved: false }
         })
         .collect();
-    let matched: Vec<String> = out.iter().filter_map(|r| r.local.as_ref()).filter(|l| enabled.contains(l.key.as_str())).map(|l| l.key.clone()).collect();
-    let matched_set: HashSet<&str> = matched.iter().map(String::as_str).collect();
-    let extra: Vec<ModEntry> = enabled_in_order.iter().filter(|k| !matched_set.contains(k.as_str())).filter_map(|k| mods.iter().find(|m| &m.key == k).cloned()).collect();
-    let local_order: Vec<&String> = enabled_in_order.iter().filter(|k| matched_set.contains(k.as_str())).collect();
-    let order_differs = local_order.iter().map(|s| s.as_str()).ne(matched.iter().map(String::as_str));
+    // Packs on both sides, in the partner's order (a local pack matched twice counts once).
+    let mut seen = HashSet::new();
+    let common: Vec<usize> = (0..out.len()).filter(|&i| out[i].ours_pos.is_some() && seen.insert(out[i].local.as_ref().map(|l| l.key.clone()))).collect();
+    let their_order: Vec<String> = common.iter().filter_map(|&i| out[i].local.as_ref().map(|l| l.key.clone())).collect();
+    let ours: Vec<usize> = common.iter().filter_map(|&i| out[i].ours_pos).collect();
+    let keep = longest_increasing(&ours);
+    for (n, &i) in common.iter().enumerate() {
+        out[i].moved = !keep.contains(&n);
+    }
+    let order_differs = out.iter().any(|r| r.moved);
+    let common_keys: HashSet<&str> = their_order.iter().map(String::as_str).collect();
+    let extra: Vec<(usize, ModEntry)> = enabled_in_order
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| !common_keys.contains(k.as_str()))
+        .filter_map(|(i, k)| mods.iter().find(|m| &m.key == k).map(|m| (i + 1, m.clone())))
+        .collect();
     let ok = out.iter().all(|r| r.status == SyncStatus::Match) && extra.is_empty() && !order_differs;
-    SyncResult { rows: out, extra, order_differs, ok }
+    SyncResult { rows: out, extra, order_differs, their_order, ok }
 }
 
 #[cfg(test)]
@@ -387,11 +432,28 @@ mod tests {
 
         let bad = verify_export(&rows, &mods, &["ext:z:/dev/b.pack".into(), "ws:1/a.pack".into(), "data:c.pack".into()], &hashes('f'));
         assert_eq!(bad.rows.iter().map(|r| r.status).collect::<Vec<_>>(), vec![SyncStatus::Different, SyncStatus::Match]);
-        assert_eq!(bad.extra.iter().map(|m| m.file.as_str()).collect::<Vec<_>>(), vec!["c.pack"]);
+        assert_eq!(bad.extra.iter().map(|(p, m)| (*p, m.file.as_str())).collect::<Vec<_>>(), vec![(3, "c.pack")]);
         assert!(bad.order_differs && !bad.ok);
+        assert_eq!(bad.rows.iter().map(|r| (r.theirs_pos, r.ours_pos)).collect::<Vec<_>>(), vec![(1, Some(2)), (2, Some(1))]);
+        assert_eq!(bad.rows.iter().filter(|r| r.moved).count(), 1);
+        assert_eq!(bad.their_order, vec!["ws:1/a.pack".to_string(), "ext:z:/dev/b.pack".to_string()]);
 
         assert_eq!(verify_export(&rows, &mods, &["ws:1/a.pack".into()], &hashes('a')).rows[1].status, SyncStatus::Disabled);
         assert_eq!(verify_export(&parse_export(&format!("ws:9/zz.pack\tzz.pack\t1\t{}", h('0'))), &mods, &[], &HashMap::new()).rows[0].status, SyncStatus::Missing);
         assert_eq!(verify_export(&parse_export(&format!("data:c.pack\tc.pack\t31\t{}", h('c'))), &mods, &["data:c.pack".into()], &HashMap::new()).rows[0].status, SyncStatus::Different);
+    }
+
+    #[test]
+    fn one_moved_pack_is_the_only_one_marked() {
+        let files = ["a", "b", "c", "d", "e"];
+        let mods: Vec<ModEntry> = files.iter().map(|f| m(&format!("data:{f}.pack"), &format!("{f}.pack"), 1, ModSource::Data)).collect();
+        let theirs: Vec<PackHash> = files.iter().map(|f| ph(&format!("data:{f}.pack"), &format!("{f}.pack"), 1, 'a')).collect();
+        let rows = parse_export(&build_export("MP", &theirs, "d", &BTreeMap::new(), None, None));
+        // Ours: e moved to the top.
+        let ours: Vec<String> = ["e", "a", "b", "c", "d"].iter().map(|f| format!("data:{f}.pack")).collect();
+        let r = verify_export(&rows, &mods, &ours, &HashMap::new());
+        assert_eq!(r.rows.iter().filter(|r| r.moved).map(|r| r.row.file.as_str()).collect::<Vec<_>>(), vec!["e.pack"]);
+        let same = verify_export(&rows, &mods, &r.their_order, &HashMap::new());
+        assert!(!same.order_differs);
     }
 }

@@ -4,6 +4,15 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-10-11
+
+### Added
+- **Co-op sync check shows the load order.** A new "Load order" column gives each pack's place on
+  both sides ("you 3 / them 5"). When the order differs, only the packs that need to move are
+  marked "moved", not every pack they skipped over.
+- **Use their load order.** One click reorders the active profile to match your partner's export.
+  Separators, disabled packs and packs only you have stay where they are.
+
 ## [0.6.7] - 2026-10-11
 
 ### Added

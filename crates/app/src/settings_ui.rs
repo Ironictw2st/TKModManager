@@ -1124,7 +1124,7 @@ impl SettingsUi {
                 let theirs_game = sync::parse_export_game(&text);
                 let game_diff = sync::game_mismatch(theirs_game.as_ref(), app.st.borrow().game_build().as_ref());
                 let ok = result.ok && se_diffs.is_empty() && coop_diff.is_none() && game_diff.is_none();
-                crate::dialogs::custom(&app.window, "Co-op sync check", 760, 520, |l, _| {
+                crate::dialogs::custom(&app.window, "Co-op sync check", 820, 560, |l, d| {
                     let head = label(if ok { "In sync: same game build, packs, files, order and script extender settings." } else { "Not in sync:" });
                     bold(&head);
                     colored(&head, &if ok { icons::green() } else { icons::red() });
@@ -1132,21 +1132,31 @@ impl SettingsUi {
                     let t = QTreeWidget::new_0a();
                     let h = QListOfQString::new_0a();
                     h.append_q_string(&qs("Status"));
+                    h.append_q_string(&qs("Load order"));
                     h.append_q_string(&qs("Pack"));
                     t.set_header_labels(&h);
                     t.set_root_is_decorated(false);
-                    t.header().set_section_resize_mode_2a(1, ResizeMode::Stretch);
+                    t.header().set_section_resize_mode_2a(1, ResizeMode::ResizeToContents);
+                    t.header().set_section_resize_mode_2a(2, ResizeMode::Stretch);
                     if let Some((theirs, mine)) = &game_diff {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs("Game build differs"));
-                        it.set_text(1, &qs(format!("Total War: THREE KINGDOMS: you {mine}, them {theirs}")));
+                        it.set_text(2, &qs(format!("Total War: THREE KINGDOMS: you {mine}, them {theirs}")));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
                     for r in &result.rows {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs(r.status.label()));
-                        it.set_text(1, &qs(&r.row.file));
+                        let order = match r.ours_pos {
+                            Some(o) => format!("you {o} / them {}", r.theirs_pos),
+                            None => format!("them {}", r.theirs_pos),
+                        };
+                        it.set_text(1, &qs(if r.moved { format!("{order}  moved") } else { order }));
+                        if r.moved {
+                            it.set_foreground(1, &qt_gui::QBrush::from_q_color(&icons::amber()));
+                        }
+                        it.set_text(2, &qs(&r.row.file));
                         let c = match r.status {
                             SyncStatus::Match => icons::green(),
                             SyncStatus::Unverified => icons::grey(),
@@ -1156,10 +1166,11 @@ impl SettingsUi {
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&c));
                         t.add_top_level_item(it.into_ptr());
                     }
-                    for m in &result.extra {
+                    for (pos, m) in &result.extra {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs("only on your side"));
-                        it.set_text(1, &qs(&m.file));
+                        it.set_text(1, &qs(format!("you {pos}")));
+                        it.set_text(2, &qs(&m.file));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::amber()));
                         t.add_top_level_item(it.into_ptr());
                     }
@@ -1167,14 +1178,14 @@ impl SettingsUi {
                         let name = tkmm_core::se_config::def(key).map(|d| d.label).unwrap_or(key);
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs("SE setting differs"));
-                        it.set_text(1, &qs(format!("{name} ({key}): you {mine}, them {theirs}")));
+                        it.set_text(2, &qs(format!("{name} ({key}): you {mine}, them {theirs}")));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
                     if let Some((theirs, mine)) = &coop_diff {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs("Coop differs"));
-                        it.set_text(1, &qs(format!("Three Kingdoms Coop: you {mine}, them {theirs}")));
+                        it.set_text(2, &qs(format!("Three Kingdoms Coop: you {mine}, them {theirs}")));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
@@ -1188,7 +1199,21 @@ impl SettingsUi {
                         l.add_widget(&label("Every player needs the same Three Kingdoms Coop build (Settings > Three Kingdoms Coop)."));
                     }
                     if result.order_differs {
-                        l.add_widget(&label("The common packs load in a different order on your side."));
+                        let row = QHBoxLayout::new_0a();
+                        let note = label("The packs marked \"moved\" load in a different place on your side. Every player in a multiplayer campaign should load the packs in the same order.");
+                        note.set_word_wrap(true);
+                        row.add_widget_2a(&note, 1);
+                        let adopt = button("Use their load order");
+                        adopt.set_tool_tip(&qs("Reorder the active profile to match your partner's export. Separators, disabled packs and packs only you have stay where they are."));
+                        row.add_widget(&adopt);
+                        l.add_layout_1a(&row);
+                        let (this, order, dp) = (app.clone(), result.their_order.clone(), d.as_ptr());
+                        adopt.clicked().connect(&SlotNoArgs::new(d, move || {
+                            this.st.borrow_mut().update_active(|p| p.entries = profile_ops::adopt_order(&p.entries, &order));
+                            this.mark(DIRTY_LIST);
+                            crate::dialogs::info(&this.window, "Load order", "The active profile now loads the shared packs in your partner's order. Run \"Verify against an export\" again to check.");
+                            dp.accept();
+                        }));
                     }
                     if !se_diffs.is_empty() {
                         l.add_widget(&label("Script extender settings that change the campaign must be identical, or you cannot see each other's lobby. Change them with Settings… next to \"Script extender\" in the launch panel, or import your partner's export."));
