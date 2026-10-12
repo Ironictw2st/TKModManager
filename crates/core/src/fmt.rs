@@ -1,6 +1,7 @@
-//! Small display helpers shared by the UI (no locale dependencies).
+//! Small display helpers shared by the UI. Month names and the date order come from the
+//! translation files.
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+use crate::t;
 
 /// (year, month 1-12, day) of a unix timestamp, UTC. Howard Hinnant's civil-from-days.
 pub fn ymd(unix_seconds: u64) -> (i64, u32, u32) {
@@ -22,7 +23,8 @@ pub fn format_date(unix_seconds: u64) -> String {
         return String::new();
     }
     let (y, m, d) = ymd(unix_seconds);
-    format!("{} {}, {}", MONTHS[(m - 1) as usize], d, y)
+    let month = crate::i18n::tr(&format!("month-{m}"), None);
+    t!("date", month = month, day = d, year = y)
 }
 
 /// Unix seconds of midnight UTC on y-m-d (inverse of `ymd`).

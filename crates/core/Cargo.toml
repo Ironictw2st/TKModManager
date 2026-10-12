@@ -25,6 +25,10 @@ unrar = "0.5"
 # Desktop shortcuts (.lnk) for "play this profile".
 mslnk = "0.1"
 # Process spawn / window wait / DLL injection primitives shared with the script extender.
+# UI translations: Fluent (.ftl) files in locales/<language>/, compiled in by build.rs.
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = "0.9"
 inject_core = { git = "https://github.com/Ironictw2st/TK-ScriptExtender", tag = "v0.17.0" }
 
 [dev-dependencies]

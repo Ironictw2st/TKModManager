@@ -9,10 +9,21 @@ use tkmm_core::cli::{self, StartupArgs};
 
 const PORT: u16 = 47_811;
 const MAGIC: &str = "TKMM1";
+/// Passed by `app::restart`: the old copy is still quitting, so wait for its port instead of
+/// handing it our command line.
+pub const RESTART_FLAG: &str = "--restarted";
 
 /// Ok(listener) when we are the first instance; Err(()) after forwarding `argv` to the running one.
 pub fn acquire(argv: &[String]) -> Result<TcpListener, ()> {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, PORT));
+    if argv.iter().any(|a| a == RESTART_FLAG) {
+        for _ in 0..50 {
+            if let Ok(l) = TcpListener::bind(addr) {
+                return Ok(l);
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
     match TcpListener::bind(addr) {
         Ok(l) => Ok(l),
         Err(_) => {

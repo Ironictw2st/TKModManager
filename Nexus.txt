@@ -1,0 +1,10 @@
+Page: https://www.nexusmods.com/totalwarthreekingdoms/mods/249?tab=files
+
+Mod Manager API:
+File ID: 8005809
+Unique Mod ID: 12227771891961
+
+Script ID:
+
+File ID: 8005824
+Unique Mod ID: 12227771891961

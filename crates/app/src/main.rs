@@ -1,12 +1,16 @@
 #![windows_subsystem = "windows"]
 //! TK Mod Manager — Qt Widgets UI over `tkmm_core`.
 
+#[macro_use]
+extern crate tkmm_core;
+
 mod app;
 mod details;
 mod dialogs;
 mod events;
 mod icons;
 mod jobs;
+mod language;
 mod launch_panel;
 mod mod_list;
 mod se_settings;
@@ -36,7 +40,11 @@ fn install_panic_hook() {
         let text = format!(
             "TK Mod Manager {} crashed at {} (unix {secs})\nthread: {}\npanic: {msg}\nat: {place}\n\n{}\n",
             env!("CARGO_PKG_VERSION"),
-            tkmm_core::fmt::format_date(secs),
+            {
+                // crash.log is read by the developer: keep it English whatever the UI language.
+                let (y, m, d) = tkmm_core::fmt::ymd(secs);
+                format!("{y}-{m:02}-{d:02}")
+            },
             std::thread::current().name().unwrap_or("?"),
             std::backtrace::Backtrace::force_capture()
         );
@@ -52,6 +60,8 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     // Helper mode for "Force update": talk to Steam, report on stdout, exit. No UI.
     if argv.get(1).map(String::as_str) == Some(tkmm_core::steam_ugc::HELPER_FLAG) {
+        // Its messages are shown by the main window: same language.
+        tkmm_core::i18n::init(&AppContext::load().settings().language);
         let ids = tkmm_core::steam_ugc::parse_ids(argv.get(2).map(String::as_str).unwrap_or(""));
         std::process::exit(tkmm_core::steam_ugc::run_helper(&ids));
     }
@@ -71,6 +81,7 @@ fn main() {
         qt_core::QCoreApplication::set_application_name(&qs("TK Mod Manager"));
 
         let ctx = AppContext::load();
+        language::choose_and_load(&ctx);
         tkmm_core::dll::migrate_default_se_config(&ctx);
         let (bus, rx) = events::Bus::new();
         single_instance::listen(listener, bus.clone());

@@ -1053,12 +1053,7 @@ impl App {
             }
             UiEvent::UpdateProgress(f) => self.update_label.set_text(&qs(format!("Downloading update… {}%", (f * 100.0).round()))),
             UiEvent::UpdateInstalled(r) => match r {
-                Ok(()) => {
-                    if let Ok(exe) = std::env::current_exe() {
-                        let _ = std::process::Command::new(exe).spawn();
-                    }
-                    qt_core::QCoreApplication::quit();
-                }
+                Ok(()) => restart(),
                 Err(e) => {
                     self.update_btn.set_enabled(true);
                     self.update_label.set_text(&qs("Update failed"));
@@ -1204,4 +1199,12 @@ impl App {
     pub unsafe fn ask_yes_no(&self, title: &str, text: &str) -> bool {
         QMessageBox::question_q_widget2_q_string(&self.window, &qs(title), &qs(text)) == StandardButton::Yes
     }
+}
+
+/// Start a fresh copy of the app and quit this one (after an update or a language change).
+pub fn restart() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe).arg(crate::single_instance::RESTART_FLAG).spawn();
+    }
+    unsafe { qt_core::QCoreApplication::quit() };
 }

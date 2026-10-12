@@ -53,6 +53,9 @@ pub struct Settings {
     /// Script-extender settings for profiles without their own. None = not set up yet: taken
     /// from an existing `dll\script_extender.cfg` (`dll::default_se_config`).
     pub se_config_default: Option<crate::se_config::SeConfig>,
+    /// UI language: a folder name under `locales/` ("en", "de", "pt-BR"). "" = not chosen yet,
+    /// so the first start asks.
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -81,6 +84,7 @@ impl Default for Settings {
             nexus_api_key: String::new(),
             last_crash_seen: 0,
             se_config_default: None,
+            language: String::new(),
         }
     }
 }

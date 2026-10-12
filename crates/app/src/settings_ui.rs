@@ -48,6 +48,7 @@ pub struct SettingsUi {
     ws_updates: QBox<QCheckBox>,
     cache_hours: QBox<QSpinBox>,
     density: QBox<QComboBox>,
+    language: QBox<QComboBox>,
     // nexus
     nexus_key: QBox<QLineEdit>,
     nexus_save: QBox<QPushButton>,
@@ -250,6 +251,13 @@ impl SettingsUi {
             let density = crate::mod_list::density_combo();
             dr.add_widget(&density);
             dr.add_stretch_1a(1);
+            let lr = QHBoxLayout::new_0a();
+            b.add_layout_1a(&lr);
+            lr.add_widget(QLabel::from_q_string(&qs(t!("settings-language"))).into_ptr());
+            let language = crate::language::combo();
+            language.set_tool_tip(&qs(t!("settings-language-tip")));
+            lr.add_widget(&language);
+            lr.add_stretch_1a(1);
             b.add_widget(&label("The look follows the Windows light / dark setting."));
             v.add_widget(&g);
 
@@ -447,6 +455,7 @@ impl SettingsUi {
                 ws_updates,
                 cache_hours,
                 density,
+                language,
                 nexus_key,
                 nexus_save,
                 nexus_get_key,
@@ -709,6 +718,18 @@ impl SettingsUi {
             let v = this.settings.app_channel.current_data_0a().to_string().to_std_string();
             SettingsUi::update_settings(&this, |s| s.app_channel = v.clone());
             this.check_app_update(true);
+        }));
+        let this = app.clone();
+        self.language.activated().connect(&SlotOfInt::new(w, move |_| {
+            let v = this.settings.language.current_data_0a().to_string().to_std_string();
+            if v == this.ctx.settings().language {
+                return;
+            }
+            SettingsUi::update_settings(&this, |s| s.language = v.clone());
+            // Every widget's text is set when it is built, so a new language needs a restart.
+            if crate::dialogs::confirm(&this.window, &t!("language-restart-title"), &t!("language-restart-text")) {
+                crate::app::restart();
+            }
         }));
         let this = app.clone();
         self.dll_channel.activated().connect(&SlotOfInt::new(w, move |_| {
@@ -1449,6 +1470,8 @@ impl SettingsUi {
         let ac = self.app_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.app_channel)));
         self.app_channel.set_current_index(ac.max(0));
         self.app_channel.set_enabled(s.check_app_updates);
+        let li = self.language.find_data_1a(&QVariant::from_q_string(&qs(tkmm_core::i18n::current())));
+        self.language.set_current_index(li.max(0));
 
         self.dll_list.clear();
         if let Some(d) = &st.dll {

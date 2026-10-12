@@ -14,6 +14,7 @@ pub mod fingerprint;
 pub mod groups;
 pub mod hash;
 pub mod history;
+pub mod i18n;
 pub mod json_store;
 pub mod launch;
 pub mod logs;
