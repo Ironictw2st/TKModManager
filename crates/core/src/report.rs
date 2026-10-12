@@ -447,7 +447,7 @@ pub fn save(text: &str) -> Result<PathBuf, String> {
     let (y, m, d) = ymd(now);
     let s = now % 86_400;
     let path = dir.join(format!("TKMM mod report {y}-{m:02}-{d:02} {:02}{:02}{:02}.txt", s / 3600, s % 3600 / 60, s % 60));
-    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&path, text).map_err(|e| crate::t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
     Ok(path)
 }
 
@@ -578,13 +578,13 @@ pub fn send_to_discord(ctx: &AppContext, profile: &Profile, webhook: &str, note:
         if let Some((_, _, z)) = with {
             form = form.part("files[1]", Part::bytes(z.clone()).file_name("crash_dump.zip").mime_str("application/zip").map_err(|e| e.to_string())?);
         }
-        let resp = client.post(format!("{webhook}?wait=true")).multipart(form).send().map_err(|e| format!("cannot reach Discord: {e}"))?;
+        let resp = client.post(format!("{webhook}?wait=true")).multipart(form).send().map_err(|e| crate::t!("report-unreachable", error = e.to_string()))?;
         let status = resp.status();
         if status.is_success() {
-            return Ok(if with.is_some() { "Report and crash dump sent.".into() } else { "Report sent.".into() });
+            return Ok(if with.is_some() { crate::t!("report-sent-with-dump") } else { crate::t!("report-sent") });
         }
         let body = resp.text().unwrap_or_default();
-        last_err = format!("Discord refused the report ({status}): {}", clip(&body, 300));
+        last_err = crate::t!("report-refused", status = status.to_string(), message = clip(&body, 300));
         if status.as_u16() != 413 && !body.contains("40005") {
             break;
         }

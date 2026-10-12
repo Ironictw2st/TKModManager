@@ -375,14 +375,17 @@ mod tests {
                     let code: Vec<&str> = file.lines().filter(|l| !l.trim_start().starts_with("//")).collect();
                     let text = code.join("
 ");
-                    for (i, _) in text.match_indices("t!(\"") {
-                        // Not the end of another macro name (`format!("`, `print!("`).
+                    for (i, _) in text.match_indices("t!(") {
+                        // Not the end of another macro name (`format!(`, `print!(`).
                         if text[..i].chars().last().is_some_and(|c| c.is_alphanumeric() || c == '_') {
                             continue;
                         }
-                        let rest = &text[i + 4..];
-                        if let Some(end) = rest.find('"') {
-                            keys.insert(rest[..end].to_string());
+                        // rustfmt may put the key on the next line.
+                        let Some(rest) = text[i + 3..].trim_start().strip_prefix('"') else { continue };
+                        let key = &rest[..rest.find('"').unwrap_or(0)];
+                        // A Fluent id; anything else is this scanner's own string literal.
+                        if key.starts_with(|c: char| c.is_ascii_alphabetic()) && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                            keys.insert(key.to_string());
                         }
                     }
                 }

@@ -7,6 +7,7 @@
 use crate::fingerprint::{self, ExeFingerprint};
 use crate::paths;
 use crate::se_config::SeConfig;
+use crate::t;
 use crate::context::AppContext;
 use crate::update::{download_bytes, download_to, fetch_releases, pick_release, Release};
 use serde::{Deserialize, Serialize};
@@ -211,14 +212,14 @@ pub fn dll_status(ctx: &AppContext) -> DllStatus {
 /// Blocking (network).
 pub fn dll_check_update(ctx: &AppContext) -> Result<RemoteDll, String> {
     let allow_pre = ctx.settings().dll_channel == "prerelease";
-    let rel = pick_release(fetch_releases(OWNER, REPO)?, allow_pre).ok_or("no release published yet")?;
+    let rel = pick_release(fetch_releases(OWNER, REPO)?, allow_pre).ok_or_else(|| t!("err-no-release"))?;
     remote_from(rel)
 }
 
 fn remote_from(rel: Release) -> Result<RemoteDll, String> {
-    let dll_url = rel.asset_url(DLL_NAME).ok_or_else(|| format!("release has no {DLL_NAME}"))?.to_string();
+    let dll_url = rel.asset_url(DLL_NAME).ok_or_else(|| t!("err-release-missing-asset", file = DLL_NAME))?.to_string();
     let manifest_url =
-        rel.asset_url(MANIFEST_NAME).ok_or_else(|| format!("release has no {MANIFEST_NAME}"))?.to_string();
+        rel.asset_url(MANIFEST_NAME).ok_or_else(|| t!("err-release-missing-asset", file = MANIFEST_NAME))?.to_string();
     let installed = dll_root().join(&rel.version).join(DLL_NAME).is_file();
     Ok(RemoteDll {
         version: rel.version,
@@ -236,7 +237,7 @@ fn remote_from(rel: Release) -> Result<RemoteDll, String> {
 pub fn dll_catalog(ctx: &AppContext) -> Result<Vec<CatalogEntry>, String> {
     let mut remotes: Vec<RemoteDll> = fetch_releases(OWNER, REPO)?.into_iter().filter_map(|r| remote_from(r).ok()).collect();
     if remotes.is_empty() {
-        return Err("no release published yet".into());
+        return Err(t!("err-no-release"));
     }
     remotes.sort_by(|a, b| version_key(&b.version).cmp(&version_key(&a.version)));
     let p = ctx.game_paths();
@@ -276,23 +277,23 @@ fn install_staged(staging: &Path, dir: &Path, dll_url: &str, manifest_url: &str,
     let manifest: Manifest = serde_json::from_slice(
         &std::fs::read(staging.join(MANIFEST_NAME)).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| format!("bad manifest.json: {e}"))?;
+    .map_err(|e| t!("err-bad-manifest", error = e.to_string()))?;
     download_to(dll_url, &staging.join(DLL_NAME), progress)?;
     if !manifest.sha256.is_empty() {
         let got = sha256_of(&staging.join(DLL_NAME))?;
         if !got.eq_ignore_ascii_case(manifest.sha256.trim()) {
-            return Err(format!("sha256 mismatch: manifest {} vs download {got}", manifest.sha256));
+            return Err(t!("err-sha256-mismatch", expected = &manifest.sha256, actual = got));
         }
     }
     if dir.exists() {
         // Re-download over an existing (possibly loaded) version: keep the old folder if the
         // game is running; otherwise replace it.
         if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
-            return Err("that DLL version is installed and the game is running; quit the game first".into());
+            return Err(t!("err-dll-in-use"));
         }
-        std::fs::remove_dir_all(dir).map_err(|e| format!("replace {}: {e}", dir.display()))?;
+        std::fs::remove_dir_all(dir).map_err(|e| t!("err-replace-folder", path = dir.display().to_string(), error = e.to_string()))?;
     }
-    std::fs::rename(staging, dir).map_err(|e| format!("finalise {}: {e}", dir.display()))
+    std::fs::rename(staging, dir).map_err(|e| t!("err-replace-folder", path = dir.display().to_string(), error = e.to_string()))
 }
 
 /// Blocking (network). `progress` receives 0..1 per file.
@@ -300,12 +301,12 @@ pub fn dll_install(ctx: &AppContext, remote: &RemoteDll, progress: &dyn Fn(f64))
     let (version, dll_url, manifest_url) = (remote.version.clone(), remote.dll_url.clone(), remote.manifest_url.clone());
     let version = version.trim_start_matches('v').to_string();
     if version.is_empty() || version.contains(['/', '\\']) || version.contains("..") {
-        return Err("bad version".into());
+        return Err(t!("err-bad-version"));
     }
     let dir = dll_root().join(&version);
     let staging = dll_root().join(format!("{version}{PARTIAL_SUFFIX}"));
     let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
+    std::fs::create_dir_all(&staging).map_err(|e| t!("err-create-folder", path = staging.display().to_string(), error = e.to_string()))?;
 
     // Every failure below has to take the staging folder with it. A half-downloaded, unverified
     // DLL left on disk used to be listed as a real installed version and could be injected.
@@ -320,27 +321,27 @@ pub fn dll_install(ctx: &AppContext, remote: &RemoteDll, progress: &dyn Fn(f64))
     Ok(list_installed(fp.as_ref())
         .into_iter()
         .find(|d| d.version == version)
-        .ok_or("installed folder not found after download")?)
+        .ok_or_else(|| t!("err-dll-not-found-after-download"))?)
 }
 
 /// Register a DLL that is already on disk (e.g. a local build) as version `version`,
 /// writing a manifest pinned to the current game fingerprint. The file is copied.
 pub fn dll_import_local(ctx: &AppContext, path: &str, version: &str) -> Result<InstalledDll, String> {
     let version = version.trim().trim_start_matches('v').to_string();
-    semver::Version::parse(&version).map_err(|e| format!("version must be semver (e.g. 0.15.0): {e}"))?;
+    semver::Version::parse(&version).map_err(|e| t!("err-version-not-semver", error = e.to_string()))?;
     let src = PathBuf::from(&path);
     if !src.is_file() {
-        return Err(format!("{path} is not a file"));
+        return Err(t!("err-not-a-file", path = path));
     }
     let p = ctx.game_paths();
-    let exe = p.exe.as_deref().ok_or("game not found")?;
+    let exe = p.exe.as_deref().ok_or_else(|| t!("err-game-not-found"))?;
     let fp = fingerprint::read(Path::new(exe))?;
     let dir = dll_root().join(&version);
     if dir.join(DLL_NAME).is_file() && !inject_core::find_pids(paths::EXE_NAME).is_empty() {
-        return Err("that version is installed and the game is running; quit the game first".into());
+        return Err(t!("err-dll-in-use"));
     }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    std::fs::copy(&src, dir.join(DLL_NAME)).map_err(|e| format!("copy: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| t!("err-create-folder", path = dir.display().to_string(), error = e.to_string()))?;
+    std::fs::copy(&src, dir.join(DLL_NAME)).map_err(|e| t!("err-copy-file", path = path, error = e.to_string()))?;
     let manifest = Manifest {
         version: version.clone(),
         game_exe_version: p.exe_version.clone().unwrap_or_default(),
@@ -353,17 +354,17 @@ pub fn dll_import_local(ctx: &AppContext, path: &str, version: &str) -> Result<I
     list_installed(Some(&fp))
         .into_iter()
         .find(|d| d.version == version)
-        .ok_or_else(|| "import failed".to_string())
+        .ok_or_else(|| t!("err-dll-import-failed"))
 }
 
 /// Delete an installed version folder (refused while the game runs).
 pub fn dll_remove(version: String) -> Result<(), String> {
     if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
-        return Err("quit the game before removing a DLL version".into());
+        return Err(t!("err-dll-remove-running"));
     }
     let dir = dll_root().join(version.trim_start_matches('v'));
     if !dir.join(DLL_NAME).is_file() {
-        return Err("no such version".into());
+        return Err(t!("err-dll-no-such-version"));
     }
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
     if pinned_version().as_deref() == Some(version.trim_start_matches('v')) {

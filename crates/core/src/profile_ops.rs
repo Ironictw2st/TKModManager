@@ -4,6 +4,7 @@
 use crate::fmt::compare_pack_names;
 use crate::packs::ModEntry;
 use crate::profiles::{Profile, ProfileEntry, ProfilesDoc};
+use crate::t;
 use crate::workshop::WorkshopItem;
 use std::collections::{HashMap, HashSet};
 
@@ -197,10 +198,10 @@ pub fn active_mut(doc: &mut ProfilesDoc) -> Option<&mut Profile> {
 pub fn create(doc: &mut ProfilesDoc, name: &str, from: Option<&Profile>, mods: &[ModEntry]) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("The profile name is empty".into());
+        return Err(t!("err-profile-name-empty"));
     }
     if doc.profiles.iter().any(|p| p.name == name) {
-        return Err(format!("A profile named \"{name}\" already exists"));
+        return Err(t!("err-profile-exists", name = name));
     }
     let profile = match from {
         Some(p) => Profile { name: name.into(), last_played: None, ..p.clone() },
@@ -218,12 +219,12 @@ pub fn create(doc: &mut ProfilesDoc, name: &str, from: Option<&Profile>, mods: &
 pub fn rename(doc: &mut ProfilesDoc, old: &str, new: &str) -> Result<(), String> {
     let new = new.trim();
     if new.is_empty() {
-        return Err("The profile name is empty".into());
+        return Err(t!("err-profile-name-empty"));
     }
     if old != new && doc.profiles.iter().any(|p| p.name == new) {
-        return Err(format!("A profile named \"{new}\" already exists"));
+        return Err(t!("err-profile-exists", name = new));
     }
-    let p = doc.profiles.iter_mut().find(|p| p.name == old).ok_or("No such profile")?;
+    let p = doc.profiles.iter_mut().find(|p| p.name == old).ok_or_else(|| t!("err-profile-missing"))?;
     p.name = new.into();
     if doc.active == old {
         doc.active = new.into();
@@ -233,7 +234,7 @@ pub fn rename(doc: &mut ProfilesDoc, old: &str, new: &str) -> Result<(), String>
 
 pub fn delete(doc: &mut ProfilesDoc, name: &str) -> Result<(), String> {
     if doc.profiles.len() <= 1 {
-        return Err("Cannot delete the last profile".into());
+        return Err(t!("err-profile-last"));
     }
     doc.profiles.retain(|p| p.name != name);
     if doc.active == name {

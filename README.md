@@ -129,6 +129,12 @@ compare as dotted versions, so `0.30` is newer than `0.28`. A maximum of `0.28` 
 0.28.x release. The manager warns before launch when the installed DLL falls outside the range.
 The game never loads the `SE/` folder, so the file is harmless.
 
+## Translations
+
+The app can be shown in other languages: pick one on first start or under Settings > Behaviour >
+Language. Want to add or improve one? It's one folder of plain-text files; see
+[TRANSLATING.md](TRANSLATING.md).
+
 ## Development
 
 The workspace has two crates:

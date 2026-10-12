@@ -91,7 +91,7 @@ impl Form {
         }
         let other: Vec<String> = self.base.borrow().unknown().map(|(k, v)| format!("{k}={v}")).collect();
         self.other.set_visible(!other.is_empty());
-        self.other.set_text(&qs(format!("Other keys, kept as they are (edit them with \"Edit as text…\"): {}", other.join(", "))));
+        self.other.set_text(&qs(t!("se-ui-other-keys", keys = other.join(", "))));
     }
 }
 
@@ -115,15 +115,11 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
     let profile_mode = matches!(target, Target::Profile);
 
     let d = QDialog::new_1a(&app.window);
-    d.set_window_title(&qs(if profile_mode { format!("Script extender settings: {profile_name}") } else { "Default script extender settings".to_string() }));
+    d.set_window_title(&qs(if profile_mode { t!("se-ui-title-profile", profile = &profile_name) } else { t!("se-ui-title-default") }));
     d.resize_2a(720, 680);
     let l = QVBoxLayout::new_1a(&d);
-    l.add_widget(&label(if profile_mode {
-        "Settings the script extender reads when this profile starts the game (script_extender.cfg). Changes apply at the next launch."
-    } else {
-        "Used by every profile that has no settings of its own. Changes apply at the next launch."
-    }));
-    let use_default = QCheckBox::from_q_string(&qs("Use the default settings (Settings > Script extender)"));
+    l.add_widget(&label(&if profile_mode { t!("se-ui-intro-profile") } else { t!("se-ui-intro-default") }));
+    let use_default = QCheckBox::from_q_string(&qs(t!("se-ui-use-default")));
     use_default.set_visible(profile_mode);
     use_default.set_checked(profile_mode && own.is_none());
     l.add_widget(&use_default);
@@ -135,20 +131,21 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
     let bl = QVBoxLayout::new_1a(&body);
     let mut rows = Vec::new();
     for (group, title, note) in [
-        (Group::Sim, "Multiplayer: every player must match", "These change the campaign itself. Every value is part of the version lock in the main-menu build text, so players with different values cannot see each other's lobbies. Profile export carries them, and the co-op sync check compares them."),
-        (Group::Local, "Local", "Performance and diagnostics on this PC only; may differ between players."),
-        (Group::Menu, "Main-menu text", "Placeholders: {game} = the game's own text, {version} = script extender version, {sync} = multiplayer settings hash. The [se version.sync] tag is always added."),
+        (Group::Sim, t!("se-ui-group-sim"), t!("se-ui-group-sim-note")),
+        (Group::Local, t!("se-ui-group-local"), t!("se-ui-group-local-note")),
+        // The placeholders are typed into script_extender.cfg as they are: not translated.
+        (Group::Menu, t!("se-ui-group-menu"), t!("se-ui-group-menu-note", game = "{game}", version = "{version}", sync = "{sync}")),
     ] {
         let g = QGroupBox::from_q_string(&qs(title));
         bl.add_widget(&g);
         let gl = QGridLayout::new_1a(&g);
         gl.set_column_stretch(1, 1);
-        let n = label(note);
+        let n = label(&note);
         crate::details::colored(&n, &icons::grey());
         gl.add_widget_5a(&n, 0, 0, 1, 2);
         let mut row = 1;
         for k in KEYS.iter().filter(|k| k.group == group) {
-            let caption = QLabel::from_q_string(&qs(k.label));
+            let caption = QLabel::from_q_string(&qs(k.label()));
             let ctrl = match k.kind {
                 Kind::Bool => Ctrl::Check(QCheckBox::new()),
                 Kind::Int { min, max } => {
@@ -158,8 +155,8 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
                 }
                 Kind::Choice(opts) => {
                     let c = QComboBox::new_0a();
-                    for (v, t) in opts {
-                        c.add_item_q_string_q_variant(&qs(format!("{t} ({v})")), &QVariant::from_q_string(&qs(*v)));
+                    for v in opts {
+                        c.add_item_q_string_q_variant(&qs(format!("{} ({v})", k.choice_text(v))), &QVariant::from_q_string(&qs(*v)));
                     }
                     Ctrl::Combo(c)
                 }
@@ -169,7 +166,7 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
                     Ctrl::Line(e)
                 }
             };
-            let tip = qs(format!("{}\n\n{}  (default {})", k.help, k.key, k.default));
+            let tip = qs(format!("{}\n\n{}", k.help(), t!("se-ui-key-tip", key = k.key, default = k.default)));
             caption.set_tool_tip(&tip);
             ctrl.widget().set_tool_tip(&tip);
             gl.add_widget_3a(&caption, row, 0);
@@ -213,8 +210,8 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
     }
 
     let buttons = QDialogButtonBox::new();
-    let reset = QPushButton::from_q_string(&qs("Reset to defaults"));
-    let as_text = QPushButton::from_q_string(&qs("Edit as text…"));
+    let reset = QPushButton::from_q_string(&qs(t!("se-ui-reset")));
+    let as_text = QPushButton::from_q_string(&qs(t!("se-ui-edit-text")));
     buttons.add_button_q_abstract_button_button_role(&reset, ButtonRole::ResetRole);
     buttons.add_button_q_abstract_button_button_role(&as_text, ButtonRole::ActionRole);
     let save = buttons.add_button_standard_button(BoxButton::Save);
@@ -232,7 +229,7 @@ pub unsafe fn open(app: &Rc<App>, target: Target) {
         let (f, ud, a) = (form.clone(), use_default.as_ptr(), app.clone());
         as_text.clicked().connect(&SlotNoArgs::new(&d, move || {
             let text = f.read().render();
-            if let Some(t) = crate::dialogs::edit_text(&a.window, "script_extender.cfg", "One key=value per line; # starts a comment. Keys the manager does not know are kept.", &text) {
+            if let Some(t) = crate::dialogs::edit_text(&a.window, "script_extender.cfg", &t!("se-ui-edit-intro"), &text) {
                 ud.set_checked(false);
                 f.load(&SeConfig::parse(&t));
             }

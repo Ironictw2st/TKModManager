@@ -33,20 +33,20 @@ impl ConflictsUi {
             v.set_contents_margins_4a(0, 0, 0, 0);
             let bar = QHBoxLayout::new_0a();
             let filter = QLineEdit::new();
-            filter.set_placeholder_text(&qs("Filter paths (e.g. db/land_units)"));
+            filter.set_placeholder_text(&qs(t!("tabs-conflicts-filter")));
             filter.set_clear_button_enabled(true);
             bar.add_widget_2a(&filter, 1);
             let info = QLabel::new();
             bar.add_widget(&info);
-            let rescan = QPushButton::from_q_string(&qs("Rescan"));
+            let rescan = QPushButton::from_q_string(&qs(t!("tabs-conflicts-rescan")));
             bar.add_widget(&rescan);
             v.add_layout_1a(&bar);
             let split = QSplitter::new();
             let packs = QListWidget::new_0a();
             let table = QTreeWidget::new_0a();
             let h = QListOfQString::new_0a();
-            h.append_q_string(&qs("File"));
-            h.append_q_string(&qs("Provided by, in load order (last one wins)"));
+            h.append_q_string(&qs(t!("tabs-conflicts-col-file")));
+            h.append_q_string(&qs(t!("tabs-conflicts-col-packs")));
             table.set_header_labels(&h);
             table.set_root_is_decorated(false);
             table.set_uniform_row_heights(true);
@@ -73,14 +73,14 @@ impl ConflictsUi {
     pub unsafe fn set_busy(&self, busy: bool) {
         self.rescan.set_enabled(!busy);
         if busy {
-            self.info.set_text(&qs("Scanning…"));
+            self.info.set_text(&qs(t!("tabs-conflicts-scanning")));
         }
     }
 
     pub unsafe fn show_report(&self, app: &Rc<App>, r: ConflictReport) {
         self.set_busy(false);
         self.packs.clear();
-        let all = QListWidgetItem::from_q_string(&qs(format!("All ({} shared files)", r.conflicts.len())));
+        let all = QListWidgetItem::from_q_string(&qs(t!("tabs-conflicts-all", count = r.conflicts.len())));
         all.set_data(qt_core::ItemDataRole::UserRole.to_int(), &QVariant::from_q_string(&qs("")));
         self.packs.add_item_q_list_widget_item(all.into_ptr());
         let mut per: Vec<(&String, &usize)> = r.per_pack.iter().collect();
@@ -94,7 +94,7 @@ impl ConflictsUi {
                 self.packs.add_item_q_list_widget_item(it.into_ptr());
             }
             for (k, e) in &r.errors {
-                let it = QListWidgetItem::from_q_string(&qs(format!("⚠ {}: unreadable", st.title_of(k))));
+                let it = QListWidgetItem::from_q_string(&qs(t!("tabs-conflicts-unreadable", pack = st.title_of(k))));
                 it.set_tool_tip(&qs(e));
                 it.set_foreground(&QBrush::from_q_color(&icons::red()));
                 self.packs.add_item_q_list_widget_item(it.into_ptr());
@@ -128,10 +128,10 @@ impl ConflictsUi {
             it.set_text(0, &qs(&c.path));
             let names: Vec<String> = c.packs.iter().map(|k| st.title_of(k)).collect();
             it.set_text(1, &qs(names.join("  →  ")));
-            it.set_tool_tip(1, &qs(format!("Winner: {}", names.last().cloned().unwrap_or_default())));
+            it.set_tool_tip(1, &qs(t!("tabs-conflicts-winner", pack = names.last().cloned().unwrap_or_default())));
             self.table.add_top_level_item(it.into_ptr());
         }
-        self.info.set_text(&qs(format!("{shown} shared files")));
+        self.info.set_text(&qs(t!("tabs-conflicts-shown", count = shown)));
     }
 }
 
@@ -156,13 +156,13 @@ impl LogsUi {
             source.set_minimum_width(240);
             bar.add_widget(&source);
             let filter = QLineEdit::new();
-            filter.set_placeholder_text(&qs("Filter lines (e.g. error)"));
+            filter.set_placeholder_text(&qs(t!("tabs-logs-filter")));
             filter.set_clear_button_enabled(true);
             bar.add_widget_2a(&filter, 1);
-            let follow = QCheckBox::from_q_string(&qs("Follow"));
+            let follow = QCheckBox::from_q_string(&qs(t!("tabs-logs-follow")));
             follow.set_checked(true);
             bar.add_widget(&follow);
-            let show_file = QPushButton::from_q_string(&qs("Show file"));
+            let show_file = QPushButton::from_q_string(&qs(t!("tabs-logs-show-file")));
             bar.add_widget(&show_file);
             v.add_layout_1a(&bar);
             let text = QPlainTextEdit::new();
@@ -171,7 +171,7 @@ impl LogsUi {
             let f = qt_gui::QFont::new_copy(text.font());
             f.set_family(&qs("Consolas"));
             text.set_font(&f);
-            text.set_placeholder_text(&qs("Logs appear here once the game has run: the script extender log, lua_mod_log.txt, and the newest script / ironic logs."));
+            text.set_placeholder_text(&qs(t!("tabs-logs-placeholder")));
             v.add_widget_2a(&text, 1);
             LogsUi { root, source, filter, follow, text, show_file, last: RefCell::new(String::new()) }
         }
@@ -201,16 +201,20 @@ impl LogsUi {
     pub unsafe fn poll(&self, app: &Rc<App>) {
         let sources = logs::log_sources(&app.ctx);
         let current = self.source.current_data_0a().to_string().to_std_string();
+        // The source id ("script_log", ...) sits next to the path: the newest log's path
+        // changes when the game writes a new one, and the label is translated text.
+        let id_role = qt_core::ItemDataRole::UserRole.to_int() + 1;
         let current_id = {
             let i = self.source.current_index();
-            if i >= 0 { self.source.item_text(i).to_std_string() } else { String::new() }
+            if i >= 0 { self.source.item_data_2a(i, id_role).to_string().to_std_string() } else { String::new() }
         };
         app.suppress.set(true);
         self.source.clear();
         for s in &sources {
             self.source.add_item_q_string_q_variant(&qs(&s.label), &QVariant::from_q_string(&qs(&s.path)));
+            self.source.set_item_data_3a(self.source.count() - 1, &QVariant::from_q_string(&qs(&s.id)), id_role);
         }
-        let mut idx = sources.iter().position(|s| s.path == current).or_else(|| sources.iter().position(|s| s.label == current_id)).unwrap_or(0) as i32;
+        let mut idx = sources.iter().position(|s| s.path == current).or_else(|| sources.iter().position(|s| s.id == current_id)).unwrap_or(0) as i32;
         if sources.is_empty() {
             idx = -1;
         }
@@ -250,30 +254,34 @@ pub unsafe fn crash_dialog(app: &Rc<App>, id: Option<u64>) {
             format!("{}\n{}", s.label, lines[lines.len().saturating_sub(40)..].join("\n"))
         })
     };
-    crate::dialogs::custom(&app.window, "Abnormal exit", 760, 560, |l, _| {
-        l.add_widget(&label("An exit code other than 0 usually means a crash, but it is also what you get when the game is closed from Task Manager."));
+    crate::dialogs::custom(&app.window, &t!("tabs-crash-title"), 760, 560, |l, _| {
+        l.add_widget(&label(&t!("tabs-crash-intro")));
         match &report {
-            None => l.add_widget(&label("No launch record found.")),
+            None => l.add_widget(&label(&t!("tabs-crash-no-record"))),
             Some(r) => {
                 let head = label(&match &r.baseline {
-                    Some(b) => format!("Changed since the last clean launch ({}, {})", format_date(b.started), b.profile),
-                    None => "No earlier launch that exited cleanly is on record yet.".to_string(),
+                    Some(b) => t!("tabs-crash-changed-since", date = format_date(b.started), profile = &b.profile),
+                    None => t!("tabs-crash-no-baseline"),
                 });
                 crate::details::bold(&head);
                 l.add_widget(&head);
                 if let Some(d) = &r.diff {
                     if d.added.is_empty() && d.removed.is_empty() && d.changed.is_empty() && !d.reordered {
-                        l.add_widget(&label("Nothing: same packs, same files, same order."));
+                        l.add_widget(&label(&t!("tabs-crash-nothing-changed")));
                     }
-                    for (items, what, c) in [(&d.added, "added", icons::green()), (&d.changed, "file changed", icons::amber()), (&d.removed, "removed", icons::red())] {
+                    for (items, what, c) in [(&d.added, "tabs-crash-added", icons::green()), (&d.changed, "tabs-crash-file-changed", icons::amber()), (&d.removed, "tabs-crash-removed", icons::red())] {
                         for f in items.iter() {
-                            let w = label(&format!("{what}: {f}"));
+                            let w = label(&match what {
+                                "tabs-crash-added" => t!("tabs-crash-added", pack = f),
+                                "tabs-crash-file-changed" => t!("tabs-crash-file-changed", pack = f),
+                                _ => t!("tabs-crash-removed", pack = f),
+                            });
                             colored(&w, &c);
                             l.add_widget(&w);
                         }
                     }
                     if d.reordered {
-                        l.add_widget(&label("order: the load order of the common packs changed"));
+                        l.add_widget(&label(&t!("tabs-crash-reordered")));
                     }
                 }
             }

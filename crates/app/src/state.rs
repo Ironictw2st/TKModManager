@@ -118,7 +118,7 @@ impl State {
             Err(e) => {
                 self.profiles = ProfilesDoc::default();
                 self.profiles_ok = false;
-                self.error = Some(format!("{e}. Fix or move that file; nothing will be saved over it until then."));
+                self.error = Some(t!("state-profiles-unreadable", error = e));
             }
         }
     }
@@ -137,13 +137,14 @@ impl State {
 
     /// Where a pack came from, telling the game's own `mods\` folder (Epic, Game Pass) apart
     /// from folders the user added.
-    pub fn source_label(&self, m: &ModEntry) -> &'static str {
+    pub fn source_label(&self, m: &ModEntry) -> String {
         match m.source {
-            ModSource::Workshop => "Workshop",
-            ModSource::Data => "data/",
-            ModSource::Folder if self.paths.mods_dir.as_deref().map(|d| d.eq_ignore_ascii_case(&m.dir)).unwrap_or(false) => "mods/",
-            ModSource::Folder => "Extra folder",
-            ModSource::Nexus => "Nexus",
+            ModSource::Workshop => t!("state-source-workshop"),
+            // Folder names in the game install: not translated.
+            ModSource::Data => "data/".to_string(),
+            ModSource::Folder if self.paths.mods_dir.as_deref().map(|d| d.eq_ignore_ascii_case(&m.dir)).unwrap_or(false) => "mods/".to_string(),
+            ModSource::Folder => t!("state-source-extra-folder"),
+            ModSource::Nexus => t!("state-source-nexus"),
         }
     }
 

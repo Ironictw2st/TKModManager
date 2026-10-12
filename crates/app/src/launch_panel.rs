@@ -53,11 +53,11 @@ pub unsafe fn refresh(app: &Rc<App>) {
 
     let waiting = app.launch_after_steam.get();
     let play = QPushButton::from_q_string(&qs(if running {
-        "Running…"
+        t!("launch-panel-running")
     } else if waiting {
-        "▶  Play without waiting"
+        t!("launch-panel-play-now")
     } else {
-        "▶  Play"
+        t!("launch-panel-play")
     }));
     play.set_minimum_height(40);
     let f = qt_gui::QFont::new_copy(play.font());
@@ -67,16 +67,16 @@ pub unsafe fn refresh(app: &Rc<App>) {
     play.set_default(true);
     play.set_enabled(!running && st.paths.game_root.is_some());
     play.set_tool_tip(&qs(if running {
-        "The game is already running".to_string()
+        t!("launch-panel-running-tip")
     } else if waiting {
-        "Steam is still updating Workshop mods; start now and some may load their old version".to_string()
+        t!("launch-panel-play-now-tip")
     } else {
-        format!("Launch {} with {enabled} mods", profile.name)
+        t!("launch-panel-play-tip", profile = &profile.name, count = enabled)
     }));
     let this = app.clone();
     play.clicked().connect(&SlotNoArgs::new(&play, move || this.launch(None)));
     v.add_widget(&play);
-    let summary = label(&format!("{} · {enabled} mods enabled", profile.name));
+    let summary = label(&t!("launch-panel-summary", profile = &profile.name, count = enabled));
     summary.set_alignment(qt_core::QFlags::from(qt_core::AlignmentFlag::AlignHCenter));
     v.add_widget(&summary);
 
@@ -84,7 +84,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     if st.installs.len() > 1 {
         let r = QHBoxLayout::new_0a();
         v.add_layout_1a(&r);
-        r.add_widget(QLabel::from_q_string(&qs("Copy")).into_ptr());
+        r.add_widget(QLabel::from_q_string(&qs(t!("launch-panel-game-copy"))).into_ptr());
         let copies = QComboBox::new_0a();
         let current = st.paths.game_root.clone().unwrap_or_default();
         for i in &st.installs {
@@ -113,7 +113,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
         let l = QVBoxLayout::new_1a(&frame);
         l.set_contents_margins_4a(8, 6, 8, 6);
         let head = label(&match p.kind {
-            SeUnmet::Off => format!("{} enabled mod{} need{} the script extender.", p.mods.len(), if p.mods.len() > 1 { "s" } else { "" }, if p.mods.len() > 1 { "" } else { "s" }),
+            SeUnmet::Off => t!("launch-panel-se-needed", count = p.mods.len()),
             _ => p.text.clone(),
         });
         colored(&head, &if p.kind == SeUnmet::Off { icons::amber() } else { icons::red() });
@@ -121,16 +121,17 @@ pub unsafe fn refresh(app: &Rc<App>) {
         fit(&head, width);
         l.add_widget(&head);
         let names = label(&{
-            let mut s = p.mods.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let s = p.mods.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
             if p.mods.len() > 3 {
-                s.push_str(&format!(" +{} more", p.mods.len() - 3));
+                t!("launch-panel-names-more", names = s, count = p.mods.len() - 3)
+            } else {
+                s
             }
-            s
         });
         names.set_tool_tip(&qs(p.mods.join("\n")));
         fit(&names, width);
         l.add_widget(&names);
-        let b = if p.kind == SeUnmet::Off { QPushButton::from_q_string(&qs("Turn on script extender")) } else { QPushButton::from_q_string(&qs("Script extender settings")) };
+        let b = if p.kind == SeUnmet::Off { QPushButton::from_q_string(&qs(t!("launch-panel-se-turn-on"))) } else { QPushButton::from_q_string(&qs(t!("launch-panel-se-settings"))) };
         let (this, kind) = (app.clone(), p.kind);
         b.set_enabled(!running);
         b.clicked().connect(&SlotNoArgs::new(&b, move || {
@@ -151,13 +152,13 @@ pub unsafe fn refresh(app: &Rc<App>) {
         frame.set_frame_shape(qt_widgets::q_frame::Shape::StyledPanel);
         let l = QVBoxLayout::new_1a(&frame);
         l.set_contents_margins_4a(8, 6, 8, 6);
-        let head = label(p.text());
+        let head = label(&p.text());
         colored(&head, &if p.blocking() { icons::red() } else { icons::amber() });
         fit(&head, width);
         l.add_widget(&head);
         let b = QPushButton::from_q_string(&qs(match p {
-            CoopProblem::PackWithoutRuntime | CoopProblem::ProxyReset | CoopProblem::DebugWithScriptExtender => "Coop settings",
-            CoopProblem::UnsupportedBuild => "About Coop",
+            CoopProblem::PackWithoutRuntime | CoopProblem::ProxyReset | CoopProblem::DebugWithScriptExtender => t!("launch-panel-coop-settings"),
+            CoopProblem::UnsupportedBuild => t!("launch-panel-coop-about"),
         }));
         let this = app.clone();
         b.clicked().connect(&SlotNoArgs::new(&b, move || match p {
@@ -171,34 +172,34 @@ pub unsafe fn refresh(app: &Rc<App>) {
     // Options.
     let se_row = QHBoxLayout::new_0a();
     v.add_layout_1a(&se_row);
-    let se = QCheckBox::from_q_string(&qs("Script extender"));
+    let se = QCheckBox::from_q_string(&qs(t!("launch-panel-se")));
     se.set_checked(profile.dll);
     se.set_enabled(!running);
-    se.set_tool_tip(&qs("Inject the script extender DLL once the main menu is up"));
+    se.set_tool_tip(&qs(t!("launch-panel-se-tip")));
     let this = app.clone();
     se.clicked().connect(&SlotOfBool::new(&se, move |on| {
         this.st.borrow_mut().update_active(|p| p.dll = on);
         this.mark(DIRTY_LAUNCH | DIRTY_LIST | DIRTY_DETAILS);
     }));
     se_row.add_widget(&se);
-    let se_cfg = QPushButton::from_q_string(&qs("Settings…"));
+    let se_cfg = QPushButton::from_q_string(&qs(t!("launch-panel-se-config")));
     se_cfg.set_flat(true);
     se_cfg.set_enabled(!running);
-    se_cfg.set_tool_tip(&qs("Script extender settings for this profile (script_extender.cfg)"));
+    se_cfg.set_tool_tip(&qs(t!("launch-panel-se-config-tip")));
     let this = app.clone();
     se_cfg.clicked().connect(&SlotNoArgs::new(&se_cfg, move || crate::se_settings::open(&this, crate::se_settings::Target::Profile)));
     se_row.add_widget(&se_cfg);
     se_row.add_stretch_1a(1);
-    let ver = QPushButton::from_q_string(&qs(have.as_ref().map(|v| format!("v{v}")).unwrap_or_else(|| "no DLL".into())));
+    let ver = QPushButton::from_q_string(&qs(have.as_ref().map(|v| format!("v{v}")).unwrap_or_else(|| t!("launch-panel-no-dll"))));
     ver.set_flat(true);
-    ver.set_tool_tip(&qs(if have.is_some() { "DLL that matches this game build" } else { "No DLL matching this game build is installed" }));
+    ver.set_tool_tip(&qs(if have.is_some() { t!("launch-panel-dll-tip") } else { t!("launch-panel-no-dll-tip") }));
     let this = app.clone();
     ver.clicked().connect(&SlotNoArgs::new(&ver, move || this.set_page(PAGE_SETTINGS)));
     se_row.add_widget(&ver);
     if profile.dll {
         if let Some(c) = &profile.se_config {
             let changed = crate::settings_ui::se_changed(c);
-            let note = label(&if changed.is_empty() { "Own settings: script extender defaults".to_string() } else { format!("Own settings: {}", changed.join(", ")) });
+            let note = label(&if changed.is_empty() { t!("launch-panel-se-own-defaults") } else { t!("launch-panel-se-own", settings = changed.join(", ")) });
             colored(&note, &icons::grey());
             fit(&note, width);
             v.add_widget(&note);
@@ -206,17 +207,17 @@ pub unsafe fn refresh(app: &Rc<App>) {
         // A cfg in the DLL's own folder wins over the one written for this profile.
         let own_cfg = st.dll.as_ref().and_then(|d| d.selected.as_ref()).and_then(|d| tkmm_core::dll::cfg_override(std::path::Path::new(&d.path)));
         if let Some(p) = own_cfg {
-            let warn = label(&format!("{} overrides these settings; delete or rename it to use them.", p.display()));
+            let warn = label(&t!("launch-panel-se-cfg-override", file = p.display().to_string()));
             colored(&warn, &icons::amber());
             fit(&warn, width);
             v.add_widget(&warn);
         }
     }
 
-    let skip = QCheckBox::from_q_string(&qs("Skip intro"));
+    let skip = QCheckBox::from_q_string(&qs(t!("launch-panel-skip-intro")));
     skip.set_checked(profile.skip_intro);
     skip.set_enabled(!running);
-    skip.set_tool_tip(&qs("Skip the two startup videos (generated options pack)"));
+    skip.set_tool_tip(&qs(t!("launch-panel-skip-intro-tip")));
     let this = app.clone();
     skip.clicked().connect(&SlotOfBool::new(&skip, move |on| {
         this.st.borrow_mut().update_active(|p| p.skip_intro = on);
@@ -225,16 +226,16 @@ pub unsafe fn refresh(app: &Rc<App>) {
 
     let save_row = QHBoxLayout::new_0a();
     v.add_layout_1a(&save_row);
-    save_row.add_widget(QLabel::from_q_string(&qs("Load save")).into_ptr());
+    save_row.add_widget(QLabel::from_q_string(&qs(t!("launch-panel-load-save"))).into_ptr());
     let saves = QComboBox::new_0a();
-    saves.add_item_q_string_q_variant(&qs(if st.saves.is_empty() { "(no saves)" } else { "(main menu)" }), &QVariant::from_q_string(&qs("")));
+    saves.add_item_q_string_q_variant(&qs(if st.saves.is_empty() { t!("launch-panel-no-saves") } else { t!("launch-panel-main-menu") }), &QVariant::from_q_string(&qs("")));
     for s in st.saves.iter().take(40) {
         saves.add_item_q_string_q_variant(&qs(format!("{} · {}", s.name, format_date(s.mtime))), &QVariant::from_q_string(&qs(&s.name)));
     }
     let cur = saves.find_data_1a(&QVariant::from_q_string(&qs(&st.load_save)));
     saves.set_current_index(cur.max(0));
     saves.set_enabled(!running && !st.saves.is_empty());
-    saves.set_tool_tip(&qs("Load this campaign save straight away"));
+    saves.set_tool_tip(&qs(t!("launch-panel-load-save-tip")));
     let (this, sp) = (app.clone(), saves.as_ptr());
     saves.activated().connect(&SlotOfInt::new(&saves, move |_| {
         this.st.borrow_mut().load_save = sp.current_data_0a().to_string().to_std_string();
@@ -242,29 +243,29 @@ pub unsafe fn refresh(app: &Rc<App>) {
     save_row.add_widget_2a(&saves, 1);
 
     if let Some((id, code)) = st.crash {
-        let l = label(&format!("Game ended abnormally (exit code {})", code.map(|c| format!("0x{c:X}")).unwrap_or_else(|| "?".into())));
+        let l = label(&t!("launch-panel-crashed", code = code.map(|c| format!("0x{c:X}")).unwrap_or_else(|| "?".into())));
         colored(&l, &icons::red());
         fit(&l, width);
         v.add_widget(&l);
         let row = QHBoxLayout::new_0a();
         v.add_layout_1a(&row);
-        let b = QPushButton::from_q_string(&qs("Details"));
+        let b = QPushButton::from_q_string(&qs(t!("launch-panel-crash-details")));
         let this = app.clone();
         b.clicked().connect(&SlotNoArgs::new(&b, move || crate::tabs::crash_dialog(&this, id)));
         row.add_widget(&b);
-        let r = QPushButton::from_q_string(&qs("Mod report"));
-        r.set_tool_tip(&qs("Write a report of every loaded mod, the game's crash files and the logs to the Desktop, to send to a mod author"));
+        let r = QPushButton::from_q_string(&qs(t!("launch-panel-mod-report")));
+        r.set_tool_tip(&qs(t!("launch-panel-mod-report-tip")));
         let this = app.clone();
         r.clicked().connect(&SlotNoArgs::new(&r, move || this.create_report()));
         row.add_widget(&r);
         if crate::jobs::REPORT_WEBHOOK.is_some() {
-            let s = QPushButton::from_q_string(&qs("Send report"));
-            s.set_tool_tip(&qs("Post the mod report and the crash dump to the 190 Expanded Discord"));
+            let s = QPushButton::from_q_string(&qs(t!("launch-panel-send-report")));
+            s.set_tool_tip(&qs(t!("launch-panel-send-report-tip")));
             let this = app.clone();
             s.clicked().connect(&SlotNoArgs::new(&s, move || this.send_report()));
             row.add_widget(&s);
         }
-        let x = QPushButton::from_q_string(&qs("Dismiss"));
+        let x = QPushButton::from_q_string(&qs(t!("launch-panel-dismiss")));
         let this = app.clone();
         x.clicked().connect(&SlotNoArgs::new(&x, move || {
             this.st.borrow_mut().crash = None;
@@ -278,7 +279,10 @@ pub unsafe fn refresh(app: &Rc<App>) {
     if let Some(s) = st.launch.as_ref().filter(|s| !(s.phase == "crashed" && st.crash.is_some())) {
         let b = QPushButton::from_q_string(&qs(&s.message));
         b.set_flat(true);
-        b.set_tool_tip(&qs(format!("{}{} (open the Logs tab)", s.message, s.pid.map(|p| format!(" · pid {p}")).unwrap_or_default())));
+        b.set_tool_tip(&qs(match s.pid {
+            Some(pid) => t!("launch-panel-status-tip-pid", message = &s.message, pid = pid),
+            None => t!("launch-panel-status-tip", message = &s.message),
+        }));
         let c = match s.phase.as_str() {
             "verified" => Some(icons::green()),
             "failed" | "mismatch" | "crashed" => Some(icons::red()),
@@ -295,11 +299,11 @@ pub unsafe fn refresh(app: &Rc<App>) {
         v.add_widget(&b);
     }
 
-    let foot = label(&format!(
-        "{} · TK Mod Manager v{}",
-        st.paths.game_root.as_ref().map(|_| format!("Three Kingdoms {}", st.paths.exe_version.clone().unwrap_or_default())).unwrap_or_else(|| "game not found".into()),
-        tkmm_core::ops::APP_VERSION
-    ));
+    let game = match st.paths.game_root {
+        Some(_) => t!("launch-panel-game-version", version = st.paths.exe_version.clone().unwrap_or_default()),
+        None => t!("launch-panel-game-not-found"),
+    };
+    let foot = label(&t!("launch-panel-footer", game = game, version = tkmm_core::ops::APP_VERSION));
     foot.set_alignment(qt_core::QFlags::from(qt_core::AlignmentFlag::AlignHCenter));
     let ff = qt_gui::QFont::new_copy(foot.font());
     ff.set_point_size_f(ff.point_size_f() - 1.0);

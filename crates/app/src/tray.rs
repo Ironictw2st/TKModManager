@@ -40,14 +40,14 @@ impl TrayUi {
     pub unsafe fn rebuild(&self, app: &Rc<App>) {
         self.menu.clear();
         let st = app.st.borrow();
-        let show = self.menu.add_action_q_string(&qs("Show TK Mod Manager"));
+        let show = self.menu.add_action_q_string(&qs(t!("tray-show")));
         let this = app.clone();
         show.triggered().connect(&SlotNoArgs::new(&app.window, move || this.show_window()));
         self.menu.add_separator();
-        let play = self.menu.add_action_q_string(&qs(format!("Play ({})", st.profiles.active)));
+        let play = self.menu.add_action_q_string(&qs(t!("tray-play", profile = &st.profiles.active)));
         let this = app.clone();
         play.triggered().connect(&SlotNoArgs::new(&app.window, move || this.launch(None)));
-        let sub = self.menu.add_menu_q_string(&qs("Play profile"));
+        let sub = self.menu.add_menu_q_string(&qs(t!("tray-play-profile")));
         for p in &st.profiles.profiles {
             let a = sub.add_action_q_string(&qs(&p.name));
             let this = app.clone();
@@ -55,7 +55,7 @@ impl TrayUi {
             a.triggered().connect(&SlotNoArgs::new(&app.window, move || this.launch(Some(name.clone()))));
         }
         self.menu.add_separator();
-        let quit = self.menu.add_action_q_string(&qs("Quit"));
+        let quit = self.menu.add_action_q_string(&qs(t!("tray-quit")));
         quit.triggered().connect(&SlotNoArgs::new(&app.window, || qt_core::QCoreApplication::quit()));
     }
 }

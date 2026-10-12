@@ -41,19 +41,21 @@ pub fn days_from_civil(y: i64, m: u32, d: u32) -> u64 {
 
 pub fn format_bytes(n: u64) -> String {
     if n < 1024 {
-        return format!("{n} B");
+        return t!("size-bytes", size = n.to_string());
     }
-    let units = ["KB", "MB", "GB", "TB"];
     let mut v = n as f64 / 1024.0;
-    let mut i = 0;
-    while v >= 1024.0 && i < units.len() - 1 {
+    let mut unit = 0;
+    while v >= 1024.0 && unit < 3 {
         v /= 1024.0;
-        i += 1;
+        unit += 1;
     }
-    if v < 10.0 {
-        format!("{v:.1} {}", units[i])
-    } else {
-        format!("{} {}", v.round() as u64, units[i])
+    // Passed as text so "1.5" stays as written.
+    let size = if v < 10.0 { format!("{v:.1}") } else { (v.round() as u64).to_string() };
+    match unit {
+        0 => t!("size-kb", size = size),
+        1 => t!("size-mb", size = size),
+        2 => t!("size-gb", size = size),
+        _ => t!("size-tb", size = size),
     }
 }
 

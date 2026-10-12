@@ -13,6 +13,7 @@
 use crate::json_store;
 use crate::packs::{self, ModEntry, ModSource, PackType};
 use crate::paths;
+use crate::t;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -50,16 +51,16 @@ pub struct NxmLink {
 }
 
 pub fn parse_nxm(url: &str) -> Result<NxmLink, String> {
-    let rest = url.trim().strip_prefix("nxm://").ok_or("not an nxm:// link")?;
+    let rest = url.trim().strip_prefix("nxm://").ok_or_else(|| t!("err-nxm-not-link"))?;
     let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
     let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
     let [game, "mods", mod_id, "files", file_id] = parts.as_slice() else {
-        return Err(format!("unrecognised nxm link: {url}"));
+        return Err(t!("err-nxm-unrecognised", url = url));
     };
     let mut link = NxmLink {
         game: game.to_ascii_lowercase(),
-        mod_id: mod_id.parse().map_err(|_| format!("bad mod id in {url}"))?,
-        file_id: file_id.parse().map_err(|_| format!("bad file id in {url}"))?,
+        mod_id: mod_id.parse().map_err(|_| t!("err-nxm-unrecognised", url = url))?,
+        file_id: file_id.parse().map_err(|_| t!("err-nxm-unrecognised", url = url))?,
         key: None,
         expires: None,
     };
@@ -244,7 +245,7 @@ impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InstallError::Failed(s) => f.write_str(s),
-            InstallError::Variants(v) => write!(f, "the archive has several variants: {}", v.join(", ")),
+            InstallError::Variants(v) => f.write_str(&t!("err-nexus-variants", variants = v.join(", "))),
         }
     }
 }
@@ -279,12 +280,12 @@ fn install_from_staging(root: &Path, archive: &Path, staging: &Path, req: &Insta
         })
         .collect();
     if found.is_empty() {
-        return Err(InstallError::Failed("the archive contains no mod packs".into()));
+        return Err(InstallError::Failed(t!("err-nexus-no-packs")));
     }
     if let Some(v) = variant {
         found.retain(|(rel, _)| rel == v);
         if found.is_empty() {
-            return Err(InstallError::Failed(format!("the archive has no packs in {v}")));
+            return Err(InstallError::Failed(t!("err-nexus-no-packs-in", folder = v)));
         }
     }
     let lower = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
@@ -501,7 +502,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
 
 fn get(key: &str, path: &str) -> Result<Value, String> {
     if key.trim().is_empty() {
-        return Err("no Nexus API key: add yours in Settings > Nexus Mods".into());
+        return Err(t!("err-nexus-no-key"));
     }
     let resp = client()?
         .get(format!("{API}/{path}"))
@@ -518,13 +519,11 @@ fn get(key: &str, path: &str) -> Result<Value, String> {
     }
     let msg = body["message"].as_str().or(body["error"].as_str()).unwrap_or("").to_string();
     Err(match status.as_u16() {
-        401 => "Nexus Mods rejected the API key (check it in Settings > Nexus Mods)".into(),
-        403 if path.contains("download_link") => {
-            "Nexus Mods only gives direct downloads to Premium members. Use the \"Mod Manager Download\" button on the mod's Files tab instead.".into()
-        }
-        404 => format!("not found on Nexus Mods ({path})"),
-        429 => "Nexus Mods rate limit reached; try again later".into(),
-        code => format!("Nexus Mods returned {code}: {msg}"),
+        401 => t!("err-nexus-key-rejected"),
+        403 if path.contains("download_link") => t!("err-nexus-premium-only"),
+        404 => t!("err-nexus-not-found", path = path),
+        429 => t!("err-nexus-rate-limit"),
+        code => t!("err-nexus-status", code = code as i64, message = msg),
     })
 }
 
@@ -614,7 +613,7 @@ fn download_link(key: &str, link: &NxmLink) -> Result<String, String> {
     v.as_array()
         .and_then(|a| a.iter().find_map(|l| l["URI"].as_str()))
         .map(str::to_string)
-        .ok_or_else(|| "Nexus Mods returned no download link".into())
+        .ok_or_else(|| t!("err-nexus-no-link"))
 }
 
 /// A downloaded archive waiting to be installed.

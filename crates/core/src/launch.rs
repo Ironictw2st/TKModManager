@@ -13,6 +13,7 @@ use crate::modlist;
 use crate::options_pack;
 use crate::paths;
 use crate::profiles::Profile;
+use crate::t;
 use crate::context::{AppContext, Ctx};
 use crate::winproc::{self, ProcHandle};
 use serde::Serialize;
@@ -139,14 +140,14 @@ fn user_script_backup(path: &Path) -> PathBuf {
 }
 
 fn write_user_script(store: paths::GameStore, text: &str) -> Result<PathBuf, String> {
-    let path = paths::user_script_path(store).ok_or("cannot find the game's user folder")?;
-    let dir = path.parent().ok_or("bad user script path")?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let path = paths::user_script_path(store).ok_or_else(|| t!("err-no-user-folder"))?;
+    let dir = path.parent().ok_or_else(|| t!("err-no-user-folder"))?;
+    std::fs::create_dir_all(dir).map_err(|e| t!("err-create-folder", path = dir.display().to_string(), error = e.to_string()))?;
     let backup = user_script_backup(&path);
     if path.is_file() && !backup.exists() {
-        std::fs::rename(&path, &backup).map_err(|e| format!("cannot move your user.script.txt aside: {e}"))?;
+        std::fs::rename(&path, &backup).map_err(|e| t!("err-user-script-aside", error = e.to_string()))?;
     }
-    std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&path, text).map_err(|e| t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
     Ok(path)
 }
 
@@ -165,19 +166,19 @@ pub fn clear_user_script(store: paths::GameStore) {
 /// phase and the exit tracking continue on a background thread.
 pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&str>) -> Result<u32, String> {
     if game_running() {
-        return Err("Three_Kingdoms.exe is already running".into());
+        return Err(t!("err-game-running"));
     }
     let state = ctx;
     let p = state.game_paths();
-    let root = PathBuf::from(p.game_root.as_deref().ok_or("game folder not found; set it in Settings")?);
+    let root = PathBuf::from(p.game_root.as_deref().ok_or_else(|| t!("err-game-folder-not-found"))?);
     let exe = root.join(paths::EXE_NAME);
 
     let store = p.store;
     let epic = store == paths::GameStore::Epic;
     if epic && load_save.map(|s| !s.trim().is_empty()).unwrap_or(false) {
-        return Err("the Epic version cannot be told to load a save; start the campaign from the main menu".into());
+        return Err(t!("err-epic-load-save"));
     }
-    emit(out, "writing", "Writing mod list", None);
+    emit(out, "writing", t!("launch-msg-writing"), None);
     let scan = state.scan();
     let mut input = list_input_for(&profile, &scan);
     if profile.skip_intro {
@@ -190,7 +191,7 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
         write_user_script(store, &text)?;
     } else {
         let list_path = list_file_path(&root);
-        std::fs::write(&list_path, text).map_err(|e| format!("cannot write {}: {e}", list_path.display()))?;
+        std::fs::write(&list_path, text).map_err(|e| t!("err-write-file", path = list_path.display().to_string(), error = e.to_string()))?;
     }
 
     // A DLL is resolved before spawning so a missing/incompatible one is reported up front.
@@ -200,9 +201,9 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
             Some(d) => Some(PathBuf::from(d.path)),
             None => {
                 return Err(if status.installed.is_empty() {
-                    "no script-extender DLL installed (Settings > Script extender)".into()
+                    t!("err-launch-no-dll")
                 } else {
-                    "no installed DLL matches this game build; injection would be refused".into()
+                    t!("err-launch-no-matching-dll")
                 });
             }
         }
@@ -226,13 +227,13 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
     // Epic: ask its launcher to start the game (CA's launcher comes up first, and the user
     // presses Play there); pid 0 means "wait for the game to appear".
     let pid = if epic {
-        let app = paths::epic_app_for(&root).ok_or("Epic's launcher does not list this install; start the game from Epic once")?;
+        let app = paths::epic_app_for(&root).ok_or_else(|| t!("err-epic-not-listed"))?;
         if let Err(e) = open_uri(&paths::epic_launch_uri(&app)) {
             history::finish(history_id, None);
             clear_user_script(store);
             return Err(e);
         }
-        emit_full(out, "spawned", "Opening Epic; press Play in CA's launcher", None, None, Some(history_id));
+        emit_full(out, "spawned", t!("launch-msg-opening-epic"), None, None, Some(history_id));
         0
     } else {
         let args = game_args(load_save);
@@ -245,7 +246,7 @@ pub fn launch_game(ctx: &Ctx, out: &Emit, profile: &Profile, load_save: Option<&
         };
         inject_core::close_handle(handle);
         ctx.tracker.claim(pid);
-        emit_full(out, "spawned", format!("Game started (pid {pid})"), Some(pid), None, Some(history_id));
+        emit_full(out, "spawned", t!("launch-msg-started", pid = pid), Some(pid), None, Some(history_id));
         pid
     };
 
@@ -263,7 +264,7 @@ fn open_uri(uri: &str) -> Result<(), String> {
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map(|_| ())
-        .map_err(|e| format!("cannot open Epic's launcher: {e}"))
+        .map_err(|e| t!("err-open-epic", error = e.to_string()))
 }
 
 /// Background: track the process, inject when the menu is up, then wait for the exit.
@@ -282,12 +283,12 @@ fn follow(ctx: Ctx, out: Emit, first_pid: u32, dll_path: Option<PathBuf>, histor
                 ctx.tracker.release(pid);
                 pid = np;
                 ctx.tracker.claim(pid);
-                let how = if epic { "Game started from CA's launcher" } else { "Game relaunched by Steam" };
-                emit_full(&out, "spawned", format!("{how} (pid {pid})"), Some(pid), None, history_id);
+                let msg = if epic { t!("launch-msg-started-by-ca", pid = pid) } else { t!("launch-msg-relaunched-by-steam", pid = pid) };
+                emit_full(&out, "spawned", msg, Some(pid), None, history_id);
                 break;
             }
             if Instant::now() >= deadline {
-                let why = if epic { "No game started; Epic's launcher was not used or Play was never pressed" } else { "The game exited immediately (is Steam running?)" };
+                let why = if epic { t!("launch-msg-epic-no-game") } else { t!("launch-msg-exited-immediately") };
                 emit_full(&out, "failed", why, None, None, history_id);
                 if let Some(id) = history_id {
                     history::finish(id, None);
@@ -318,23 +319,23 @@ fn follow(ctx: Ctx, out: Emit, first_pid: u32, dll_path: Option<PathBuf>, histor
 /// Wait for the menu, inject once, and report what the DLL log says. `external` = the game
 /// was not started by us, so an unreadable module list means "do not touch".
 fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
-    emit(out, "spawned", "Waiting for the main menu…", Some(pid));
+    emit(out, "spawned", t!("launch-msg-waiting-menu"), Some(pid));
     let ready = inject_core::wait_for_main_window(pid, Duration::from_secs(240));
     if !pid_alive(pid) {
         return;
     }
     if !ready {
-        emit(out, "failed", "Timed out waiting for the game window; DLL not injected", Some(pid));
+        emit(out, "failed", t!("launch-msg-window-timeout"), Some(pid));
         return;
     }
     // Never stack a second copy on a process that already has the hook (HANDOFF rule).
     match winproc::has_module(pid, dll::DLL_NAME) {
         Some(true) => {
-            emit(out, "verified", "Script extender already loaded in this game; not injecting again", Some(pid));
+            emit(out, "verified", t!("launch-msg-already-loaded"), Some(pid));
             return;
         }
         None if external => {
-            emit(out, "failed", "Could not inspect the game process; DLL not injected", Some(pid));
+            emit(out, "failed", t!("launch-msg-cannot-inspect"), Some(pid));
             return;
         }
         _ => {}
@@ -345,11 +346,11 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
     // a failed injection, and a single past "fingerprint mismatch" pins every future launch.
     let log = dll.parent().map(|d| d.join(dll::LOG_NAME));
     let log_from = log.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len()).unwrap_or(0);
-    emit(out, "menu", "Main menu up; injecting DLL", Some(pid));
+    emit(out, "menu", t!("launch-msg-injecting"), Some(pid));
     match run_injector(pid, dll) {
-        Ok(()) => emit(out, "injected", "DLL loaded; waiting for verification", Some(pid)),
+        Ok(()) => emit(out, "injected", t!("launch-msg-injected"), Some(pid)),
         Err(e) => {
-            emit(out, "failed", format!("Injection failed: {e}"), Some(pid));
+            emit(out, "failed", t!("launch-msg-injection-failed", error = e), Some(pid));
             return;
         }
     }
@@ -359,9 +360,9 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
         if let Some(text) = read_log_from(&log, log_from) {
             if text.contains("hook installed") || text.contains("bootstrap complete") {
                 let msg = if winproc::has_module(pid, crate::coop::RUNTIME_DLL) == Some(true) {
-                    "Script extender active, alongside Three Kingdoms Coop"
+                    t!("launch-msg-active-with-coop")
                 } else {
-                    "Script extender active"
+                    t!("launch-msg-active")
                 };
                 emit(out, "verified", msg, Some(pid));
                 return;
@@ -371,10 +372,9 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
                 // optional anchors refuse the whole table for that one address.
                 let coop = winproc::has_module(pid, crate::coop::RUNTIME_DLL) == Some(true);
                 let msg = if coop && text.contains("prebattle_set_vote") {
-                    "Script extender refused to start: Three Kingdoms Coop's Debug build hooks a function it uses. \
-                     Install Coop's normal Setup, or a newer script extender"
+                    t!("launch-msg-refused-coop-debug")
                 } else {
-                    "DLL refused this game build (see the Logs tab)"
+                    t!("launch-msg-refused")
                 };
                 emit(out, "mismatch", msg, Some(pid));
                 return;
@@ -384,7 +384,7 @@ fn inject_flow(out: &Emit, pid: u32, dll: &Path, external: bool) {
             return;
         }
         if Instant::now() >= deadline {
-            emit(out, "injected", "DLL loaded, no verification line in the log yet", Some(pid));
+            emit(out, "injected", t!("launch-msg-unverified"), Some(pid));
             return;
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -399,13 +399,8 @@ pub const INJECTOR_EXE: &str = "tkmm-inject.exe";
 const ERROR_VIRUS_INFECTED: i32 = 225;
 const ERROR_VIRUS_DELETED: i32 = 226;
 
-fn injector_blocked(detail: &str) -> String {
-    format!(
-        "Script extender not loaded: Windows Security (or another antivirus) blocked or removed {INJECTOR_EXE} ({detail}). \
-         It loads script_extender.dll into the game, which antivirus programs treat as suspicious. \
-         Restore it under Windows Security > Virus & threat protection > Protection history and allow it, \
-         or add the manager's folder as an exclusion. The game keeps running without the script extender."
-    )
+fn injector_blocked(detail: String) -> String {
+    t!("launch-msg-injector-blocked", file = INJECTOR_EXE, detail = detail)
 }
 
 /// Load `dll` into `pid` through `tkmm-inject.exe`, so the manager itself never writes into
@@ -414,7 +409,7 @@ fn run_injector(pid: u32, dll: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let helper = exe.parent().map(|d| d.join(INJECTOR_EXE)).ok_or("bad exe path")?;
     if !helper.is_file() {
-        return Err(injector_blocked("the file is missing"));
+        return Err(injector_blocked(t!("launch-injector-missing")));
     }
     let output = std::process::Command::new(&helper)
         .args(["--pid", &pid.to_string(), "--dll"])
@@ -423,12 +418,12 @@ fn run_injector(pid: u32, dll: &Path) -> Result<(), String> {
         .stderr(std::process::Stdio::null())
         .output()
         .map_err(|e| match e.raw_os_error() {
-            Some(ERROR_VIRUS_INFECTED | ERROR_VIRUS_DELETED) => injector_blocked("flagged as a threat"),
-            Some(5) => injector_blocked("access denied"),
-            _ => format!("cannot start {INJECTOR_EXE}: {e}"),
+            Some(ERROR_VIRUS_INFECTED | ERROR_VIRUS_DELETED) => injector_blocked(t!("launch-injector-threat")),
+            Some(5) => injector_blocked(t!("launch-injector-access-denied")),
+            _ => t!("err-cannot-start", file = INJECTOR_EXE, error = e.to_string()),
         })?;
     parse_injector_reply(&String::from_utf8_lossy(&output.stdout))
-        .unwrap_or_else(|| Err(injector_blocked(&format!("it stopped without an answer, {}", output.status))))
+        .unwrap_or_else(|| Err(injector_blocked(t!("launch-injector-no-answer", status = output.status.to_string()))))
 }
 
 /// The helper's one-line JSON answer: `{"ok": bool, "message": "..."}`.
@@ -470,12 +465,12 @@ fn finish(ctx: &AppContext, out: &Emit, pid: u32, handle: Option<ProcHandle>, hi
         Some(code) if code != 0 => emit_full(
             out,
             "crashed",
-            format!("Game ended abnormally (exit code 0x{code:X})"),
+            t!("launch-msg-crashed", code = format!("0x{code:X}")),
             Some(pid),
             exit_code,
             history_id,
         ),
-        _ => emit_full(out, "exited", "Game exited", Some(pid), exit_code, history_id),
+        _ => emit_full(out, "exited", t!("launch-msg-exited"), Some(pid), exit_code, history_id),
     }
 }
 
@@ -503,7 +498,7 @@ pub fn start_external_watcher(ctx: Ctx, out: Emit) {
                 let handle = ProcHandle::open(pid);
                 match selected {
                     Some(d) if winproc::has_module(pid, dll::DLL_NAME) == Some(false) => {
-                        emit(&out2, "spawned", format!("Game started outside the manager (pid {pid})"), Some(pid));
+                        emit(&out2, "spawned", t!("launch-msg-external", pid = pid), Some(pid));
                         // No launch wrote the cfg: use the active profile's settings.
                         dll::migrate_default_se_config(&ctx2);
                         let settings = ctx2.settings();
@@ -513,12 +508,12 @@ pub fn start_external_watcher(ctx: Ctx, out: Emit) {
                             .map(|p| dll::se_config_for(&p, &settings))
                             .unwrap_or_else(|| dll::default_se_config(&settings));
                         if let Err(e) = dll::write_cfg(&config) {
-                            emit(&out2, "spawned", format!("Could not write the script extender settings: {e}"), Some(pid));
+                            emit(&out2, "spawned", t!("launch-msg-cfg-failed", error = e), Some(pid));
                         }
                         inject_flow(&out2, pid, Path::new(&d.path), true);
                     }
                     Some(_) => {}
-                    None => emit(&out2, "failed", "Game detected, but no DLL matches this game build", Some(pid)),
+                    None => emit(&out2, "failed", t!("launch-msg-external-no-dll"), Some(pid)),
                 }
                 finish(&ctx2, &out2, pid, handle, None);
             });

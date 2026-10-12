@@ -77,10 +77,8 @@ pub unsafe fn refresh(app: &Rc<App>) {
 
     let st = app.st.borrow();
     let Some(key) = st.focused.clone() else {
-        v.add_widget(&label("Select a mod to see its details."));
-        let legend = small(
-            "The dot next to each mod shows its status: green up to date, amber last updated before the current game build, red update pending on Steam, grey local file. SE marks mods that need the script extender.",
-        );
+        v.add_widget(&label(&t!("details-select-a-mod")));
+        let legend = small(&t!("details-legend"));
         v.add_widget(&legend);
         v.add_stretch_1a(1);
         drop(st);
@@ -89,25 +87,25 @@ pub unsafe fn refresh(app: &Rc<App>) {
     };
     if tkmm_core::groups::is_separator_key(&key) {
         let profile = st.active();
-        let name = profile.entries.iter().find(|e| e.key == key).and_then(|e| e.label.clone()).unwrap_or_else(|| "Group".into());
+        let name = profile.entries.iter().find(|e| e.key == key).and_then(|e| e.label.clone()).unwrap_or_else(|| t!("details-group-default-name"));
         let members: Vec<String> = tkmm_core::groups::group_members(&profile.entries, &key).into_iter().filter(|k| st.module(k).is_some()).collect();
         let on = members.iter().filter(|k| profile.entries.iter().any(|e| &e.key == *k && e.enabled)).count();
         let t = label(&name);
         bold(&t);
         v.add_widget(&t);
-        v.add_widget(&label(&format!("Group · {} mod{}, {on} enabled", members.len(), if members.len() == 1 { "" } else { "s" })));
-        v.add_widget(&small("Every mod below this group header, up to the next group, belongs to it. Tick the header to turn the whole group on or off, drag it to move all of its mods, and right-click it to rename or remove it (its mods stay)."));
+        v.add_widget(&label(&t!("details-group-summary", count = members.len(), enabled = on)));
+        v.add_widget(&small(&t!("details-group-help")));
         v.add_stretch_1a(1);
         drop(st);
         app.details_area.set_widget(&content);
         return;
     }
     let Some(m) = st.module(&key).cloned() else {
-        let t = label("Missing pack");
+        let t = label(&t!("details-missing-pack"));
         bold(&t);
         v.add_widget(&t);
         v.add_widget(&small(&key));
-        v.add_widget(&small("This profile entry points at a pack that is no longer installed (unsubscribed or deleted). It is skipped at launch."));
+        v.add_widget(&small(&t!("details-missing-pack-help")));
         v.add_stretch_1a(1);
         drop(st);
         app.details_area.set_widget(&content);
@@ -144,11 +142,11 @@ pub unsafe fn refresh(app: &Rc<App>) {
         StatusKind::Unknown | StatusKind::Local => None,
         k => Some(icons::status_color(k)),
     };
-    let (frame, l) = section(stat.kind.label(), color.as_ref());
+    let (frame, l) = section(&stat.kind.label(), color.as_ref());
     l.add_widget(&small(&stat.text));
     if stat.kind == StatusKind::Pending {
         if let Some(id) = m.workshop_id.clone() {
-            let b = QPushButton::from_q_string(&qs("Force update from Steam"));
+            let b = QPushButton::from_q_string(&qs(t!("details-force-update")));
             b.set_enabled(!st.game_running && !app.steam_busy.get());
             let a = app.clone();
             b.clicked().connect(&SlotNoArgs::new(&b, move || a.force_update(vec![id.clone()])));
@@ -162,18 +160,18 @@ pub unsafe fn refresh(app: &Rc<App>) {
 
     // Nexus Mods origin and installed versions.
     if let Some(nx) = &m.nexus {
-        let (frame, l) = section("Nexus Mods", None);
+        let (frame, l) = section(&t!("details-nexus-title"), None);
         let mut line = vec![];
         if !nx.author.is_empty() {
-            line.push(format!("by {}", nx.author));
+            line.push(t!("details-nexus-author", author = &nx.author));
         }
         line.push(crate::mod_list::version_label(&nx.active));
         l.add_widget(&small(&line.join(" · ")));
         if nx.versions.len() > 1 {
-            l.add_widget(&small(&format!("{} versions installed: right-click the mod > Version to switch.", nx.versions.len())));
+            l.add_widget(&small(&t!("details-nexus-versions", count = nx.versions.len())));
         }
         if let Some(id) = nx.mod_id {
-            let b = QPushButton::from_q_string(&qs("Open on Nexus Mods"));
+            let b = QPushButton::from_q_string(&qs(t!("details-open-nexus")));
             b.clicked().connect(&SlotNoArgs::new(&b, move || open_url(&tkmm_core::nexus::mod_page(id))));
             let row = QHBoxLayout::new_0a();
             l.add_layout_1a(&row);
@@ -188,7 +186,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     let unmet = status::se_unmet(&req, profile.dll, have.as_deref());
     let enabled = entry.as_ref().map(|e| e.enabled).unwrap_or(false);
     let se_color = if req.required { Some(if unmet.is_some() && enabled { icons::red() } else { icons::blue() }) } else { None };
-    let (frame, l) = section(if req.required { "Needs the script extender" } else { "No script extender needed" }, se_color.as_ref());
+    let (frame, l) = section(&if req.required { t!("details-se-needed") } else { t!("details-se-not-needed") }, se_color.as_ref());
     l.add_widget(&small(&status::source_text(&req)));
     if let Some(n) = &req.notes {
         l.add_widget(&label(n));
@@ -200,7 +198,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     }
     if let Some(u) = unmet {
         let text = status::unmet_text(u, &req, have.as_deref());
-        let w = small(&if enabled { text } else { format!("{text} (applies once this mod is enabled)") });
+        let w = small(&if enabled { text } else { t!("details-se-unmet-when-enabled", problem = text) });
         if enabled {
             colored(&w, &icons::red());
         }
@@ -212,12 +210,12 @@ pub unsafe fn refresh(app: &Rc<App>) {
     if m.file.eq_ignore_ascii_case(tkmm_core::coop::PACK) {
         let active = st.coop.as_ref().map(|c| c.active()).unwrap_or(false);
         let color = if active { icons::green() } else { icons::red() };
-        let (frame, l) = section("Three Kingdoms Coop", Some(&color));
+        let (frame, l) = section(&t!("details-coop-title"), Some(&color));
         l.add_widget(&small(&match &st.coop {
-            Some(c) => format!("Coop DLL {}.", c.summary()),
-            None => "Coop's DLL is not installed. This pack needs it for the extra lobby seats: install it from Settings > Three Kingdoms Coop.".to_string(),
+            Some(c) => t!("details-coop-dll", summary = c.summary()),
+            None => t!("details-coop-missing"),
         }));
-        let b = QPushButton::from_q_string(&qs("Coop settings"));
+        let b = QPushButton::from_q_string(&qs(t!("details-coop-settings")));
         let this = app.clone();
         b.clicked().connect(&SlotNoArgs::new(&b, move || this.set_page(crate::app::PAGE_SETTINGS)));
         let row = QHBoxLayout::new_0a();
@@ -228,7 +226,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     }
 
     if m.pack_type == PackType::Movie {
-        let w = small("Movie packs load after every mod pack and cannot be ordered. Enabled = loaded; disabled = excluded through the mod list. Files are never renamed or moved.");
+        let w = small(&t!("details-movie-help"));
         colored(&w, &icons::amber());
         v.add_widget(&w);
     }
@@ -239,36 +237,34 @@ pub unsafe fn refresh(app: &Rc<App>) {
         .iter()
         .filter(|o| o.key != m.key && o.file.eq_ignore_ascii_case(&m.file))
         .map(|o| {
-            let age = if tkmm_core::ops::freshness(o) > tkmm_core::ops::freshness(&m) { "newer" } else { "older or same" };
+            let newer = tkmm_core::ops::freshness(o) > tkmm_core::ops::freshness(&m);
             let at = o.workshop_id.as_ref().filter(|_| o.source == tkmm_core::packs::ModSource::Workshop).map(|id| format!(" {id}")).unwrap_or_default();
-            format!("{}{at} ({age})", st.source_label(o))
+            let place = format!("{}{at}", st.source_label(o));
+            if newer { t!("details-copy-newer", place = place) } else { t!("details-copy-older", place = place) }
         })
         .collect();
     if !copies.is_empty() {
-        let w = small(&format!(
-            "Same file name also in: {}. The game loads packs by name, so only one copy loads; enabling this one switches the others off. A copy in data/ can still win, so delete old ones from there.",
-            copies.join(", ")
-        ));
+        let w = small(&t!("details-same-file-elsewhere", copies = copies.join(", ")));
         colored(&w, &icons::amber());
         v.add_widget(&w);
     }
 
     let facts = vec![
-        st.source_label(&m).to_string(),
-        if m.pack_type == PackType::Movie { "movie pack".into() } else { "mod pack".into() },
+        st.source_label(&m),
+        if m.pack_type == PackType::Movie { t!("details-fact-movie-pack") } else { t!("details-fact-mod-pack") },
         format_bytes(m.size),
-        format!("file {}", format_date(m.mtime)),
+        t!("details-fact-file-date", date = format_date(m.mtime)),
     ];
     v.add_widget(&small(&facts.join(" · ")));
 
     let buttons = QHBoxLayout::new_0a();
     v.add_layout_1a(&buttons);
     if let Some(id) = m.workshop_id.clone() {
-        let b = QPushButton::from_q_string(&qs("Open in Workshop"));
+        let b = QPushButton::from_q_string(&qs(t!("details-open-workshop")));
         b.clicked().connect(&SlotNoArgs::new(&b, move || open_url(&format!("https://steamcommunity.com/sharedfiles/filedetails/?id={id}"))));
         buttons.add_widget(&b);
     }
-    let b = QPushButton::from_q_string(&qs("Show file"));
+    let b = QPushButton::from_q_string(&qs(t!("details-show-file")));
     let path = m.path.clone();
     b.clicked().connect(&SlotNoArgs::new(&b, move || reveal(&path)));
     buttons.add_widget(&b);
@@ -290,16 +286,16 @@ pub unsafe fn refresh(app: &Rc<App>) {
         })
         .unwrap_or_default();
     if !required.is_empty() {
-        let (frame, l) = section("Required items", None);
+        let (frame, l) = section(&t!("details-required-title"), None);
         for (id, key, on, title) in &required {
             let row = QHBoxLayout::new_0a();
             l.add_layout_1a(&row);
             let (state, c) = match (key, on) {
-                (None, _) => ("missing", icons::red()),
-                (Some(_), true) => ("on", icons::green()),
-                (Some(_), false) => ("off", icons::amber()),
+                (None, _) => (t!("details-required-missing"), icons::red()),
+                (Some(_), true) => (t!("details-required-on"), icons::green()),
+                (Some(_), false) => (t!("details-required-off"), icons::amber()),
             };
-            let s = small(state);
+            let s = small(&state);
             colored(&s, &c);
             s.set_fixed_width(48);
             row.add_widget(&s);
@@ -311,7 +307,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
         }
         let off: Vec<String> = required.iter().filter(|(_, k, on, _)| k.is_some() && !on).filter_map(|(_, k, _, _)| k.clone()).collect();
         if !off.is_empty() {
-            let b = QPushButton::from_q_string(&qs("Enable all required items"));
+            let b = QPushButton::from_q_string(&qs(t!("details-required-enable-all")));
             let this = app.clone();
             b.clicked().connect(&SlotNoArgs::new(&b, move || {
                 this.st.borrow_mut().toggle(&off, Some(true));
@@ -323,12 +319,12 @@ pub unsafe fn refresh(app: &Rc<App>) {
     }
 
     // Tags, hidden, notes.
-    let (frame, l) = section("Tags", None);
+    let (frame, l) = section(&t!("details-tags-title"), None);
     let tag_row = QHBoxLayout::new_0a();
     l.add_layout_1a(&tag_row);
     for t in &meta.tags {
         let b = QPushButton::from_q_string(&qs(format!("{t}  ✕")));
-        b.set_tool_tip(&qs("Remove tag"));
+        b.set_tool_tip(&qs(t!("details-tag-remove")));
         let (this, k, t) = (app.clone(), key.clone(), t.clone());
         b.clicked().connect(&SlotNoArgs::new(&b, move || {
             this.st.borrow_mut().set_meta(&k, |m| m.tags.retain(|x| x != &t));
@@ -340,8 +336,8 @@ pub unsafe fn refresh(app: &Rc<App>) {
     let add_row = QHBoxLayout::new_0a();
     l.add_layout_1a(&add_row);
     let input = QLineEdit::new();
-    input.set_placeholder_text(&qs("Add tag…"));
-    let add = QPushButton::from_q_string(&qs("Add"));
+    input.set_placeholder_text(&qs(t!("details-tag-placeholder")));
+    let add = QPushButton::from_q_string(&qs(t!("details-tag-add")));
     add_row.add_widget_2a(&input, 1);
     add_row.add_widget(&add);
     let (this, k, ip) = (app.clone(), key.clone(), input.as_ptr());
@@ -359,7 +355,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     });
     add.clicked().connect(&add_tag);
     input.return_pressed().connect(&add_tag);
-    let hidden = QCheckBox::from_q_string(&qs("Hidden (only shown with \"Show hidden\")"));
+    let hidden = QCheckBox::from_q_string(&qs(t!("details-hidden")));
     hidden.set_checked(meta.hidden);
     let (this, k) = (app.clone(), key.clone());
     hidden.clicked().connect(&SlotOfBool::new(&hidden, move |on| {
@@ -369,10 +365,10 @@ pub unsafe fn refresh(app: &Rc<App>) {
     l.add_widget(&hidden);
     v.add_widget(&frame);
 
-    let (frame, l) = section("Notes", None);
+    let (frame, l) = section(&t!("details-notes-title"), None);
     let notes = QPlainTextEdit::new();
     notes.set_plain_text(&qs(&meta.notes));
-    notes.set_placeholder_text(&qs("Your notes for this mod"));
+    notes.set_placeholder_text(&qs(t!("details-notes-placeholder")));
     notes.set_maximum_height(90);
     let (this, k, np) = (app.clone(), key.clone(), notes.as_ptr());
     notes.text_changed().connect(&SlotNoArgs::new(&notes, move || {
@@ -382,7 +378,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
     v.add_widget(&frame);
 
     if let Some(desc) = ws.as_ref().map(|w| strip_bbcode(&w.description)).filter(|d| !d.is_empty()) {
-        let (frame, l) = section("Description", None);
+        let (frame, l) = section(&t!("details-description-title"), None);
         l.add_widget(&small(&desc));
         v.add_widget(&frame);
     }

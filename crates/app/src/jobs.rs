@@ -25,24 +25,24 @@ impl App {
     pub unsafe fn install_nxm(self: &Rc<Self>, url: &str) {
         let link = match nexus::parse_nxm(url) {
             Ok(l) => l,
-            Err(e) => return crate::dialogs::error(&self.window, &format!("Cannot install from Nexus Mods: {e}")),
+            Err(e) => return crate::dialogs::error(&self.window, &t!("jobs-nxm-bad-link", error = e)),
         };
         let key = self.ctx.settings().nexus_api_key;
         if key.trim().is_empty() {
             crate::dialogs::error(
                 &self.window,
-                "Add your Nexus Mods API key first (Settings > Nexus Mods), then click \"Mod Manager Download\" again.",
+                &t!("jobs-nexus-no-key"),
             );
             self.set_page(crate::app::PAGE_SETTINGS);
             return;
         }
-        self.set_task(&format!("Nexus Mods: fetching mod {} file {}…", link.mod_id, link.file_id));
+        self.set_task(&t!("jobs-nexus-fetching", mod_id = link.mod_id.to_string(), file_id = link.file_id.to_string()));
         self.bus.spawn(move |bus| {
             let b = bus.clone();
-            let progress = move |f: f64| b.send(UiEvent::Task(format!("Nexus Mods: downloading… {}%", (f * 100.0).round())));
+            let progress = move |f: f64| b.send(UiEvent::Task(t!("jobs-nexus-downloading", percent = (f * 100.0).round())));
             match nexus::download(&key, &link, &progress) {
                 Ok(d) => {
-                    bus.send(UiEvent::Task(format!("Nexus Mods: installing {}…", d.request.mod_name)));
+                    bus.send(UiEvent::Task(t!("jobs-nexus-installing", name = &d.request.mod_name)));
                     let result = nexus::install_archive(&nexus::root(), &d.archive, &d.request, None);
                     Some(UiEvent::NexusInstalled { result, archive: d.archive, request: d.request, downloaded: true })
                 }
@@ -60,9 +60,9 @@ impl App {
     pub unsafe fn pick_archive(self: &Rc<Self>) {
         let file = qt_widgets::QFileDialog::get_open_file_name_4a(
             &self.window,
-            &qt_core::qs("Install a mod archive"),
+            &qt_core::qs(t!("jobs-archive-title")),
             &qt_core::qs(""),
-            &qt_core::qs("Mod archives (*.zip *.7z *.rar);;All files (*.*)"),
+            &qt_core::qs(format!("{} (*.zip *.7z *.rar);;{} (*.*)", t!("jobs-archive-filter"), t!("jobs-all-files"))),
         )
         .to_std_string();
         if !file.is_empty() {
@@ -71,7 +71,7 @@ impl App {
     }
 
     unsafe fn run_install(self: &Rc<Self>, archive: PathBuf, request: InstallRequest, variant: Option<String>, downloaded: bool) {
-        self.set_task(&format!("Installing {}…", if request.mod_name.is_empty() { &request.slot } else { &request.mod_name }));
+        self.set_task(&t!("jobs-installing", name = if request.mod_name.is_empty() { &request.slot } else { &request.mod_name }));
         self.bus.spawn(move |_| {
             let result = nexus::install_archive(&nexus::root(), &archive, &request, variant.as_deref());
             Some(UiEvent::NexusInstalled { result, archive, request, downloaded })
@@ -92,16 +92,20 @@ impl App {
                 };
                 self.pending_enable.borrow_mut().extend(keys);
                 let name = if done.mod_name.is_empty() { done.slot.clone() } else { done.mod_name.clone() };
-                let version = if request.file.version.is_empty() { String::new() } else { format!(" {}", request.file.version) };
-                self.set_task_done(&format!("Installed {name}{version} ({} pack{}).", done.packs.len(), if done.packs.len() == 1 { "" } else { "s" }));
+                let packs = done.packs.len();
+                self.set_task_done(&if request.file.version.is_empty() {
+                    t!("jobs-installed", name = name, count = packs)
+                } else {
+                    t!("jobs-installed-version", name = name, version = &request.file.version, count = packs)
+                });
                 self.rescan();
             }
             Err(InstallError::Variants(folders)) => {
                 self.set_task("");
                 let chosen = crate::dialogs::choose(
                     &self.window,
-                    "Choose a variant",
-                    "This archive ships the same pack in several folders (alternative versions).\nWhich one do you want?",
+                    &t!("jobs-variant-title"),
+                    &t!("jobs-variant-text"),
                     &folders,
                 );
                 match chosen {
@@ -123,7 +127,7 @@ impl App {
 
     pub unsafe fn on_nexus_failed(self: &Rc<Self>, e: &str) {
         self.set_task("");
-        crate::dialogs::error(&self.window, &format!("Install failed: {e}"));
+        crate::dialogs::error(&self.window, &t!("jobs-install-failed", error = e));
     }
 
     /// Called after every scan: switch on what an install just added. The game loads packs by
@@ -164,14 +168,14 @@ impl App {
             st.toggle(&keys, Some(true));
         }
         if !replaced.is_empty() {
-            unsafe { self.set_task_done(&format!("Switched off the old copy of {}; the new install loads in its place.", replaced.join(", "))) };
+            unsafe { self.set_task_done(&t!("jobs-replaced-old", mods = replaced.join(", "))) };
         }
         self.mark(DIRTY_ALL);
     }
 
     pub unsafe fn nexus_set_active(self: &Rc<Self>, slot: &str, dir: &str) {
         if self.st.borrow().game_running {
-            return crate::dialogs::error(&self.window, "Quit the game before switching versions.");
+            return crate::dialogs::error(&self.window, &t!("jobs-quit-before-switch"));
         }
         match nexus::set_active(&nexus::root(), slot, dir) {
             Ok(()) => self.rescan(),
@@ -181,9 +185,9 @@ impl App {
 
     pub unsafe fn nexus_remove(self: &Rc<Self>, slot: &str, dir: &str, label: &str) {
         if self.st.borrow().game_running {
-            return crate::dialogs::error(&self.window, "Quit the game before deleting mod files.");
+            return crate::dialogs::error(&self.window, &t!("jobs-quit-before-delete"));
         }
-        if !crate::dialogs::confirm(&self.window, "Delete installed version", &format!("Delete {label} from the manager's Nexus folder?")) {
+        if !crate::dialogs::confirm(&self.window, &t!("jobs-delete-version-title"), &t!("jobs-delete-version-text", name = label)) {
             return;
         }
         match nexus::remove_version(&nexus::root(), slot, dir) {
@@ -198,7 +202,7 @@ impl App {
         let s = self.ctx.settings();
         if s.nexus_api_key.trim().is_empty() || nexus::slots(&nexus::root()).values().all(|i| i.mod_id.is_none()) {
             if verbose {
-                unsafe { crate::dialogs::info(&self.window, "Nexus Mods", "No Nexus mods to check (or no API key set).") };
+                unsafe { crate::dialogs::info(&self.window, &t!("jobs-nexus-title"), &t!("jobs-nexus-nothing-to-check")) };
             }
             return;
         }
@@ -212,17 +216,16 @@ impl App {
             Ok(n) => {
                 if verbose {
                     let text = match n {
-                        0 => "Every installed Nexus mod is up to date.".to_string(),
-                        1 => "1 Nexus mod has a newer file (red dot in the list).".to_string(),
-                        n => format!("{n} Nexus mods have newer files (red dots in the list)."),
+                        0 => t!("jobs-nexus-all-current"),
+                        n => t!("jobs-nexus-newer", count = n),
                     };
-                    crate::dialogs::info(&self.window, "Nexus Mods", &text);
+                    crate::dialogs::info(&self.window, &t!("jobs-nexus-title"), &text);
                 }
                 if n > 0 || verbose {
                     self.rescan();
                 }
             }
-            Err(e) if verbose => crate::dialogs::error(&self.window, &format!("Nexus update check failed: {e}")),
+            Err(e) if verbose => crate::dialogs::error(&self.window, &t!("jobs-nexus-check-failed", error = e)),
             Err(e) => eprintln!("nexus update check: {e}"),
         }
     }
@@ -235,7 +238,7 @@ impl App {
             return;
         }
         if self.st.borrow().game_running {
-            return crate::dialogs::error(&self.window, "Quit the game first: Steam does not update Workshop items of a running game.");
+            return crate::dialogs::error(&self.window, &t!("jobs-steam-quit-first"));
         }
         let ids: Vec<u64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
         if ids.is_empty() {
@@ -243,7 +246,7 @@ impl App {
         }
         self.steam_busy.set(true);
         self.steam_results.borrow_mut().clear();
-        self.set_task(&format!("Steam: updating {} Workshop item{}…", ids.len(), if ids.len() == 1 { "" } else { "s" }));
+        self.set_task(&t!("jobs-steam-updating", count = ids.len()));
         self.bus.spawn(move |bus| {
             let b = bus.clone();
             let r = steam_ugc::spawn_helper(&ids, &mut |e| b.send(UiEvent::SteamDl(e)));
@@ -256,7 +259,7 @@ impl App {
             Event::Progress { id, done, total } => {
                 let title = self.st.borrow().workshop.get(&id.to_string()).map(|w| w.title.clone()).unwrap_or_else(|| id.to_string());
                 let pct = if total > 0 { done * 100 / total } else { 0 };
-                self.set_task(&format!("Steam: downloading {title}… {pct}%"));
+                self.set_task(&t!("jobs-steam-downloading", title = &title, percent = pct));
             }
             Event::Finished { id, ok, message } => self.steam_results.borrow_mut().push((id, ok, message)),
             Event::Fatal { .. } => {}
@@ -274,7 +277,7 @@ impl App {
                 .filter(|(_, ok, _)| !ok)
                 .map(|(id, _, msg)| {
                     let title = st.workshop.get(&id.to_string()).map(|w| w.title.clone()).unwrap_or_else(|| id.to_string());
-                    format!("{title}: {msg}")
+                    t!("jobs-steam-item-failed", title = title, message = msg)
                 })
                 .collect()
         };
@@ -291,15 +294,15 @@ impl App {
                 None => true,
                 Some(p) => crate::dialogs::confirm(
                     &self.window,
-                    "Workshop update",
-                    &format!("Steam could not bring every Workshop mod up to date, so some may load an older version:\n\n{p}\n\nStart anyway?"),
+                    &t!("jobs-steam-update-title"),
+                    &t!("jobs-steam-update-incomplete", items = p),
                 ),
             };
             if go {
                 // The helper was Three Kingdoms as far as Steam knew; let Steam close that
                 // session before the game starts (Play again skips the wait).
                 self.launch_after_steam.set(true);
-                self.set_launch_message("writing", "Waiting for Steam…");
+                self.set_launch_message("writing", &t!("jobs-waiting-for-steam"));
                 self.bus.spawn(|_| {
                     steam_ugc::wait_until_released(std::time::Duration::from_secs(2), std::time::Duration::from_secs(10));
                     Some(UiEvent::LaunchChecked { items: Default::default(), stale: Vec::new() })
@@ -313,12 +316,12 @@ impl App {
         match r {
             Err(e) => {
                 self.set_task("");
-                crate::dialogs::error(&self.window, &format!("Force update failed: {e}"));
+                crate::dialogs::error(&self.window, &t!("jobs-force-update-failed", error = e));
             }
-            Ok(()) if failed.is_empty() => self.set_task_done(&format!("Steam: {ok} Workshop item{} up to date.", if ok == 1 { " is" } else { "s are" })),
+            Ok(()) if failed.is_empty() => self.set_task_done(&t!("jobs-steam-done", count = ok)),
             Ok(()) => {
                 self.set_task("");
-                crate::dialogs::error(&self.window, &format!("{ok} updated, {} failed:\n\n{}", failed.len(), failed.join("\n")));
+                crate::dialogs::error(&self.window, &t!("jobs-steam-some-failed", updated = ok, failed = failed.len(), items = failed.join("\n")));
             }
         }
         self.mark(DIRTY_LIST | DIRTY_DETAILS);
@@ -351,19 +354,19 @@ impl App {
     pub unsafe fn create_report(self: &Rc<Self>) {
         let profile = self.st.borrow().active();
         let ctx = self.ctx.clone();
-        self.set_task("Creating mod report (asking Steam for the current versions)…");
+        self.set_task(&t!("jobs-report-creating"));
         self.bus.spawn(move |_| Some(UiEvent::Report(tkmm_core::report::save(&tkmm_core::report::build(&ctx, &profile)))));
     }
 
     pub unsafe fn on_report(self: &Rc<Self>, r: Result<PathBuf, String>) {
         match r {
             Ok(path) => {
-                self.set_task_done(&format!("Mod report saved: {}", path.display()));
+                self.set_task_done(&t!("jobs-report-saved", path = path.display().to_string()));
                 crate::details::reveal(&path.to_string_lossy());
             }
             Err(e) => {
                 self.set_task("");
-                crate::dialogs::error(&self.window, &format!("Cannot create the mod report: {e}"));
+                crate::dialogs::error(&self.window, &t!("jobs-report-failed", error = e));
             }
         }
     }
@@ -380,17 +383,14 @@ impl App {
         let Some(hook) = REPORT_WEBHOOK.filter(|h| !h.is_empty()) else { return };
         let note = crate::dialogs::ask_multiline(
             &self.window,
-            "Send report to Discord",
-            "This posts a new thread in the 190 Expanded Discord (a public forum) with:\n\
-             • the mod report: every loaded mod, its Workshop / Nexus version, file paths on this PC (they include your Windows user name), recent launches, the game's crash records and the ends of the game's logs\n\
-             • the newest game crash dump from the last 7 days, when it fits Discord's size limit\n\n\
-             What were you doing when it crashed? (optional; the first line becomes the thread title)",
-            "Send",
+            &t!("jobs-send-report-title"),
+            &t!("jobs-send-report-text"),
+            &t!("jobs-send-report-send"),
         );
         let Some(note) = note else { return };
         let profile = self.st.borrow().active();
         let ctx = self.ctx.clone();
-        self.set_task("Sending report to Discord…");
+        self.set_task(&t!("jobs-report-sending"));
         self.bus.spawn(move |_| Some(UiEvent::ReportSent(tkmm_core::report::send_to_discord(&ctx, &profile, hook, &note))));
     }
 
@@ -398,11 +398,11 @@ impl App {
         match r {
             Ok(msg) => {
                 self.set_task("");
-                crate::dialogs::info(&self.window, "Send report", &format!("{msg}\nThanks, the mod team can see it on Discord now."));
+                crate::dialogs::info(&self.window, &t!("jobs-report-sent-title"), &t!("jobs-report-sent", result = msg));
             }
             Err(e) => {
                 self.set_task("");
-                crate::dialogs::error(&self.window, &format!("The report could not be sent: {e}\n\nUse \"Create mod report\" and send the file by hand instead."));
+                crate::dialogs::error(&self.window, &t!("jobs-report-send-failed", error = e));
             }
         }
     }

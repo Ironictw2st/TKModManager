@@ -138,7 +138,7 @@ fn fetch_details(client: &reqwest::blocking::Client, ids: &[String]) -> Result<V
         .post(DETAILS_URL)
         .form(&form)
         .send()
-        .map_err(|e| format!("Steam API: {e}"))?;
+        .map_err(|e| crate::t!("err-steam-api", error = e.to_string()))?;
     if !resp.status().is_success() {
         return Err(format!("Steam API returned {}", resp.status()));
     }
@@ -294,7 +294,7 @@ pub struct CollectionResult {
 /// Resolve a Workshop collection (keyless Web API) into its items.
 /// Blocking (network).
 pub fn workshop_collection(input: &str) -> Result<CollectionResult, String> {
-    let id = parse_collection_id(input).ok_or("that does not look like a Workshop collection link or id")?;
+    let id = parse_collection_id(input).ok_or_else(|| crate::t!("err-collection-link"))?;
     let client = reqwest::blocking::Client::builder().user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
     let form = [("collectioncount".to_string(), "1".to_string()), ("publishedfileids[0]".to_string(), id.clone())];
     let resp = client.post(COLLECTION_URL).form(&form).send().map_err(|e| format!("Steam API: {e}"))?;
@@ -304,7 +304,7 @@ pub fn workshop_collection(input: &str) -> Result<CollectionResult, String> {
     let json: serde_json::Value = resp.json().map_err(|e| format!("Steam API JSON: {e}"))?;
     let children = parse_collection_children(&json);
     if children.is_empty() {
-        return Err("the collection is empty, private, or not a collection".into());
+        return Err(crate::t!("err-collection-empty"));
     }
     let title = fetch_details(&client, std::slice::from_ref(&id)).ok().and_then(|v| v.into_iter().next()).map(|i| i.title).unwrap_or_default();
     let mut items = HashMap::new();

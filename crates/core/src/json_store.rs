@@ -9,7 +9,7 @@ use std::path::Path;
 pub fn load<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
     match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| format!("{}: invalid JSON: {e}", path.display())),
+            .map_err(|e| crate::t!("err-invalid-json", path = path.display().to_string(), error = e.to_string())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }

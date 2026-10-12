@@ -15,7 +15,7 @@ pub fn detect(path: &Path) -> Result<Format, String> {
     let mut f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut head = [0u8; 8];
     let n = f.read(&mut head).map_err(|e| format!("{}: {e}", path.display()))?;
-    format_from_header(&head[..n]).ok_or_else(|| format!("{} is not a zip, 7z or rar archive", path.display()))
+    format_from_header(&head[..n]).ok_or_else(|| crate::t!("err-not-archive", path = path.display().to_string()))
 }
 
 pub fn format_from_header(head: &[u8]) -> Option<Format> {
@@ -60,13 +60,13 @@ pub fn extract_filtered(archive: &Path, dest: &Path, keep: &dyn Fn(&str) -> bool
     match detect(archive)? {
         Format::Zip => {
             let file = std::fs::File::open(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
-            let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("bad zip: {e}"))?;
+            let mut zip = zip::ZipArchive::new(file).map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))?;
             for i in 0..zip.len() {
-                let mut entry = zip.by_index(i).map_err(|e| format!("bad zip: {e}"))?;
+                let mut entry = zip.by_index(i).map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))?;
                 if entry.is_dir() || !wanted(entry.name()) {
                     continue;
                 }
-                let target = safe_join(dest, entry.name()).ok_or_else(|| format!("unsafe path in archive: {}", entry.name()))?;
+                let target = safe_join(dest, entry.name()).ok_or_else(|| crate::t!("err-unsafe-path", name = entry.name()))?;
                 write_entry(&target, &mut entry)?;
                 out.push(target);
             }
@@ -82,14 +82,14 @@ pub fn extract_filtered(archive: &Path, dest: &Path, keep: &dyn Fn(&str) -> bool
                 out.push(target.clone());
                 Ok(true)
             })
-            .map_err(|e| format!("bad 7z: {e}"))?;
+            .map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))?;
         }
         Format::Rar => {
-            let mut rar = unrar::Archive::new(archive).open_for_processing().map_err(|e| format!("bad rar: {e}"))?;
-            while let Some(header) = rar.read_header().map_err(|e| format!("bad rar: {e}"))? {
+            let mut rar = unrar::Archive::new(archive).open_for_processing().map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))?;
+            while let Some(header) = rar.read_header().map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))? {
                 let name = header.entry().filename.to_string_lossy().into_owned();
                 rar = if header.entry().is_file() && wanted(&name) {
-                    let target = safe_join(dest, &name).ok_or_else(|| format!("unsafe path in archive: {name}"))?;
+                    let target = safe_join(dest, &name).ok_or_else(|| crate::t!("err-unsafe-path", name = &name))?;
                     if let Some(parent) = target.parent() {
                         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
                     }
@@ -97,7 +97,7 @@ pub fn extract_filtered(archive: &Path, dest: &Path, keep: &dyn Fn(&str) -> bool
                     out.push(target);
                     next
                 } else {
-                    header.skip().map_err(|e| format!("bad rar: {e}"))?
+                    header.skip().map_err(|e| crate::t!("err-bad-archive", error = e.to_string()))?
                 };
             }
         }

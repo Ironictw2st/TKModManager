@@ -98,11 +98,7 @@ impl StaticUpcast<QObject> for App {
 }
 
 fn app_update_text(meta: &update::UpdateMeta) -> String {
-    let text = format!(
-        "Download and install TK Mod Manager v{}?\n\nThe app will close and restart when it is done.\n\n{}",
-        meta.version,
-        crate::dialogs::clip_notes(&meta.notes)
-    );
+    let text = t!("app-update-text", version = &meta.version, notes = crate::dialogs::clip_notes(&meta.notes));
     text.trim_end().to_string()
 }
 
@@ -139,25 +135,25 @@ impl App {
             header.add_widget(&title);
             header.add_spacing(12);
             let tabs = QTabBar::new_0a();
-            tabs.add_tab_1a(&qs("Mods"));
-            tabs.add_tab_1a(&qs("Conflicts"));
-            tabs.add_tab_1a(&qs("Logs"));
+            tabs.add_tab_1a(&qs(t!("app-tab-mods")));
+            tabs.add_tab_1a(&qs(t!("app-tab-conflicts")));
+            tabs.add_tab_1a(&qs(t!("app-tab-logs")));
             tabs.set_draw_base(false);
             header.add_widget(&tabs);
             header.add_stretch_1a(1);
-            header.add_widget(QLabel::from_q_string(&qs("Profile")).into_ptr());
+            header.add_widget(QLabel::from_q_string(&qs(t!("app-profile"))).into_ptr());
             let profile_combo = QComboBox::new_0a();
             profile_combo.set_minimum_width(220);
             header.add_widget(&profile_combo);
             let profile_btn = QToolButton::new_0a();
-            profile_btn.set_text(&qs("Actions"));
-            profile_btn.set_tool_tip(&qs("Profile actions"));
+            profile_btn.set_text(&qs(t!("app-profile-actions")));
+            profile_btn.set_tool_tip(&qs(t!("app-profile-actions-tip")));
             profile_btn.set_popup_mode(qt_widgets::q_tool_button::ToolButtonPopupMode::InstantPopup);
             let profile_menu = QMenu::new();
             profile_btn.set_menu(&profile_menu);
             header.add_widget(&profile_btn);
             header.add_stretch_1a(1);
-            let settings_btn = QPushButton::from_q_string(&qs("Settings"));
+            let settings_btn = QPushButton::from_q_string(&qs(t!("app-settings")));
             settings_btn.set_checkable(true);
             header.add_widget(&settings_btn);
             left_layout.add_layout_1a(&header);
@@ -171,7 +167,7 @@ impl App {
             let ub = QHBoxLayout::new_1a(&update_bar);
             ub.set_contents_margins_4a(0, 0, 0, 0);
             let update_label = QLabel::new();
-            let update_btn = QPushButton::from_q_string(&qs("Install and restart"));
+            let update_btn = QPushButton::from_q_string(&qs(t!("app-update-install")));
             ub.add_widget(&update_label);
             ub.add_stretch_1a(1);
             ub.add_widget(&update_btn);
@@ -374,8 +370,8 @@ impl App {
         let tail = lines[lines.len().saturating_sub(80)..].join("\n");
         crate::dialogs::show_text(
             &self.window,
-            "TK Mod Manager crashed last time",
-            &format!("The manager closed because of an internal error. Details are in {} - please attach them to a bug report.", path.display()),
+            &t!("app-crashed-title"),
+            &t!("app-crashed-text", path = path.display().to_string()),
             &tail,
         );
     }
@@ -448,7 +444,7 @@ impl App {
     /// The update bar's button: asks, then installs.
     pub unsafe fn confirm_app_update(self: &Rc<Self>) {
         let Some(meta) = self.update_meta.borrow().clone() else { return };
-        if crate::dialogs::confirm(&self.window, "Update TK Mod Manager", &app_update_text(&meta)) {
+        if crate::dialogs::confirm(&self.window, &t!("app-update-title"), &app_update_text(&meta)) {
             self.install_app_update();
         }
     }
@@ -458,7 +454,7 @@ impl App {
         if self.ctx.settings().skipped_app_version == meta.version {
             return false;
         }
-        match crate::dialogs::ask_update(&self.window, "Update TK Mod Manager", &app_update_text(meta)) {
+        match crate::dialogs::ask_update(&self.window, &t!("app-update-title"), &app_update_text(meta)) {
             UpdateChoice::Install => {
                 self.install_app_update();
                 true
@@ -479,7 +475,7 @@ impl App {
     unsafe fn install_app_update(self: &Rc<Self>) {
         let Some(meta) = self.update_meta.borrow().clone() else { return };
         self.update_btn.set_enabled(false);
-        self.update_label.set_text(&qs(format!("Downloading v{}…", meta.version)));
+        self.update_label.set_text(&qs(t!("app-update-downloading-version", version = &meta.version)));
         self.bus.spawn(move |bus| {
             let b = bus.clone();
             let r = update::install_update(&meta.asset_url, &move |f| b.send(UiEvent::UpdateProgress(f)));
@@ -529,7 +525,7 @@ impl App {
         if let Some(name) = profile_name.filter(|n| !n.is_empty()) {
             let exists = self.st.borrow().profiles.profiles.iter().any(|p| p.name == name);
             if !exists {
-                self.set_launch_message("failed", &format!("No profile named \"{name}\""));
+                self.set_launch_message("failed", &t!("app-no-such-profile", name = &name));
                 return;
             }
             self.switch_profile(&name);
@@ -545,7 +541,7 @@ impl App {
             let steam = self.st.borrow().paths.store == tkmm_core::paths::GameStore::Steam;
             if steam && !ids.is_empty() && self.ctx.settings().update_workshop_on_launch && tkmm_core::steam_ugc::dll_path().is_some() {
                 self.launch_after_steam.set(true);
-                self.set_launch_message("writing", "Checking Workshop mods for updates…");
+                self.set_launch_message("writing", &t!("app-checking-workshop"));
                 self.check_workshop_before_launch(ids);
                 self.mark(DIRTY_LAUNCH);
                 return;
@@ -612,13 +608,8 @@ impl App {
             if !ticked.is_empty()
                 && !crate::dialogs::confirm(
                     &self.window,
-                    "CA's launcher has mods ticked",
-                    &format!(
-                        "CA's launcher will also load {} mod{} of its own:\n\n{}\n\nThey load on top of this profile and can upset the load order. Untick them in CA's launcher for a clean run.\n\nStart anyway?",
-                        ticked.len(),
-                        if ticked.len() == 1 { "" } else { "s" },
-                        ticked.join("\n")
-                    ),
+                    &t!("app-ca-ticked-title"),
+                    &t!("app-ca-ticked-text", count = ticked.len(), mods = ticked.join("\n")),
                 )
             {
                 return;
@@ -636,23 +627,19 @@ impl App {
         };
         // Coop: a launch that cannot give the player what the profile is set up for.
         let coop: Vec<String> = self.st.borrow().coop_problems().iter().filter(|p| p.blocking()).map(|p| p.text().to_string()).collect();
-        if !coop.is_empty() && !crate::dialogs::confirm(&self.window, "Three Kingdoms Coop", &format!("{}\n\nStart anyway?", coop.join("\n\n"))) {
+        if !coop.is_empty() && !crate::dialogs::confirm(&self.window, &t!("app-coop-title"), &t!("app-coop-start-anyway", problems = coop.join("\n\n"))) {
             return;
         }
         if !shadowed.is_empty()
             && !crate::dialogs::confirm(
                 &self.window,
-                "Older copy in the data folder",
-                &format!(
-                    "The game loads packs by file name, and the data folder has an older copy of {} this profile enables from elsewhere:\n\n{}\n\nThe game may load the old copy instead of the new one. Delete or move it out of the data folder to be sure the newest version loads.\n\nStart anyway?",
-                    if shadowed.len() == 1 { "a pack" } else { "packs" },
-                    shadowed.join("\n")
-                ),
+                &t!("app-shadowed-title"),
+                &t!("app-shadowed-text", count = shadowed.len(), files = shadowed.join("\n")),
             )
         {
             return;
         }
-        self.set_launch_message("writing", "Starting…");
+        self.set_launch_message("writing", &t!("app-starting"));
         let ctx = self.ctx.clone();
         let bus = self.bus.clone();
         let emit: Emit = Arc::new(move |s| bus.send(UiEvent::Launch(s)));
@@ -672,7 +659,7 @@ impl App {
     /// Switch to another copy of the game (Steam / Epic / Game Pass) and rescan.
     pub unsafe fn set_game_root(self: &Rc<Self>, root: &str) {
         if self.st.borrow().game_running {
-            crate::dialogs::error(&self.window, "Quit the game before switching to another copy.");
+            crate::dialogs::error(&self.window, &t!("app-quit-before-switch-copy"));
             self.mark(DIRTY_ALL);
             return;
         }
@@ -695,44 +682,44 @@ impl App {
 
     unsafe fn build_profile_menu(self: &Rc<Self>) {
         let m = &self.profile_menu;
-        let add = |label: &str, f: Box<dyn Fn()>| {
+        let add = |label: String, f: Box<dyn Fn()>| {
             let a = m.add_action_q_string(&qs(label));
             a.triggered().connect(&SlotNoArgs::new(&self.window, move || f()));
         };
         let this = self.clone();
-        add("New profile…", Box::new(move || this.profile_new(false)));
+        add(t!("app-menu-new-profile"), Box::new(move || this.profile_new(false)));
         let this = self.clone();
-        add("Duplicate…", Box::new(move || this.profile_new(true)));
+        add(t!("app-menu-duplicate"), Box::new(move || this.profile_new(true)));
         let this = self.clone();
-        add("Rename…", Box::new(move || this.profile_rename()));
+        add(t!("app-menu-rename"), Box::new(move || this.profile_rename()));
         let this = self.clone();
-        add("Delete", Box::new(move || this.profile_delete()));
+        add(t!("app-menu-delete"), Box::new(move || this.profile_delete()));
         m.add_separator();
         let this = self.clone();
-        add("Install mod from archive…", Box::new(move || this.pick_archive()));
+        add(t!("app-menu-install-archive"), Box::new(move || this.pick_archive()));
         let this = self.clone();
-        add("Check Nexus mods for updates", Box::new(move || this.check_nexus_updates(true)));
+        add(t!("app-menu-check-nexus"), Box::new(move || this.check_nexus_updates(true)));
         let this = self.clone();
-        add("Force update pending Workshop mods", Box::new(move || {
+        add(t!("app-menu-force-update"), Box::new(move || {
             let ids = this.pending_workshop_ids();
             if ids.is_empty() {
-                crate::dialogs::info(&this.window, "Workshop", "No Workshop mod has a pending update.");
+                crate::dialogs::info(&this.window, &t!("app-workshop-title"), &t!("app-no-pending-workshop"));
             } else {
                 this.force_update(ids);
             }
         }));
         m.add_separator();
         let this = self.clone();
-        add("Create mod report", Box::new(move || this.create_report()));
+        add(t!("app-menu-create-report"), Box::new(move || this.create_report()));
         if crate::jobs::REPORT_WEBHOOK.is_some() {
             let this = self.clone();
-            add("Send report to Discord…", Box::new(move || this.send_report()));
+            add(t!("app-menu-send-report"), Box::new(move || this.send_report()));
         }
         let this = self.clone();
-        add("Create desktop shortcut", Box::new(move || {
+        add(t!("app-menu-shortcut"), Box::new(move || {
             let name = this.st.borrow().profiles.active.clone();
             match tkmm_core::cli::create_profile_shortcut(&name) {
-                Ok(p) => crate::dialogs::info(&this.window, "Shortcut created", &format!("Shortcut created:\n{p}")),
+                Ok(p) => crate::dialogs::info(&this.window, &t!("app-shortcut-created-title"), &t!("app-shortcut-created", path = p)),
                 Err(e) => crate::dialogs::error(&this.window, &e),
             }
         }));
@@ -740,8 +727,8 @@ impl App {
 
     unsafe fn profile_new(self: &Rc<Self>, duplicate: bool) {
         let active = self.st.borrow().profiles.active.clone();
-        let initial = if duplicate { format!("{active} copy") } else { String::new() };
-        let Some(name) = crate::dialogs::ask_text(&self.window, if duplicate { "Duplicate profile" } else { "New profile" }, "Profile name:", &initial) else { return };
+        let initial = if duplicate { t!("app-profile-copy-name", name = &active) } else { String::new() };
+        let Some(name) = crate::dialogs::ask_text(&self.window, &if duplicate { t!("app-duplicate-profile-title") } else { t!("app-new-profile-title") }, &t!("app-profile-name"), &initial) else { return };
         let r = {
             let mut st = self.st.borrow_mut();
             let from = duplicate.then(|| st.active());
@@ -760,7 +747,7 @@ impl App {
 
     unsafe fn profile_rename(self: &Rc<Self>) {
         let active = self.st.borrow().profiles.active.clone();
-        let Some(name) = crate::dialogs::ask_text(&self.window, "Rename profile", "New name:", &active) else { return };
+        let Some(name) = crate::dialogs::ask_text(&self.window, &t!("app-rename-profile-title"), &t!("app-rename-profile-name"), &active) else { return };
         let r = {
             let mut st = self.st.borrow_mut();
             let r = profile_ops::rename(&mut st.profiles, &active, &name);
@@ -777,7 +764,7 @@ impl App {
 
     unsafe fn profile_delete(self: &Rc<Self>) {
         let active = self.st.borrow().profiles.active.clone();
-        if !crate::dialogs::confirm(&self.window, "Delete profile", &format!("Delete profile \"{active}\"?")) {
+        if !crate::dialogs::confirm(&self.window, &t!("app-delete-profile-title"), &t!("app-delete-profile-text", name = &active)) {
             return;
         }
         let r = {
@@ -1029,7 +1016,7 @@ impl App {
                 let mut updating = false;
                 match r {
                     Ok(Some(meta)) => {
-                        self.update_label.set_text(&qs(format!("TK Mod Manager v{} is available.", meta.version)));
+                        self.update_label.set_text(&qs(t!("app-update-available", version = &meta.version)));
                         self.update_label.set_tool_tip(&qs(&meta.notes));
                         self.update_btn.set_enabled(true);
                         self.update_bar.set_visible(true);
@@ -1039,8 +1026,8 @@ impl App {
                             updating = meta.map(|m| self.offer_app_update(&m)).unwrap_or(false);
                         }
                     }
-                    Ok(None) if verbose => crate::dialogs::info(&self.window, "Updates", "TK Mod Manager is up to date."),
-                    Err(e) if verbose => crate::dialogs::error(&self.window, &format!("Update check failed: {e}")),
+                    Ok(None) if verbose => crate::dialogs::info(&self.window, &t!("app-updates-title"), &t!("app-up-to-date")),
+                    Err(e) if verbose => crate::dialogs::error(&self.window, &t!("app-update-check-failed", error = e)),
                     _ => {}
                 }
                 if !verbose && !updating {
@@ -1051,13 +1038,13 @@ impl App {
                     }
                 }
             }
-            UiEvent::UpdateProgress(f) => self.update_label.set_text(&qs(format!("Downloading update… {}%", (f * 100.0).round()))),
+            UiEvent::UpdateProgress(f) => self.update_label.set_text(&qs(t!("app-update-downloading", percent = (f * 100.0).round()))),
             UiEvent::UpdateInstalled(r) => match r {
                 Ok(()) => restart(),
                 Err(e) => {
                     self.update_btn.set_enabled(true);
-                    self.update_label.set_text(&qs("Update failed"));
-                    crate::dialogs::error(&self.window, &format!("The update could not be installed: {e}"));
+                    self.update_label.set_text(&qs(t!("app-update-failed")));
+                    crate::dialogs::error(&self.window, &t!("app-update-install-failed", error = e));
                 }
             },
             UiEvent::Cli(args) => self.apply_args(args),
@@ -1125,7 +1112,7 @@ impl App {
         let msg = if let Some(e) = &st.error {
             Some(e.clone())
         } else if st.paths.game_root.is_none() && !st.mods.is_empty() {
-            Some("Three Kingdoms was not found in Steam, Epic or Game Pass. Set the game folder in Settings.".to_string())
+            Some(t!("app-game-not-found"))
         } else {
             None
         };
@@ -1153,25 +1140,16 @@ impl App {
         if no_workshop {
             crate::dialogs::error(
                 &self.window,
-                "The Workshop folder was not found, so every Workshop pack looks missing right now. \
-                 Set it in Settings and rescan before removing these entries.",
+                &t!("app-purge-no-workshop"),
             );
             return;
         }
-        let plural = |n: usize| if n == 1 { "entry" } else { "entries" };
-        let question = if total == here {
-            format!("Remove {here} {} for packs that are not installed, from \"{name}\"?", plural(here))
+        let text = if total == here {
+            t!("app-purge-text", count = here, profile = &name)
         } else {
-            format!(
-                "Remove {here} {} for packs that are not installed from \"{name}\", and {} more from your other profiles?",
-                plural(here),
-                total - here
-            )
+            t!("app-purge-text-all", count = here, profile = &name, others = total - here)
         };
-        let text = format!(
-            "{question}\n\nTheir place in the load order goes with them: re-subscribing adds the mod back at the bottom, disabled."
-        );
-        if !self.ask_yes_no("Remove missing entries", &text) {
+        if !self.ask_yes_no(&t!("app-purge-title"), &text) {
             return;
         }
         {

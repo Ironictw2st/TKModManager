@@ -33,9 +33,9 @@ pub unsafe fn ask_update(parent: &QBox<QMainWindow>, title: &str, text: &str) ->
     mb.set_icon(Icon::Question);
     mb.set_window_title(&qs(title));
     mb.set_text(&qs(text));
-    let install = mb.add_button_q_string_button_role(&qs("Install"), ButtonRole::AcceptRole);
-    mb.add_button_q_string_button_role(&qs("Skip this version"), ButtonRole::DestructiveRole);
-    let later = mb.add_button_q_string_button_role(&qs("Not now"), ButtonRole::RejectRole);
+    let install = mb.add_button_q_string_button_role(&qs(t!("dialog-install")), ButtonRole::AcceptRole);
+    mb.add_button_q_string_button_role(&qs(t!("dialog-skip-version")), ButtonRole::DestructiveRole);
+    let later = mb.add_button_q_string_button_role(&qs(t!("dialog-not-now")), ButtonRole::RejectRole);
     mb.set_default_button_q_push_button(install);
     mb.set_escape_button_q_abstract_button(later);
     mb.exec();
@@ -108,7 +108,7 @@ pub unsafe fn show_text(parent: &QBox<QMainWindow>, title: &str, intro: &str, te
     edit.set_font(&f);
     l.add_widget(&edit);
     let buttons = QDialogButtonBox::new();
-    let copy = QPushButton::from_q_string(&qs("Copy to clipboard"));
+    let copy = QPushButton::from_q_string(&qs(t!("dialog-copy")));
     buttons.add_button_q_abstract_button_button_role(&copy, qt_widgets::q_dialog_button_box::ButtonRole::ActionRole);
     let close = buttons.add_button_standard_button(BoxButton::Close);
     l.add_widget(&buttons);
@@ -126,7 +126,7 @@ pub unsafe fn ask_multiline(parent: &QBox<QMainWindow>, title: &str, intro: &str
 
 /// Edit `initial` as plain text (monospace); None when cancelled.
 pub unsafe fn edit_text(parent: &QBox<QMainWindow>, title: &str, intro: &str, initial: &str) -> Option<String> {
-    multiline(parent, title, intro, "OK", Some(initial))
+    multiline(parent, title, intro, &t!("dialog-ok"), Some(initial))
 }
 
 unsafe fn multiline(parent: &QBox<QMainWindow>, title: &str, intro: &str, ok_label: &str, initial: Option<&str>) -> Option<String> {

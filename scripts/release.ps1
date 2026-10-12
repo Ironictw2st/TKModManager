@@ -68,6 +68,17 @@ Copy-Item redist\steam_api64.dll $stage
 & C:\CraftRoot\bin\windeployqt6.exe --release --no-translations --no-system-d3d-compiler --no-opengl-sw --no-quick-import --compiler-runtime --dir $stage $exe | Out-Null
 if ($LASTEXITCODE) { throw "windeployqt failed" }
 Get-ChildItem $stage -Filter 'vc_redist*.exe' | Remove-Item -Force
+# Qt's own strings (Yes / No / Cancel, the date picker) for each language the app ships;
+# windeployqt's --no-translations skips all of Qt's ~30 catalogues.
+$qtTr = 'C:\CraftRoot	ranslations'
+foreach ($lang in Get-ChildItem crates\core\locales -Directory | Where-Object { $_.Name -ne 'en' }) {
+    $code = $lang.Name -replace '-', '_'
+    $qm = @("qtbase_$code.qm", "qtbase_$($code.ToLower()).qm", "qtbase_$(($code -split '_')[0]).qm") | ForEach-Object { Join-Path $qtTr $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($qm) {
+        New-Item -ItemType Directory (Join-Path $stage 'translations') -Force | Out-Null
+        Copy-Item $qm (Join-Path $stage 'translations')
+    } else { Write-Warning "no Qt translation for $($lang.Name): Qt's standard buttons stay English" }
+}
 # Image formats: previews and icons are PNG (built in), JPEG, GIF, WebP and ICO. Craft's KDE
 # plugins (kimg_*) would pull in ffmpeg, x265, JPEG XL and more for nothing.
 Get-ChildItem (Join-Path $stage 'imageformats') -File | Where-Object { $_.BaseName -notin @('qjpeg', 'qgif', 'qwebp', 'qico') } | Remove-Item -Force

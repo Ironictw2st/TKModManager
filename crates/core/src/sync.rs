@@ -8,13 +8,15 @@
 //! After 0.6.5 an `@coop<TAB>version<TAB><ver>` line records the Three Kingdoms Coop runtime
 //! (`0.9.0`, `0.9.0-debug`, or `none`); every player needs the same one.
 //! After 0.6.6 `@game<TAB>build<TAB><timestamp>/<size>` (the exe's PE fingerprint) and
-//! `@game<TAB>label<TAB><store> <file version>` record the game build: a Steam patch or store
+//! `@game<TAB>label<TAB><store> <file version>` record the game build (store = `GameStore::key`
+//! since 0.6.9, the English store name before): a Steam patch or store
 //! difference keeps players out of each other's lobby even with identical packs.
 
 use crate::fingerprint::ExeFingerprint;
 use crate::hash::PackHash;
 use crate::packs::{ModEntry, ModSource};
 use crate::paths::GameStore;
+use crate::t;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,23 +32,39 @@ pub struct ExportRow {
 pub struct GameBuild {
     /// `<timestamp>/<size>` of the exe's PE headers: what decides whether two games match.
     pub id: String,
-    /// "Steam 1.7.2.12345" for people.
-    pub label: String,
+    /// None when an export names a store this manager does not know.
+    pub store: Option<GameStore>,
+    /// The exe's file version ("1.7.2.12345"), or the whole unrecognised label.
+    pub version: String,
 }
 
 impl GameBuild {
     /// None when the exe could not be read.
     pub fn new(store: GameStore, version: Option<&str>, fp: Option<&ExeFingerprint>) -> Option<GameBuild> {
         let fp = fp?;
-        let label = match version {
-            Some(v) => format!("{} {v}", store.label()),
-            None => store.label().to_string(),
-        };
-        Some(GameBuild { id: format!("{}/{}", fp.timestamp_hex(), fp.size_hex()), label })
+        Some(GameBuild { id: format!("{}/{}", fp.timestamp_hex(), fp.size_hex()), store: Some(store), version: version.unwrap_or("").to_string() })
+    }
+
+    /// "Steam 1.7.2.12345" for people.
+    pub fn label(&self) -> String {
+        let store = self.store.map(GameStore::label).unwrap_or_default();
+        format!("{store} {}", self.version).trim().to_string()
+    }
+
+    /// `@game label` in an export: the store key, so the text does not depend on the language.
+    fn export_label(&self) -> String {
+        format!("{} {}", self.store.map(GameStore::key).unwrap_or(""), self.version).trim().to_string()
+    }
+
+    fn from_export_label(id: String, label: &str) -> GameBuild {
+        match GameStore::parse_prefix(label.trim()) {
+            Some((store, rest)) => GameBuild { id, store: Some(store), version: rest.to_string() },
+            None => GameBuild { id, store: None, version: label.trim().to_string() },
+        }
     }
 
     fn display(&self) -> String {
-        format!("{} ({})", self.label, self.id)
+        format!("{} ({})", self.label(), self.id)
     }
 }
 
@@ -59,7 +77,7 @@ pub fn build_export(profile_name: &str, rows: &[PackHash], date: &str, se_sim: &
     out.push(format!("{COOP_PREFIX}\tversion\t{}", coop.unwrap_or(COOP_NONE)));
     if let Some(g) = game {
         out.push(format!("{GAME_PREFIX}\tbuild\t{}", g.id));
-        out.push(format!("{GAME_PREFIX}\tlabel\t{}", g.label));
+        out.push(format!("{GAME_PREFIX}\tlabel\t{}", g.export_label()));
     }
     out.join("\n")
 }
@@ -81,7 +99,7 @@ pub fn parse_export_game(text: &str) -> Option<GameBuild> {
             _ => {}
         }
     }
-    Some(GameBuild { id: id?, label })
+    Some(GameBuild::from_export_label(id?, &label))
 }
 
 /// (theirs, ours) as display text when the export's game build differs from ours; None when
@@ -145,7 +163,7 @@ fn respaced_pack_cols(line: &str) -> Vec<String> {
 /// they agree or the export does not say.
 pub fn coop_mismatch(theirs: Option<Option<String>>, ours: Option<&str>) -> Option<(String, String)> {
     let theirs = theirs?;
-    (theirs.as_deref() != ours).then(|| (theirs.unwrap_or_else(|| "not installed".into()), ours.unwrap_or("not installed").to_string()))
+    (theirs.as_deref() != ours).then(|| (theirs.unwrap_or_else(|| t!("sync-not-installed")), ours.map(str::to_string).unwrap_or_else(|| t!("sync-not-installed"))))
 }
 
 /// The script-extender simulation settings in an export; None for an export without them
@@ -214,13 +232,13 @@ pub enum SyncStatus {
 }
 
 impl SyncStatus {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            SyncStatus::Match => "identical",
-            SyncStatus::Missing => "not installed",
-            SyncStatus::Disabled => "installed, not enabled",
-            SyncStatus::Different => "different file",
-            SyncStatus::Unverified => "present (no hash)",
+            SyncStatus::Match => t!("sync-identical"),
+            SyncStatus::Missing => t!("sync-not-installed"),
+            SyncStatus::Disabled => t!("sync-disabled"),
+            SyncStatus::Different => t!("sync-different"),
+            SyncStatus::Unverified => t!("sync-unverified"),
         }
     }
 }
@@ -375,6 +393,22 @@ mod tests {
         assert_eq!(game_mismatch(Some(&steam), Some(&steam)), None);
         assert_eq!(game_mismatch(None, Some(&steam)), None);
         assert_eq!(game_mismatch(Some(&epic), Some(&steam)), Some(("Epic (0x1234/0x4836000)".into(), "Steam 1.7.2.18053 (0x69ce4c84/0x4836000)".into())));
+    }
+
+    #[test]
+    fn game_label_is_exported_by_store_key() {
+        let gp = GameBuild::new(GameStore::GamePass, Some("1.7.2"), Some(&ExeFingerprint { timestamp: 1, size_of_image: 2 })).unwrap();
+        let text = build_export("MP", &[], "d", &BTreeMap::new(), None, Some(&gp));
+        assert!(text.contains("@game\tlabel\tgamepass 1.7.2"), "{text}");
+        assert_eq!(parse_export_game(&text), Some(gp.clone()));
+        assert_eq!(gp.label(), "Game Pass 1.7.2");
+        // Exports from 0.6.7 / 0.6.8 carry the English label.
+        let old = "@game\tbuild\t0x1/0x2\n@game\tlabel\tGame Pass 1.7.2\n";
+        assert_eq!(parse_export_game(old), Some(gp));
+        let old = parse_export_game("@game build 0x1/0x2\n@game label Steam\n").unwrap();
+        assert_eq!((old.store, old.version.as_str()), (Some(GameStore::Steam), ""));
+        let odd = parse_export_game("@game\tbuild\t0x1/0x2\n@game\tlabel\tSomething 2\n").unwrap();
+        assert_eq!((odd.store, odd.label()), (None, "Something 2".to_string()));
     }
 
     #[test]

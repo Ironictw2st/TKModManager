@@ -40,16 +40,16 @@ pub fn create_profile_shortcut(profile: &str) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let desktop = directories::UserDirs::new()
         .and_then(|u| u.desktop_dir().map(|d| d.to_path_buf()))
-        .ok_or("desktop folder not found")?;
+        .ok_or_else(|| crate::t!("err-no-desktop"))?;
     let safe: String = profile.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect();
     let lnk = desktop.join(format!("TK3K - {safe}.lnk"));
-    let mut link = mslnk::ShellLink::new(&exe).map_err(|e| format!("shortcut: {e}"))?;
+    let mut link = mslnk::ShellLink::new(&exe).map_err(|e| crate::t!("err-shortcut", error = e.to_string()))?;
     link.set_arguments(Some(format!("--profile \"{}\" --launch", profile.replace('"', ""))));
-    link.set_name(Some(format!("Play Three Kingdoms with the {profile} profile")));
+    link.set_name(Some(crate::t!("shortcut-description", profile = profile)));
     if let Some(dir) = exe.parent() {
         link.set_working_dir(Some(dir.to_string_lossy().into_owned()));
     }
-    link.create_lnk(&lnk).map_err(|e| format!("shortcut: {e}"))?;
+    link.create_lnk(&lnk).map_err(|e| crate::t!("err-shortcut", error = e.to_string()))?;
     Ok(lnk.to_string_lossy().into_owned())
 }
 

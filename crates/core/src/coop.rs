@@ -11,6 +11,7 @@
 
 use crate::fingerprint::ExeFingerprint;
 use crate::paths::{self, GameStore};
+use crate::t;
 use crate::update::{self, Release};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -68,14 +69,17 @@ impl CoopInstall {
 
     /// One line for status text and bug reports.
     pub fn summary(&self) -> String {
-        let version = self.version.as_deref().map(|v| format!(" {v}")).unwrap_or_default();
-        let build = if self.debug { " (Debug build)" } else { "" };
+        let mut tag = self.version.clone().unwrap_or_default();
+        if self.debug {
+            tag = t!("coop-debug-build", version = tag).trim().to_string();
+        }
+        let has_tag = if tag.is_empty() { "no" } else { "yes" };
         if self.active() {
-            format!("installed{version}{build}")
+            t!("coop-summary-installed", tag = tag, has_tag = has_tag)
         } else if self.runtime_present {
-            format!("installed{version}{build}, but Steam put the original amd_ags_x64.dll back: run Coop's Setup again")
+            t!("coop-summary-proxy-reset", tag = tag, has_tag = has_tag)
         } else {
-            format!("proxy present{version}{build}, but tw3k_coop.dll is missing: run Coop's Setup again")
+            t!("coop-summary-runtime-missing", tag = tag, has_tag = has_tag)
         }
     }
 
@@ -199,12 +203,12 @@ pub enum CoopProblem {
 }
 
 impl CoopProblem {
-    pub fn text(&self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            CoopProblem::PackWithoutRuntime => "The tw3k_coop pack is enabled, but Three Kingdoms Coop's DLL is not installed. Without it the extra lobby seats do not work.",
-            CoopProblem::ProxyReset => "Steam put the original amd_ags_x64.dll back (game update or file verification), so Three Kingdoms Coop will not load. Run Coop's Setup again.",
-            CoopProblem::UnsupportedBuild => "Three Kingdoms Coop only works on the Steam version 1.7.2. It is installed here but will stay inactive.",
-            CoopProblem::DebugWithScriptExtender => "Three Kingdoms Coop's Debug build hooks the battle vote function the script extender also uses. Older script extenders refuse to start with it; newer ones only turn off \"one Delegate vote counts for every human\". Install Coop's normal (release) Setup to keep both.",
+            CoopProblem::PackWithoutRuntime => t!("coop-problem-pack-without-runtime"),
+            CoopProblem::ProxyReset => t!("coop-problem-proxy-reset"),
+            CoopProblem::UnsupportedBuild => t!("coop-problem-unsupported-build"),
+            CoopProblem::DebugWithScriptExtender => t!("coop-problem-debug-with-se"),
         }
     }
 
@@ -296,22 +300,22 @@ pub fn download_dir(version: &str) -> PathBuf {
 /// file, or without a line for the Setup, is refused. Returns the verified exe. Blocking.
 pub fn download_setup(rel: &CoopRelease, progress: &dyn Fn(f64)) -> Result<PathBuf, String> {
     if rel.version.is_empty() || rel.version.contains(['/', '\\']) || rel.version.contains("..") {
-        return Err("bad version".into());
+        return Err(t!("err-bad-version"));
     }
-    let sums_url = rel.sums_url.as_deref().ok_or("this Coop release has no SHA256SUMS.txt, so its Setup cannot be verified")?;
+    let sums_url = rel.sums_url.as_deref().ok_or_else(|| t!("err-coop-no-sums"))?;
     let sums = String::from_utf8_lossy(&update::download_bytes(sums_url)?).into_owned();
-    let want = sum_for(&sums, &rel.setup_name).ok_or_else(|| format!("SHA256SUMS.txt has no line for {}", rel.setup_name))?;
+    let want = sum_for(&sums, &rel.setup_name).ok_or_else(|| t!("err-coop-sums-no-line", file = &rel.setup_name))?;
     let dir = download_dir(&rel.version);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| t!("err-create-folder", path = dir.display().to_string(), error = e.to_string()))?;
     let path = dir.join(&rel.setup_name);
     let partial = dir.join(format!("{}.partial", rel.setup_name));
     let result = update::download_to(&rel.setup_url, &partial, progress).and_then(|()| {
         let got = hex::encode(Sha256::digest(std::fs::read(&partial).map_err(|e| e.to_string())?));
         if got != want {
-            return Err(format!("{} failed its SHA256 check (expected {want}, got {got})", rel.setup_name));
+            return Err(t!("err-coop-sha256", file = &rel.setup_name, expected = want, actual = got));
         }
         let _ = std::fs::remove_file(&path);
-        std::fs::rename(&partial, &path).map_err(|e| format!("finalise {}: {e}", path.display()))
+        std::fs::rename(&partial, &path).map_err(|e| t!("err-replace-folder", path = path.display().to_string(), error = e.to_string()))
     });
     if result.is_err() {
         let _ = std::fs::remove_file(&partial);
@@ -325,7 +329,7 @@ pub fn download_setup(rel: &CoopRelease, progress: &dyn Fn(f64)) -> Result<PathB
 /// cancelled). Refuses while the game runs. Blocking.
 pub fn run_setup(setup: &Path, game_root: &Path) -> Result<u32, String> {
     if !inject_core::find_pids(paths::EXE_NAME).is_empty() {
-        return Err("Close the game first: Coop's Setup cannot replace its files while it runs.".into());
+        return Err(t!("err-coop-game-running"));
     }
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
     let verb = wide("open");
@@ -353,7 +357,7 @@ pub fn run_setup(setup: &Path, game_root: &Path) -> Result<u32, String> {
     if unsafe { ShellExecuteExW(&mut info) } == 0 {
         let err = std::io::Error::last_os_error();
         // ERROR_CANCELLED: the player said No to the administrator prompt.
-        return Err(if err.raw_os_error() == Some(1223) { "Setup was not started (administrator permission was declined).".into() } else { format!("Could not start Setup: {err}") });
+        return Err(if err.raw_os_error() == Some(1223) { t!("err-coop-setup-declined") } else { t!("err-coop-setup-start", error = err.to_string()) });
     }
     // The handle ShellExecuteEx returned; ProcHandle closes it.
     let Some(process) = crate::winproc::ProcHandle::from_raw(info.h_process) else { return Ok(0) };
@@ -361,13 +365,13 @@ pub fn run_setup(setup: &Path, game_root: &Path) -> Result<u32, String> {
 }
 
 /// What an Inno Setup exit code means for the player.
-pub fn setup_outcome(code: u32) -> &'static str {
+pub fn setup_outcome(code: u32) -> String {
     match code {
-        0 => "Setup finished.",
-        2 | 5 => "Setup was cancelled; nothing was changed.",
-        7 => "Setup stopped before installing (see its message); nothing was changed.",
-        8 => "Setup finished, but Windows needs a restart to complete it.",
-        _ => "Setup did not finish. Its own log and message explain why.",
+        0 => t!("coop-setup-finished"),
+        2 | 5 => t!("coop-setup-cancelled"),
+        7 => t!("coop-setup-stopped"),
+        8 => t!("coop-setup-restart"),
+        _ => t!("coop-setup-failed"),
     }
 }
 

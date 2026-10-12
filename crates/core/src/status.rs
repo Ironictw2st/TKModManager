@@ -13,6 +13,7 @@ use crate::fmt::format_date;
 use crate::packs::{ModEntry, ModSource};
 use crate::profiles::Profile;
 use crate::se_scan::SeInfo;
+use crate::t;
 use crate::workshop::WorkshopItem;
 use std::cmp::Ordering;
 
@@ -26,13 +27,13 @@ pub enum StatusKind {
 }
 
 impl StatusKind {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            StatusKind::Pending => "Update pending",
-            StatusKind::Old => "Older than game patch",
-            StatusKind::Ok => "Up to date",
-            StatusKind::Unknown => "Unknown",
-            StatusKind::Local => "Local file",
+            StatusKind::Pending => t!("status-pending"),
+            StatusKind::Old => t!("status-old"),
+            StatusKind::Ok => t!("status-ok"),
+            StatusKind::Unknown => t!("status-unknown"),
+            StatusKind::Local => t!("status-local"),
         }
     }
     /// Sort weight: problems first.
@@ -57,18 +58,14 @@ pub struct ModStatus {
 
 pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) -> ModStatus {
     let Some(m) = m else {
-        return ModStatus { kind: StatusKind::Unknown, text: "Not installed".into(), latest: None, installed: None };
+        return ModStatus { kind: StatusKind::Unknown, text: t!("status-not-installed"), latest: None, installed: None };
     };
     if let Some(nx) = m.nexus.as_ref().filter(|_| m.source == ModSource::Nexus) {
         return nexus_status(nx);
     }
     if m.source != ModSource::Workshop {
-        let text = if m.source == ModSource::Data {
-            "Local pack in data/: no Workshop version to compare"
-        } else {
-            "Pack from an extra folder: no Workshop version to compare"
-        };
-        return ModStatus { kind: StatusKind::Local, text: text.into(), latest: None, installed: None };
+        let text = if m.source == ModSource::Data { t!("status-local-data") } else { t!("status-local-folder") };
+        return ModStatus { kind: StatusKind::Local, text, latest: None, installed: None };
     }
     let api = ws.filter(|w| !w.from_launcher_cache && w.time_updated > 0).map(|w| w.time_updated).unwrap_or(0);
     let latest = Some(m.latest_updated.unwrap_or(0).max(api)).filter(|v| *v > 0);
@@ -79,28 +76,24 @@ pub fn mod_status(m: Option<&ModEntry>, ws: Option<&WorkshopItem>, cutoff: u64) 
         if l > i && m.mtime < l {
             return ModStatus {
                 kind: StatusKind::Pending,
-                text: format!(
-                    "Update pending: Steam has the {} version, {} is installed. Use \"Force update from Steam\" to download it now.",
-                    format_date(l),
-                    format_date(i)
-                ),
+                text: t!("status-pending-text", latest = format_date(l), installed = format_date(i)),
                 latest,
                 installed,
             };
         }
     }
     let Some(published) = latest.or(installed) else {
-        return ModStatus { kind: StatusKind::Unknown, text: "No update information yet (Steam has not reported this item)".into(), latest: None, installed };
+        return ModStatus { kind: StatusKind::Unknown, text: t!("status-no-info"), latest: None, installed };
     };
     if cutoff > 0 && published < cutoff {
         return ModStatus {
             kind: StatusKind::Old,
-            text: format!("Last updated {}, before the current game build ({}). It may still work fine.", format_date(published), format_date(cutoff)),
+            text: t!("status-old-text", updated = format_date(published), cutoff = format_date(cutoff)),
             latest,
             installed,
         };
     }
-    ModStatus { kind: StatusKind::Ok, text: format!("Up to date (updated {})", format_date(published)), latest, installed }
+    ModStatus { kind: StatusKind::Ok, text: t!("status-ok-text", updated = format_date(published)), latest, installed }
 }
 
 /// Workshop ids among `mods` that have an update Steam has not installed yet (the red dot).
@@ -121,24 +114,21 @@ pub fn stale_workshop_ids<'a>(mods: impl IntoIterator<Item = &'a ModEntry>, ws: 
 }
 
 fn nexus_status(nx: &crate::nexus::NexusRef) -> ModStatus {
-    let have = if nx.active.version.is_empty() { "unknown version".to_string() } else { format!("version {}", nx.active.version) };
+    let have = if nx.active.version.is_empty() { t!("status-nexus-version-unknown") } else { t!("status-nexus-version", version = &nx.active.version) };
     let installed = Some(nx.active.uploaded).filter(|v| *v > 0);
     if let Some(n) = &nx.newer {
+        let newer = if n.version.is_empty() { n.name.clone() } else { t!("status-nexus-version", version = &n.version) };
         return ModStatus {
             kind: StatusKind::Pending,
-            text: format!(
-                "Update on Nexus Mods: {} ({}) is available, {have} is installed. Download it with \"Mod Manager Download\" on the mod's Files tab.",
-                if n.version.is_empty() { n.name.clone() } else { format!("version {}", n.version) },
-                format_date(n.uploaded)
-            ),
+            text: t!("status-nexus-pending", newer = newer, date = format_date(n.uploaded), installed = have),
             latest: Some(n.uploaded),
             installed,
         };
     }
     if nx.mod_id.is_none() {
-        return ModStatus { kind: StatusKind::Local, text: "Installed from an archive: no Nexus page to compare".into(), latest: None, installed };
+        return ModStatus { kind: StatusKind::Local, text: t!("status-nexus-archive"), latest: None, installed };
     }
-    ModStatus { kind: StatusKind::Ok, text: format!("From Nexus Mods, {have}"), latest: installed, installed }
+    ModStatus { kind: StatusKind::Ok, text: t!("status-nexus-ok", installed = have), latest: installed, installed }
 }
 
 /// What a mod asks of the script extender.
@@ -170,9 +160,9 @@ pub fn se_requirement(scan: Option<&SeInfo>) -> SeRequirement {
 pub fn range_text(r: &SeRequirement) -> String {
     match (&r.min_version, &r.max_version) {
         (Some(lo), Some(hi)) if lo == hi => lo.clone(),
-        (Some(lo), Some(hi)) => format!("{lo} – {hi}"),
-        (Some(lo), None) => format!("{lo} or newer"),
-        (None, Some(hi)) => format!("up to {hi}"),
+        (Some(lo), Some(hi)) => t!("se-range-between", min = lo, max = hi),
+        (Some(lo), None) => t!("se-range-min", min = lo),
+        (None, Some(hi)) => t!("se-range-max", max = hi),
         (None, None) => String::new(),
     }
 }
@@ -180,15 +170,15 @@ pub fn range_text(r: &SeRequirement) -> String {
 /// "Declared in SE/script_extender.json · by Ironic · version 0.28"
 pub fn source_text(r: &SeRequirement) -> String {
     if !r.required {
-        return "Does not use the script extender".into();
+        return t!("se-source-none");
     }
-    let mut bits = vec!["Declared in SE/script_extender.json".to_string()];
+    let mut bits = vec![t!("se-source-declared")];
     if let Some(a) = &r.author {
-        bits.push(format!("by {a}"));
+        bits.push(t!("se-source-author", author = a));
     }
     let range = range_text(r);
     if !range.is_empty() {
-        bits.push(format!("version {range}"));
+        bits.push(t!("se-source-version", range = range));
     }
     bits.join(" · ")
 }
@@ -249,10 +239,10 @@ pub fn se_unmet(r: &SeRequirement, profile_dll: bool, dll_version: Option<&str>)
 pub fn unmet_text(u: SeUnmet, r: &SeRequirement, have: Option<&str>) -> String {
     let have = have.unwrap_or("?");
     match u {
-        SeUnmet::Off => "The script extender is off for this profile.".into(),
-        SeUnmet::NoDll => "No script extender DLL matches this game build.".into(),
-        SeUnmet::TooOld => format!("Needs script extender {}; v{have} is installed.", range_text(r)),
-        SeUnmet::TooNew => format!("Supports script extender {} only; v{have} is installed.", range_text(r)),
+        SeUnmet::Off => t!("se-unmet-off"),
+        SeUnmet::NoDll => t!("se-unmet-no-dll"),
+        SeUnmet::TooOld => t!("se-unmet-too-old", range = range_text(r), installed = have),
+        SeUnmet::TooNew => t!("se-unmet-too-new", range = range_text(r), installed = have),
     }
 }
 
@@ -275,8 +265,8 @@ pub fn se_problems(profile: &Profile, requirement: impl Fn(&str) -> SeRequiremen
                 p.mods.push(title(&e.key));
                 if p.text != text {
                     p.text = match u {
-                        SeUnmet::TooOld => format!("Some mods need a newer script extender than v{}.", dll_version.unwrap_or("?")),
-                        SeUnmet::TooNew => format!("Some mods do not support script extender v{}.", dll_version.unwrap_or("?")),
+                        SeUnmet::TooOld => t!("se-unmet-some-too-old", installed = dll_version.unwrap_or("?")),
+                        SeUnmet::TooNew => t!("se-unmet-some-too-new", installed = dll_version.unwrap_or("?")),
                         _ => text,
                     };
                 }

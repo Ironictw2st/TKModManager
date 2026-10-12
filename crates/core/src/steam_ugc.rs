@@ -8,6 +8,7 @@
 //! line per event on stdout and exits. Loading the DLL dynamically keeps it out of the
 //! manager's import table, so a missing DLL only disables this feature.
 
+use crate::t;
 use core::ffi::c_void;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -103,16 +104,16 @@ impl Steam {
                 let len = err.iter().position(|b| *b == 0).unwrap_or(0);
                 let text = String::from_utf8_lossy(&err[..len]).into_owned();
                 return Err(match code {
-                    2 => "Steam is not running (start Steam and try again)".into(),
-                    3 => "the Steam client is out of date".into(),
+                    2 => t!("steam-not-running"),
+                    3 => t!("steam-out-of-date"),
                     _ if !text.is_empty() => format!("Steam: {text}"),
-                    _ => format!("Steam API init failed ({code})"),
+                    _ => t!("steam-init-failed", code = code as i64),
                 });
             }
             let ugc = get_ugc();
             if ugc.is_null() {
                 shutdown();
-                return Err("the Steam client does not offer the Workshop interface this build needs".into());
+                return Err(t!("steam-no-ugc"));
             }
             // Only a fully initialised session exists as a `Steam`, so `Drop` (SteamAPI_Shutdown)
             // runs exactly once, at the end of the session.
@@ -144,7 +145,7 @@ impl Steam {
             if unsafe { (self.download_item)(self.ugc, id, true) } {
                 jobs.push(Job { id, started: Instant::now(), seen_busy: false, last: (0, 0), finished: false });
             } else {
-                emit(Event::Finished { id, ok: false, message: "Steam refused the download (is the item still subscribed?)".into() });
+                emit(Event::Finished { id, ok: false, message: t!("steam-download-refused") });
             }
         }
         let begin = Instant::now();
@@ -166,7 +167,7 @@ impl Steam {
             if begin.elapsed() > timeout {
                 for j in jobs.iter_mut().filter(|j| !j.finished) {
                     j.finished = true;
-                    emit(Event::Finished { id: j.id, ok: false, message: "timed out; Steam may still finish it in the background".into() });
+                    emit(Event::Finished { id: j.id, ok: false, message: t!("steam-download-timeout") });
                 }
             }
             std::thread::sleep(Duration::from_millis(250));
@@ -189,13 +190,13 @@ pub fn settled(state: u32, seen_busy: bool, elapsed: Duration) -> Option<(bool, 
         return None;
     }
     if state & STATE_INSTALLED != 0 && state & STATE_NEEDS_UPDATE == 0 {
-        let msg = if seen_busy { "updated" } else { "already up to date" };
-        return Some((true, msg.into()));
+        let msg = if seen_busy { t!("steam-download-updated") } else { t!("steam-download-current") };
+        return Some((true, msg));
     }
     if state & STATE_SUBSCRIBED == 0 {
-        return Some((false, "you are not subscribed to this item (unsubscribed or deleted?)".into()));
+        return Some((false, t!("steam-not-subscribed")));
     }
-    Some((false, format!("Steam did not finish the download (item state {state:#x})")))
+    Some((false, t!("steam-download-unfinished", state = format!("{state:#x}"))))
 }
 
 /// Body of the helper process: `ids` from the command line, events on stdout.

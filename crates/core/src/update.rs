@@ -80,12 +80,12 @@ fn get_json(url: &str) -> Result<serde_json::Value, String> {
         .get(url)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
-        .map_err(|e| format!("network error: {e}"))?;
+        .map_err(|e| crate::t!("err-network", error = e.to_string()))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err("no release published yet".into());
+        return Err(crate::t!("err-no-release"));
     }
     if !resp.status().is_success() {
-        return Err(format!("GitHub API returned {}", resp.status()));
+        return Err(crate::t!("err-github-status", status = resp.status().to_string()));
     }
     resp.json().map_err(|e| format!("bad response JSON: {e}"))
 }
@@ -117,35 +117,35 @@ pub fn pick_release(releases: Vec<Release>, allow_prerelease: bool) -> Option<Re
 
 /// Fetch a small file (e.g. a release's manifest.json) into memory. Blocking.
 pub fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let resp = client()?.get(url).send().map_err(|e| format!("download failed: {e}"))?;
+    let resp = client()?.get(url).send().map_err(|e| crate::t!("err-download", error = e.to_string()))?;
     if !resp.status().is_success() {
-        return Err(format!("download returned {}", resp.status()));
+        return Err(crate::t!("err-download-status", status = resp.status().to_string()));
     }
-    resp.bytes().map(|b| b.to_vec()).map_err(|e| format!("download error: {e}"))
+    resp.bytes().map(|b| b.to_vec()).map_err(|e| crate::t!("err-download", error = e.to_string()))
 }
 
 /// Stream `url` to `path`, reporting a 0..1 fraction. Blocking.
 pub fn download_to(url: &str, path: &Path, progress: &dyn Fn(f64)) -> Result<(), String> {
-    let mut resp = client()?.get(url).send().map_err(|e| format!("download failed: {e}"))?;
+    let mut resp = client()?.get(url).send().map_err(|e| crate::t!("err-download", error = e.to_string()))?;
     if !resp.status().is_success() {
-        return Err(format!("download returned {}", resp.status()));
+        return Err(crate::t!("err-download-status", status = resp.status().to_string()));
     }
     let total = resp.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+    let mut file = std::fs::File::create(path).map_err(|e| crate::t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
     let mut buf = vec![0u8; 256 * 1024];
     let mut done: u64 = 0;
     loop {
-        let n = resp.read(&mut buf).map_err(|e| format!("download error: {e}"))?;
+        let n = resp.read(&mut buf).map_err(|e| crate::t!("err-download", error = e.to_string()))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| format!("write error: {e}"))?;
+        file.write_all(&buf[..n]).map_err(|e| crate::t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
         done += n as u64;
         if total > 0 {
             progress((done as f64 / total as f64).min(1.0));
         }
     }
-    file.flush().map_err(|e| format!("flush error: {e}"))?;
+    file.flush().map_err(|e| crate::t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
     Ok(())
 }
 
@@ -158,7 +158,7 @@ pub fn check_update(allow_prerelease: bool) -> Result<Option<UpdateMeta>, String
         return Ok(None);
     }
     let latest = if allow_prerelease {
-        pick_release(fetch_releases(OWNER, REPO)?, true).ok_or("no release published yet")?
+        pick_release(fetch_releases(OWNER, REPO)?, true).ok_or_else(|| crate::t!("err-no-release"))?
     } else {
         fetch_latest_release(OWNER, REPO)?
     };
@@ -167,7 +167,7 @@ pub fn check_update(allow_prerelease: bool) -> Result<Option<UpdateMeta>, String
     if remote <= current {
         return Ok(None);
     }
-    let asset_url = latest.asset_url(ASSET_NAME).ok_or_else(|| format!("release has no asset named {ASSET_NAME}"))?.to_string();
+    let asset_url = latest.asset_url(ASSET_NAME).ok_or_else(|| crate::t!("err-release-missing-asset", file = ASSET_NAME))?.to_string();
     Ok(Some(UpdateMeta { version: latest.version, notes: latest.notes, asset_url }))
 }
 
@@ -242,11 +242,11 @@ pub fn apply_staged(staging: &Path, target: &Path) -> Result<usize, String> {
         if to.exists() {
             let old = old_name(&to);
             let _ = std::fs::remove_file(&old);
-            std::fs::rename(&to, &old).map_err(|e| format!("cannot move {} aside: {e}", to.display()))?;
+            std::fs::rename(&to, &old).map_err(|e| crate::t!("err-replace-file", path = to.display().to_string(), error = e.to_string()))?;
             moved_aside.push(old_name(rel).to_string_lossy().replace('\\', "/"));
             write_list(&moved_aside);
         }
-        std::fs::rename(&from, &to).map_err(|e| format!("cannot install {}: {e}", to.display()))?;
+        std::fs::rename(&from, &to).map_err(|e| crate::t!("err-replace-file", path = to.display().to_string(), error = e.to_string()))?;
     }
     write_list(&moved_aside);
     let _ = std::fs::remove_dir_all(staging);
@@ -264,7 +264,7 @@ pub fn install_update(asset_url: &str, progress: &dyn Fn(f64)) -> Result<(), Str
     let _ = std::fs::remove_file(&zip_path);
     if !staging.join(format!("{}.exe", env!("CARGO_PKG_NAME"))).is_file() && !files_under(&staging).iter().any(|p| p.extension().map(|e| e == "exe").unwrap_or(false)) {
         let _ = std::fs::remove_dir_all(&staging);
-        return Err("the update zip contains no executable".into());
+        return Err(crate::t!("err-update-no-exe"));
     }
     apply_staged(&staging, &dir)?;
     Ok(())

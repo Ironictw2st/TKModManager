@@ -39,17 +39,37 @@ const COL_TYPE: i32 = 6;
 const COL_SIZE: i32 = 7;
 const COL_UPDATED: i32 = 8;
 const COLUMN_COUNT: i32 = COL_UPDATED + 1;
-const HEADERS: [&str; 9] = ["", "", "#", "Mod", "Notes", "Source", "Type", "Size", "Updated"];
+fn headers() -> [String; 9] {
+    [
+        String::new(),
+        String::new(),
+        "#".to_string(),
+        t!("mods-col-mod"),
+        t!("mods-col-notes"),
+        t!("mods-col-source"),
+        t!("mods-col-type"),
+        t!("mods-col-size"),
+        t!("mods-col-updated"),
+    ]
+}
 
 const MOVIE_HEADER_KEY: &str = "__movies__";
 
-/// Row-size presets: (settings value, label, row min-height px, font +pt, check box px,
+/// Row-size presets: (settings value, row min-height px, font +pt, check box px,
 /// check / status column widths).
-pub const DENSITIES: [(&str, &str, i32, f64, i32, i32, i32); 3] = [
-    ("compact", "Compact rows", 22, 0.0, 14, 44, 48),
-    ("normal", "Normal rows", 30, 0.5, 18, 52, 56),
-    ("large", "Large rows", 40, 2.0, 22, 60, 64),
+pub const DENSITIES: [(&str, i32, f64, i32, i32, i32); 3] = [
+    ("compact", 22, 0.0, 14, 44, 48),
+    ("normal", 30, 0.5, 18, 52, 56),
+    ("large", 40, 2.0, 22, 60, 64),
 ];
+
+fn density_label(value: &str) -> String {
+    match value {
+        "compact" => t!("mods-density-compact"),
+        "large" => t!("mods-density-large"),
+        _ => t!("mods-density-normal"),
+    }
+}
 
 /// Save and apply a row-size preset (from the list toolbar or Settings).
 pub unsafe fn set_density(app: &Rc<App>, value: &str) {
@@ -66,7 +86,7 @@ pub unsafe fn set_density(app: &Rc<App>, value: &str) {
 
 /// The row-size choices, for the list toolbar and the Settings page.
 pub unsafe fn density_combo() -> QBox<QComboBox> {
-    let items: Vec<(&str, &str)> = DENSITIES.iter().map(|d| (d.1, d.0)).collect();
+    let items: Vec<(String, &str)> = DENSITIES.iter().map(|d| (density_label(d.0), d.0)).collect();
     combo(&items)
 }
 
@@ -101,10 +121,10 @@ pub struct ModListUi {
     pub pending_drop: RefCell<Vec<CppBox<QPersistentModelIndex>>>,
 }
 
-unsafe fn combo(items: &[(&str, &str)]) -> QBox<QComboBox> {
+unsafe fn combo(items: &[(String, &str)]) -> QBox<QComboBox> {
     let c = QComboBox::new_0a();
     for (label, value) in items {
-        c.add_item_q_string_q_variant(&qs(*label), &QVariant::from_q_string(&qs(*value)));
+        c.add_item_q_string_q_variant(&qs(label), &QVariant::from_q_string(&qs(*value)));
     }
     c
 }
@@ -139,25 +159,39 @@ impl ModListUi {
 
             let bar = QHBoxLayout::new_0a();
             let search = QLineEdit::new();
-            search.set_placeholder_text(&qs("Search title / file"));
+            search.set_placeholder_text(&qs(t!("mods-search-placeholder")));
             search.set_clear_button_enabled(true);
             search.set_minimum_width(200);
             bar.add_widget(&search);
-            let source = combo(&[("All sources", "all"), ("Workshop", "workshop"), ("data/", "data"), ("Folders", "folder"), ("Nexus", "nexus")]);
-            let pack_type = combo(&[("Mods + movies", "all"), ("Mod packs", "mod"), ("Movie packs", "movie")]);
-            let enabled = combo(&[("Enabled + disabled", "all"), ("Enabled", "enabled"), ("Disabled", "disabled"), ("Updated since last played", "updated")]);
-            let status = combo(&[("Any status", "all"), ("Update pending", "pending"), ("Older than game patch", "old"), ("Needs script extender", "se")]);
-            let tag = combo(&[("Any tag", "")]);
+            let source = combo(&[
+                (t!("mods-filter-all-sources"), "all"),
+                (t!("mods-filter-workshop"), "workshop"),
+                // The game's data folder: not translated.
+                ("data/".to_string(), "data"),
+                (t!("mods-filter-folders"), "folder"),
+                (t!("mods-filter-nexus"), "nexus"),
+            ]);
+            let pack_type = combo(&[(t!("mods-filter-all-types"), "all"), (t!("mods-filter-mod-packs"), "mod"), (t!("mods-filter-movie-packs"), "movie")]);
+            let enabled = combo(&[
+                (t!("mods-filter-enabled-and-disabled"), "all"),
+                (t!("mods-filter-enabled"), "enabled"),
+                (t!("mods-filter-disabled"), "disabled"),
+                (t!("mods-filter-updated"), "updated"),
+            ]);
+            let status = combo(&[
+                (t!("mods-filter-any-status"), "all"),
+                (t!("mods-filter-pending"), "pending"),
+                (t!("mods-filter-old"), "old"),
+                (t!("mods-filter-needs-se"), "se"),
+            ]);
+            let tag = combo(&[(t!("mods-filter-any-tag"), "")]);
             for c in [&source, &pack_type, &enabled, &status, &tag] {
                 bar.add_widget(c);
             }
-            let hidden = QCheckBox::from_q_string(&qs("Show hidden"));
+            let hidden = QCheckBox::from_q_string(&qs(t!("mods-show-hidden")));
             bar.add_widget(&hidden);
-            let missing = QCheckBox::from_q_string(&qs("Show missing"));
-            missing.set_tool_tip(&qs(
-                "Show entries whose pack is not installed any more (unsubscribed or deleted). \
-                 They are kept in the profile so the load order comes back if you re-subscribe.",
-            ));
+            let missing = QCheckBox::from_q_string(&qs(t!("mods-show-missing", count = 0)));
+            missing.set_tool_tip(&qs(t!("mods-show-missing-tip")));
             missing.set_visible(false);
             bar.add_widget(&missing);
             bar.add_stretch_1a(1);
@@ -171,18 +205,18 @@ impl ModListUi {
             updated_btn.set_visible(false);
             bar2.add_widget(&updated_btn);
             bar2.add_stretch_1a(1);
-            let group_btn = QPushButton::from_q_string(&qs("Add group"));
-            group_btn.set_tool_tip(&qs("Add a separator; the mods below it form a group you can fold, toggle and drag"));
-            let sort_btn = QPushButton::from_q_string(&qs("Sort A–Z"));
-            sort_btn.set_tool_tip(&qs("Sort by pack file name (the CA launcher's default order), inside each group"));
-            let top_btn = QPushButton::from_q_string(&qs("Enabled to top"));
-            top_btn.set_tool_tip(&qs("Move enabled mods above disabled ones, inside each group"));
-            let rescan_btn = QPushButton::from_q_string(&qs("Rescan"));
-            rescan_btn.set_tool_tip(&qs("Look for added and removed packs now (also runs when the window regains focus)"));
+            let group_btn = QPushButton::from_q_string(&qs(t!("mods-add-group")));
+            group_btn.set_tool_tip(&qs(t!("mods-add-group-tip")));
+            let sort_btn = QPushButton::from_q_string(&qs(t!("mods-sort")));
+            sort_btn.set_tool_tip(&qs(t!("mods-sort-tip")));
+            let top_btn = QPushButton::from_q_string(&qs(t!("mods-enabled-to-top")));
+            top_btn.set_tool_tip(&qs(t!("mods-enabled-to-top-tip")));
+            let rescan_btn = QPushButton::from_q_string(&qs(t!("mods-rescan")));
+            rescan_btn.set_tool_tip(&qs(t!("mods-rescan-tip")));
             let purge_btn = QPushButton::new();
             purge_btn.set_visible(false);
             let density = density_combo();
-            density.set_tool_tip(&qs("Height of the rows in the mod list (also in Settings)"));
+            density.set_tool_tip(&qs(t!("mods-density-tip")));
             bar2.add_widget(&purge_btn);
             bar2.add_widget(&density);
             bar2.add_widget(&group_btn);
@@ -193,7 +227,7 @@ impl ModListUi {
 
             let model = QStandardItemModel::new_0a();
             let labels = qt_core::QListOfQString::new_0a();
-            for h in HEADERS {
+            for h in headers() {
                 labels.append_q_string(&qs(h));
             }
             model.set_horizontal_header_labels(&labels);
@@ -297,7 +331,7 @@ impl ModListUi {
         }));
         let this = app.clone();
         self.sort_btn.clicked().connect(&SlotNoArgs::new(w, move || {
-            if !crate::dialogs::confirm(&this.window, "Sort A–Z", "Sort the load order alphabetically by pack file name (inside each group)?") {
+            if !crate::dialogs::confirm(&this.window, &t!("mods-sort"), &t!("mods-sort-confirm")) {
                 return;
             }
             let mut st = this.st.borrow_mut();
@@ -444,7 +478,7 @@ impl ModListUi {
 
     /// Apply a row-size preset (unknown values fall back to "normal").
     pub unsafe fn apply_density(&self, value: &str) {
-        let (v, _, row, plus, check, check_w, status_w) = DENSITIES.iter().copied().find(|d| d.0 == value).unwrap_or(DENSITIES[1]);
+        let (v, row, plus, check, check_w, status_w) = DENSITIES.iter().copied().find(|d| d.0 == value).unwrap_or(DENSITIES[1]);
         self.view.set_style_sheet(&qs(format!(
             "QTreeView::item {{ min-height: {row}px; }} QTreeView::indicator {{ width: {check}px; height: {check}px; }}"
         )));
@@ -557,26 +591,26 @@ impl ModListUi {
             a.triggered().connect(&SlotNoArgs::new(&menu, move || f()));
         };
         if groups::is_separator_key(&key) {
-            for (label, on) in [("Enable group", true), ("Disable group", false)] {
+            for (label, on) in [(t!("mods-menu-enable-group"), true), (t!("mods-menu-disable-group"), false)] {
                 let (this, k) = (app.clone(), key.clone());
-                add(label, !running, Box::new(move || {
+                add(&label, !running, Box::new(move || {
                     this.st.borrow_mut().update_active(|p| groups::toggle_group(&mut p.entries, &k, on));
                     this.mark(DIRTY_LIST | DIRTY_LAUNCH | DIRTY_HEADER);
                 }));
             }
             menu.add_separator();
             let (this, k) = (app.clone(), key.clone());
-            add("Rename…", true, Box::new(move || {
+            add(&t!("mods-menu-rename-group"), true, Box::new(move || {
                 let cur = this.st.borrow().active().entries.iter().find(|e| e.key == k).and_then(|e| e.label.clone()).unwrap_or_default();
-                if let Some(l) = crate::dialogs::ask_text(&this.window, "Rename group", "Group name:", &cur) {
+                if let Some(l) = crate::dialogs::ask_text(&this.window, &t!("mods-rename-group-title"), &t!("mods-group-name"), &cur) {
                     this.st.borrow_mut().update_active(|p| groups::rename_separator(&mut p.entries, &k, &l));
                     this.mark(DIRTY_LIST);
                 }
             }));
             let (this, k) = (app.clone(), key.clone());
-            add("Add group above…", true, Box::new(move || this.add_group(Some(k.clone()))));
+            add(&t!("mods-menu-add-group-above"), true, Box::new(move || this.add_group(Some(k.clone()))));
             let (this, k) = (app.clone(), key.clone());
-            add("Remove group (keeps its mods)", true, Box::new(move || {
+            add(&t!("mods-menu-remove-group"), true, Box::new(move || {
                 this.st.borrow_mut().update_active(|p| groups::remove_separator(&mut p.entries, &k));
                 this.mark(DIRTY_LIST);
             }));
@@ -590,39 +624,40 @@ impl ModListUi {
                 let st = app.st.borrow();
                 keys.into_iter().filter(|k| st.module(k).is_some()).collect()
             };
-            let n = if keys.len() > 1 { format!(" ({})", keys.len()) } else { String::new() };
-            for (label, on) in [("Enable", true), ("Disable", false)] {
+            // The count is shown only when several mods are selected.
+            let n = if keys.len() > 1 { keys.len() } else { 0 };
+            for (label, on) in [(t!("mods-menu-enable", count = n), true), (t!("mods-menu-disable", count = n), false)] {
                 let (this, ks) = (app.clone(), keys.clone());
-                add(&format!("{label}{n}"), !running && !ks.is_empty(), Box::new(move || {
+                add(&label, !running && !ks.is_empty(), Box::new(move || {
                     this.st.borrow_mut().toggle(&ks, Some(on));
                     this.mark(DIRTY_LIST | DIRTY_LAUNCH | DIRTY_HEADER | DIRTY_DETAILS);
                 }));
             }
             menu.add_separator();
             let (this, k) = (app.clone(), key.clone());
-            add("Add group above…", true, Box::new(move || this.add_group(Some(k.clone()))));
+            add(&t!("mods-menu-add-group-above"), true, Box::new(move || this.add_group(Some(k.clone()))));
             menu.add_separator();
             let m = app.st.borrow().module(&key).cloned();
             let ws = m.as_ref().and_then(|m| m.workshop_id.clone());
             let ws_ids = ws.clone();
             let this = app.clone();
-            add("Open in Workshop", ws.is_some(), Box::new(move || {
+            add(&t!("mods-menu-open-workshop"), ws.is_some(), Box::new(move || {
                 if let Some(id) = &ws {
                     crate::details::open_url(&format!("https://steamcommunity.com/sharedfiles/filedetails/?id={id}"));
                 }
                 let _ = &this;
             }));
             let this = app.clone();
-            add("Force update from Steam", ws_ids.is_some() &&!running && !app.steam_busy.get(), Box::new(move || {
+            add(&t!("mods-menu-force-update"), ws_ids.is_some() &&!running && !app.steam_busy.get(), Box::new(move || {
                 if let Some(id) = &ws_ids {
                     this.force_update(vec![id.clone()]);
                 }
             }));
             if let Some(nx) = m.as_ref().and_then(|m| m.nexus.clone()) {
                 if let Some(id) = nx.mod_id {
-                    add("Open on Nexus Mods", true, Box::new(move || crate::details::open_url(&tkmm_core::nexus::mod_page(id))));
+                    add(&t!("mods-menu-open-nexus"), true, Box::new(move || crate::details::open_url(&tkmm_core::nexus::mod_page(id))));
                 }
-                let versions = menu.add_menu_q_string(&qs("Version"));
+                let versions = menu.add_menu_q_string(&qs(t!("mods-menu-version")));
                 for f in &nx.versions {
                     let label = version_label(f);
                     let a = versions.add_action_q_string(&qs(&label));
@@ -633,10 +668,10 @@ impl ModListUi {
                     a.triggered().connect(&SlotNoArgs::new(&menu, move || this.nexus_set_active(&slot, &dir)));
                 }
                 let (this, slot, dir, label) = (app.clone(), nx.slot.clone(), nx.active.dir.clone(), version_label(&nx.active));
-                add("Delete this version…", !running, Box::new(move || this.nexus_remove(&slot, &dir, &label)));
+                add(&t!("mods-menu-delete-version"), !running, Box::new(move || this.nexus_remove(&slot, &dir, &label)));
             }
             let path = m.as_ref().map(|m| m.path.clone());
-            add("Show file in Explorer", path.is_some(), Box::new(move || {
+            add(&t!("mods-menu-show-file"), path.is_some(), Box::new(move || {
                 if let Some(p) = &path {
                     crate::details::reveal(p);
                 }
@@ -644,12 +679,12 @@ impl ModListUi {
             menu.add_separator();
             let hidden = app.st.borrow().meta_of(&key).hidden;
             let (this, k) = (app.clone(), key.clone());
-            add(if hidden { "Unhide" } else { "Hide" }, true, Box::new(move || {
+            add(&if hidden { t!("mods-menu-unhide") } else { t!("mods-menu-hide") }, true, Box::new(move || {
                 this.st.borrow_mut().set_meta(&k, |m| m.hidden = !hidden);
                 this.mark(DIRTY_LIST | DIRTY_DETAILS);
             }));
             let (this, k) = (app.clone(), key.clone());
-            add("Copy key", true, Box::new(move || this.clipboard_set(&k)));
+            add(&t!("mods-menu-copy-key"), true, Box::new(move || this.clipboard_set(&k)));
             let n_missing = {
                 let st = app.st.borrow();
                 profile_ops::missing_keys(&st.active(), &st.mods).len()
@@ -657,7 +692,7 @@ impl ModListUi {
             if n_missing > 0 {
                 menu.add_separator();
                 let this = app.clone();
-                add(&format!("Remove missing entries ({n_missing})…"), !running, Box::new(move || this.purge_missing()));
+                add(&t!("mods-menu-remove-missing", count = n_missing), !running, Box::new(move || this.purge_missing()));
             }
         }
         menu.exec_1a_mut(&self.view.viewport().map_to_global_q_point(pos));
@@ -680,7 +715,7 @@ impl ModListUi {
         tags.sort();
         tags.dedup();
         self.tag.clear();
-        self.tag.add_item_q_string_q_variant(&qs("Any tag"), &QVariant::from_q_string(&qs("")));
+        self.tag.add_item_q_string_q_variant(&qs(t!("mods-filter-any-tag")), &QVariant::from_q_string(&qs("")));
         for t in &tags {
             self.tag.add_item_q_string_q_variant(&qs(t), &QVariant::from_q_string(&qs(t)));
         }
@@ -698,10 +733,10 @@ impl ModListUi {
         // are there (they hold a place in the load order) and be able to clear them out.
         let missing_count = profile.entries.iter().filter(|e| !e.is_separator() && st.module(&e.key).is_none()).count();
         self.missing.set_visible(missing_count > 0);
-        self.missing.set_text(&qs(format!("Show missing ({missing_count})")));
+        self.missing.set_text(&qs(t!("mods-show-missing", count = missing_count)));
         self.missing.set_checked(f.show_missing);
         self.purge_btn.set_visible(missing_count > 0 && !st.game_running);
-        self.purge_btn.set_text(&qs(format!("Remove missing ({missing_count})…")));
+        self.purge_btn.set_text(&qs(t!("mods-remove-missing", count = missing_count)));
         self.group_btn.set_enabled(grouped);
         for b in [&self.sort_btn, &self.top_btn] {
             b.set_enabled(!st.game_running);
@@ -727,10 +762,10 @@ impl ModListUi {
         for e in &profile.entries {
             if e.is_separator() {
                 if grouped {
-                    let label = e.label.clone().unwrap_or_else(|| "Group".into());
+                    let label = e.label.clone().unwrap_or_else(|| t!("details-group-default-name"));
                     let members: Vec<String> = groups::group_members(&profile.entries, &e.key).into_iter().filter(|k| st.module(k).is_some()).collect();
                     let on = members.iter().filter(|k| profile.entries.iter().any(|x| &x.key == *k && x.enabled)).count();
-                    let head = item(&format!("{label}   ({on}/{} enabled)", members.len()));
+                    let head = item(&t!("mods-group-row", name = label, enabled = on, count = members.len()));
                     head.set_data_2a(&QVariant::from_q_string(&qs(&e.key)), role_key());
                     let bold = QFont::new_copy(&head.font());
                     bold.set_bold(true);
@@ -861,7 +896,7 @@ impl ModListUi {
         }
 
         if !movie_rows.is_empty() {
-            let head = item("Movie packs: always load after every mod pack; the engine fixes their order");
+            let head = item(&t!("mods-movie-header"));
             head.set_data_2a(&QVariant::from_q_string(&qs(MOVIE_HEADER_KEY)), role_key());
             head.set_flags(QFlags::from(ItemFlag::ItemIsEnabled));
             head.set_foreground(&QBrush::from_q_color(&icons::amber()));
@@ -929,13 +964,16 @@ impl ModListUi {
 
         let total = profile.entries.iter().filter(|e| !e.is_separator()).count() - missing_count;
         let enabled = st.count_enabled(&profile);
-        let missing_note = if missing_count > 0 { format!(" · {missing_count} missing") } else { String::new() };
-        self.count.set_text(&qs(format!(
-            "{enabled} enabled of {total} · {shown} shown{missing_note}{}",
-            if grouped { "" } else { " · groups hidden while sorting or filtering" }
-        )));
+        let mut parts = vec![t!("mods-count-enabled", enabled = enabled, total = total), t!("mods-count-shown", count = shown)];
+        if missing_count > 0 {
+            parts.push(t!("mods-count-missing", count = missing_count));
+        }
+        if !grouped {
+            parts.push(t!("mods-count-groups-hidden"));
+        }
+        self.count.set_text(&qs(parts.join(" · ")));
         self.updated_btn.set_visible(updated_count > 0 && f.enabled != "updated");
-        self.updated_btn.set_text(&qs(format!("{updated_count} updated since last played")));
+        self.updated_btn.set_text(&qs(t!("mods-updated-since-played", count = updated_count)));
         let _ = update::ASSET_NAME;
     }
 
@@ -970,10 +1008,10 @@ impl ModListUi {
         }
         check.set_flags(cflags);
 
-        let status_item = item(if req.required { "SE" } else { "" });
+        let status_item = item(&if req.required { t!("mods-se-mark") } else { String::new() });
         status_item.set_icon(&icons::status_dot(stat.kind));
         let unmet = if e.enabled { status::se_unmet(req, st.active().dll, have) } else { None };
-        let mut tip = format!("{}: {}", stat.kind.label(), stat.text);
+        let mut tip = t!("mods-status-tip", status = stat.kind.label(), text = &stat.text);
         if req.required {
             tip.push_str(&format!("\n{}", status::source_text(req)));
             if let Some(err) = &req.error {
@@ -1003,13 +1041,13 @@ impl ModListUi {
 
         let mut flags: Vec<String> = Vec::new();
         if m.is_none() {
-            flags.push("missing".into());
+            flags.push(t!("mods-flag-missing"));
         }
         if is_updated {
-            flags.push("updated".into());
+            flags.push(t!("mods-flag-updated"));
         }
         if hidden {
-            flags.push("hidden".into());
+            flags.push(t!("mods-flag-hidden"));
         }
         flags.extend(tags.iter().cloned());
         let flags_item = item(&flags.join(" · "));
@@ -1017,11 +1055,11 @@ impl ModListUi {
             flags_item.set_foreground(&QBrush::from_q_color(&icons::green()));
         }
 
-        let source_item = item(m.map(|m| st.source_label(m)).unwrap_or(""));
+        let source_item = item(&m.map(|m| st.source_label(m)).unwrap_or_default());
         if let Some(m) = m {
             source_item.set_tool_tip(&qs(&m.dir));
         }
-        let type_item = item(m.map(|m| if m.pack_type == PackType::Movie { "MOVIE" } else { "mod" }).unwrap_or(""));
+        let type_item = item(&m.map(|m| if m.pack_type == PackType::Movie { t!("mods-type-movie") } else { t!("mods-type-mod") }).unwrap_or_default());
         if m.map(|m| m.pack_type == PackType::Movie).unwrap_or(false) {
             type_item.set_foreground(&QBrush::from_q_color(&icons::amber()));
         }
@@ -1041,7 +1079,7 @@ impl ModListUi {
     }
 }
 
-/// "1.2 · Main file · installed 2026-09-22"
+/// "1.2 · Main file · installed Sep 22, 2026"
 pub fn version_label(f: &tkmm_core::nexus::InstalledFile) -> String {
     let mut bits = Vec::new();
     if !f.version.is_empty() {
@@ -1051,7 +1089,7 @@ pub fn version_label(f: &tkmm_core::nexus::InstalledFile) -> String {
         bits.push(f.name.clone());
     }
     if f.installed > 0 {
-        bits.push(format!("installed {}", tkmm_core::fmt::format_date(f.installed)));
+        bits.push(t!("mods-version-installed", date = tkmm_core::fmt::format_date(f.installed)));
     }
     if bits.is_empty() { f.dir.clone() } else { bits.join(" · ") }
 }
@@ -1078,7 +1116,7 @@ fn sort_column(k: SortKey) -> i32 {
 
 impl App {
     pub unsafe fn add_group(self: &Rc<Self>, before: Option<String>) {
-        let Some(label) = crate::dialogs::ask_text(&self.window, "Add group", "Group name:", "New group") else { return };
+        let Some(label) = crate::dialogs::ask_text(&self.window, &t!("mods-add-group"), &t!("mods-group-name"), &t!("mods-new-group")) else { return };
         self.st.borrow_mut().update_active(|p| {
             groups::add_separator(&mut p.entries, &label, before.as_deref());
         });

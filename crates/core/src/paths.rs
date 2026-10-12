@@ -28,13 +28,46 @@ pub enum GameStore {
 }
 
 impl GameStore {
-    pub fn label(self) -> &'static str {
+    /// The store's name for people (brand names stay as they are in every language).
+    pub fn label(self) -> String {
         match self {
+            GameStore::Steam => "Steam".into(),
+            GameStore::Epic => "Epic".into(),
+            GameStore::GamePass => "Game Pass".into(),
+            GameStore::Unknown => crate::t!("store-unknown"),
+        }
+    }
+
+    /// Fixed id for files other managers read (co-op exports); never translated.
+    pub fn key(self) -> &'static str {
+        match self {
+            GameStore::Steam => "steam",
+            GameStore::Epic => "epic",
+            GameStore::GamePass => "gamepass",
+            GameStore::Unknown => "unknown",
+        }
+    }
+
+    /// The store at the start of `text`, by key or by the English label older exports carry,
+    /// and the rest of the text.
+    pub fn parse_prefix(text: &str) -> Option<(GameStore, &str)> {
+        let all = [GameStore::Steam, GameStore::Epic, GameStore::GamePass, GameStore::Unknown];
+        let legacy = |s: GameStore| match s {
             GameStore::Steam => "Steam",
             GameStore::Epic => "Epic",
             GameStore::GamePass => "Game Pass",
             GameStore::Unknown => "unknown store",
+        };
+        for s in all {
+            for name in [s.key(), legacy(s)] {
+                if let Some(rest) = text.strip_prefix(name) {
+                    if rest.is_empty() || rest.starts_with(' ') {
+                        return Some((s, rest.trim()));
+                    }
+                }
+            }
         }
+        None
     }
 }
 

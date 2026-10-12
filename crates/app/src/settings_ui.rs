@@ -117,18 +117,17 @@ pub struct SettingsUi {
 /// Question shown before a Coop Setup is downloaded and run.
 fn coop_install_text(r: &CoopRelease, installed: Option<&CoopInstall>) -> String {
     let what = match installed {
-        Some(c) if c.active() => format!("Update Three Kingdoms Coop from {} to v{}?", c.version.as_deref().map(|v| format!("v{v}")).unwrap_or_else(|| "the installed version".into()), r.version),
-        Some(_) => format!("Repair Three Kingdoms Coop with Setup v{}?", r.version),
-        None => format!("Install Three Kingdoms Coop v{}?", r.version),
+        Some(c) if c.active() => t!("settings-coop-update-question",
+            from = c.version.as_deref().map(|v| format!("v{v}")).unwrap_or_else(|| t!("settings-coop-installed-version")),
+            version = &r.version
+        ),
+        Some(_) => t!("settings-coop-repair-question", version = &r.version),
+        None => t!("settings-coop-install-question", version = &r.version),
     };
     let text = format!(
-        "{what}\n\nThis downloads {} from github.com/{}/{} (checked against the release's SHA256SUMS.txt) and starts it. \
-         Setup asks for administrator rights, replaces amd_ags_x64.dll in your game folder (keeping Steam's original as amd_ags_x64_orig.dll) \
-         and adds tw3k_coop.dll. Remove it later from Windows Settings > Apps.\n\n\
-         Coop is a separate mod by Thom-Ernst. Every player needs the same version, plus the tw3k_coop pack from the Workshop.\n\n{}",
-        r.setup_name,
-        coop::OWNER,
-        coop::REPO,
+        "{what}\n\n{}\n\n{}\n\n{}",
+        t!("settings-coop-install-details", setup = &r.setup_name, repo = format!("{}/{}", coop::OWNER, coop::REPO)),
+        t!("settings-coop-install-separate"),
         crate::dialogs::clip_notes(&r.notes)
     );
     text.trim_end().to_string()
@@ -137,13 +136,13 @@ fn coop_install_text(r: &CoopRelease, installed: Option<&CoopInstall>) -> String
 /// Question shown before a DLL download. `pin`: the catalog's "Install and use".
 fn dll_install_text(r: &RemoteDll, pin: bool, pinned: Option<&str>) -> String {
     let what = if pin {
-        "It will be used for every launch from now on, until you choose \"Always use newest\".".to_string()
+        t!("settings-dll-will-pin")
     } else if let Some(p) = pinned.filter(|p| *p != r.version) {
-        format!("You have v{p} pinned, so v{p} stays in use until you pin this one or choose \"Always use newest\".")
+        t!("settings-dll-other-pinned", pinned = p)
     } else {
-        "If it matches this game build, it will be the version injected at the next launch.".to_string()
+        t!("settings-dll-next-launch")
     };
-    let text = format!("Download and install script extender v{}?\n\n{what}\n\n{}", r.version, crate::dialogs::clip_notes(&r.notes));
+    let text = format!("{}\n\n{what}\n\n{}", t!("settings-dll-install-question", version = &r.version), crate::dialogs::clip_notes(&r.notes));
     text.trim_end().to_string()
 }
 
@@ -168,65 +167,65 @@ impl SettingsUi {
             v.set_spacing(10);
 
             // Game and mod folders.
-            let g = QGroupBox::from_q_string(&qs("Game and mod folders"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-folders")));
             let grid = QGridLayout::new_1a(&g);
             grid.set_column_stretch(1, 1);
-            row(&grid, 0, "Game copy");
+            row(&grid, 0, &t!("settings-game-copy"));
             let installs = QComboBox::new_0a();
-            installs.set_tool_tip(&qs("Every copy of the game found on this PC; pick the one to manage and launch"));
+            installs.set_tool_tip(&qs(t!("settings-game-copy-tip")));
             grid.add_widget_3a(&installs, 0, 1);
-            let game_change = button("Change…");
-            let game_auto = button("Auto-detect");
+            let game_change = button(&t!("settings-change"));
+            let game_auto = button(&t!("settings-auto-detect"));
             grid.add_widget_3a(&game_change, 0, 2);
             grid.add_widget_3a(&game_auto, 0, 3);
-            row(&grid, 6, "Game folder");
+            row(&grid, 6, &t!("settings-game-folder"));
             let game_root = label("");
             grid.add_widget_5a(&game_root, 6, 1, 1, 3);
-            let ws_title = QLabel::from_q_string(&qs("Workshop folder"));
+            let ws_title = QLabel::from_q_string(&qs(t!("settings-workshop-folder")));
             grid.add_widget_3a(&ws_title, 1, 0);
             let ws_dir = label("");
             grid.add_widget_3a(&ws_dir, 1, 1);
-            let ws_change = button("Change…");
-            let ws_auto = button("Auto-detect");
+            let ws_change = button(&t!("settings-change"));
+            let ws_auto = button(&t!("settings-auto-detect"));
             grid.add_widget_3a(&ws_change, 1, 2);
             grid.add_widget_3a(&ws_auto, 1, 3);
-            row(&grid, 2, "Game version");
+            row(&grid, 2, &t!("settings-game-version"));
             let version = label("");
             grid.add_widget_3a(&version, 2, 1);
-            let open_game = button("Open folder");
-            let refresh_mods = button("Refresh mods");
+            let open_game = button(&t!("settings-open-folder"));
+            let refresh_mods = button(&t!("settings-refresh-mods"));
             grid.add_widget_3a(&open_game, 2, 2);
             grid.add_widget_3a(&refresh_mods, 2, 3);
-            row(&grid, 3, "Extra mod folders");
+            row(&grid, 3, &t!("settings-extra-folders"));
             let folders = QListWidget::new_0a();
             folders.set_maximum_height(90);
             grid.add_widget_3a(&folders, 3, 1);
-            let folder_add = button("Add folder…");
-            let folder_remove = button("Remove");
+            let folder_add = button(&t!("settings-add-folder"));
+            let folder_remove = button(&t!("settings-remove"));
             grid.add_widget_3a(&folder_add, 3, 2);
             grid.add_widget_3a(&folder_remove, 3, 3);
-            let hint = label("Packs in extra folders (for example your RPFM MyMods folder) load straight from there; nothing is copied into data/. The mod list is written to tkmm_mods.txt in the game folder; CA's used_mods.txt is only read.");
+            let hint = label(&t!("settings-extra-folders-hint"));
             grid.add_widget_5a(&hint, 4, 1, 1, 3);
-            row(&grid, 5, "Older than patch");
+            row(&grid, 5, &t!("settings-older-than-patch"));
             let cutoff = QDateEdit::new();
             cutoff.set_calendar_popup(true);
             cutoff.set_display_format(&qs("d MMM yyyy"));
-            cutoff.set_tool_tip(&qs("Workshop mods last updated before this date get the amber dot"));
+            cutoff.set_tool_tip(&qs(t!("settings-cutoff-tip")));
             grid.add_widget_3a(&cutoff, 5, 1);
-            let cutoff_reset = button("Use game build date");
+            let cutoff_reset = button(&t!("settings-cutoff-reset"));
             grid.add_widget_3a(&cutoff_reset, 5, 2);
             v.add_widget(&g);
 
             // Behaviour.
-            let g = QGroupBox::from_q_string(&qs("Behaviour"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-behaviour")));
             let b = QVBoxLayout::new_1a(&g);
-            let tray = QCheckBox::from_q_string(&qs("Keep running in the tray when the window is closed (tray menu: Play, profiles, Quit)"));
-            let app_updates = QCheckBox::from_q_string(&qs("Check for app updates on startup"));
+            let tray = QCheckBox::from_q_string(&qs(t!("settings-tray")));
+            let app_updates = QCheckBox::from_q_string(&qs(t!("settings-app-updates")));
             let app_channel = QComboBox::new_0a();
-            app_channel.add_item_q_string_q_variant(&qs("Stable releases"), &QVariant::from_q_string(&qs("stable")));
-            app_channel.add_item_q_string_q_variant(&qs("Include pre-releases"), &QVariant::from_q_string(&qs("prerelease")));
-            app_channel.set_tool_tip(&qs("Pre-release builds are only offered when you pick them here"));
-            let dll_updates = QCheckBox::from_q_string(&qs("Check for script-extender updates on startup"));
+            app_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-stable")), &QVariant::from_q_string(&qs("stable")));
+            app_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-prerelease")), &QVariant::from_q_string(&qs("prerelease")));
+            app_channel.set_tool_tip(&qs(t!("settings-app-channel-tip")));
+            let dll_updates = QCheckBox::from_q_string(&qs(t!("settings-dll-updates")));
             b.add_widget(&tray);
             let ar = QHBoxLayout::new_0a();
             b.add_layout_1a(&ar);
@@ -234,20 +233,20 @@ impl SettingsUi {
             ar.add_widget(&app_channel);
             ar.add_stretch_1a(1);
             b.add_widget(&dll_updates);
-            let ws_updates = QCheckBox::from_q_string(&qs("Update enabled Workshop mods through Steam before each launch"));
-            ws_updates.set_tool_tip(&qs("Steam and CA's launcher do this before starting the game; without it an update Steam has not downloaded yet leaves the old version in place"));
+            let ws_updates = QCheckBox::from_q_string(&qs(t!("settings-ws-updates")));
+            ws_updates.set_tool_tip(&qs(t!("settings-ws-updates-tip")));
             b.add_widget(&ws_updates);
             let hr = QHBoxLayout::new_0a();
             b.add_layout_1a(&hr);
-            hr.add_widget(QLabel::from_q_string(&qs("Re-fetch Workshop titles and dates after")).into_ptr());
+            hr.add_widget(QLabel::from_q_string(&qs(t!("settings-cache-hours"))).into_ptr());
             let cache_hours = QSpinBox::new_0a();
             cache_hours.set_range(1, 24 * 14);
-            cache_hours.set_suffix(&qs(" hours"));
+            cache_hours.set_suffix(&qs(t!("settings-cache-hours-suffix")));
             hr.add_widget(&cache_hours);
             hr.add_stretch_1a(1);
             let dr = QHBoxLayout::new_0a();
             b.add_layout_1a(&dr);
-            dr.add_widget(QLabel::from_q_string(&qs("Mod list row size")).into_ptr());
+            dr.add_widget(QLabel::from_q_string(&qs(t!("settings-row-size"))).into_ptr());
             let density = crate::mod_list::density_combo();
             dr.add_widget(&density);
             dr.add_stretch_1a(1);
@@ -258,52 +257,52 @@ impl SettingsUi {
             language.set_tool_tip(&qs(t!("settings-language-tip")));
             lr.add_widget(&language);
             lr.add_stretch_1a(1);
-            b.add_widget(&label("The look follows the Windows light / dark setting."));
+            b.add_widget(&label(&t!("settings-theme-note")));
             v.add_widget(&g);
 
             // Nexus Mods.
-            let g = QGroupBox::from_q_string(&qs("Nexus Mods"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-nexus")));
             let n = QGridLayout::new_1a(&g);
             n.set_column_stretch(1, 1);
-            row(&n, 0, "API key");
+            row(&n, 0, &t!("settings-nexus-api-key"));
             let nexus_key = QLineEdit::new();
             nexus_key.set_echo_mode(qt_widgets::q_line_edit::EchoMode::Password);
-            nexus_key.set_placeholder_text(&qs("paste your personal API key"));
+            nexus_key.set_placeholder_text(&qs(t!("settings-nexus-key-placeholder")));
             n.add_widget_3a(&nexus_key, 0, 1);
-            let nexus_save = button("Save and check");
-            let nexus_get_key = button("Get my key…");
-            nexus_get_key.set_tool_tip(&qs("Opens nexusmods.com > Site preferences > API keys; copy the Personal API Key at the bottom"));
+            let nexus_save = button(&t!("settings-nexus-save"));
+            let nexus_get_key = button(&t!("settings-nexus-get-key"));
+            nexus_get_key.set_tool_tip(&qs(t!("settings-nexus-get-key-tip")));
             n.add_widget_3a(&nexus_save, 0, 2);
             n.add_widget_3a(&nexus_get_key, 0, 3);
             let nexus_user = label("");
             n.add_widget_5a(&nexus_user, 1, 1, 1, 3);
-            row(&n, 2, "Download links");
+            row(&n, 2, &t!("settings-nexus-links"));
             let nexus_handler = label("");
             n.add_widget_3a(&nexus_handler, 2, 1);
-            let nexus_register = button("Handle Mod Manager Download links");
-            nexus_register.set_tool_tip(&qs("Make the \"Mod Manager Download\" button on nexusmods.com open this app (per user, no admin rights)"));
+            let nexus_register = button(&t!("settings-nexus-register"));
+            nexus_register.set_tool_tip(&qs(t!("settings-nexus-register-tip")));
             n.add_widget_5a(&nexus_register, 2, 2, 1, 2);
             let nr = QHBoxLayout::new_0a();
             n.add_layout_5a(&nr, 3, 1, 1, 3);
-            let nexus_archive = button("Install from archive…");
-            let nexus_check = button("Check for updates");
-            let nexus_folder = button("Open Nexus folder");
+            let nexus_archive = button(&t!("settings-nexus-archive"));
+            let nexus_check = button(&t!("settings-check-updates"));
+            let nexus_folder = button(&t!("settings-nexus-folder"));
             for w in [&nexus_archive, &nexus_check, &nexus_folder] {
                 nr.add_widget(w);
             }
             nr.add_stretch_1a(1);
-            let hint = label("Mods from Nexus are unpacked into the manager's own folder and load from there, like extra folders; the game folder is never touched. Installing another file of the same mod keeps both: switch with right-click > Version.");
+            let hint = label(&t!("settings-nexus-hint"));
             n.add_widget_5a(&hint, 4, 1, 1, 3);
             v.add_widget(&g);
 
             // Script extender.
-            let g = QGroupBox::from_q_string(&qs("Script extender (DLL)"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-dll")));
             let s = QVBoxLayout::new_1a(&g);
             let dll_game = label("");
             s.add_widget(&dll_game);
             let dll_list = QTreeWidget::new_0a();
             let h = QListOfQString::new_0a();
-            for t in ["Version", "Game build", "Status"] {
+            for t in [t!("settings-col-version"), t!("settings-col-game-build"), t!("settings-col-status")] {
                 h.append_q_string(&qs(t));
             }
             dll_list.set_header_labels(&h);
@@ -313,28 +312,28 @@ impl SettingsUi {
             s.add_widget(&dll_list);
             let r1 = QHBoxLayout::new_0a();
             s.add_layout_1a(&r1);
-            let dll_folder = button("Open folder");
-            let dll_pin = button("Use this version");
-            dll_pin.set_tool_tip(&qs("Pin the selected version: every launch injects it, even when a newer one is installed (rollback)"));
-            let dll_unpin = button("Always use newest");
-            dll_unpin.set_tool_tip(&qs("Unpin: launches inject the newest installed version that matches the game"));
-            let dll_remove = button("Remove version");
-            let dll_log = button("View log");
-            let dll_import = button("Import local DLL…");
+            let dll_folder = button(&t!("settings-open-folder"));
+            let dll_pin = button(&t!("settings-dll-pin"));
+            dll_pin.set_tool_tip(&qs(t!("settings-dll-pin-tip")));
+            let dll_unpin = button(&t!("settings-dll-unpin"));
+            dll_unpin.set_tool_tip(&qs(t!("settings-dll-unpin-tip")));
+            let dll_remove = button(&t!("settings-dll-remove"));
+            let dll_log = button(&t!("settings-dll-log"));
+            let dll_import = button(&t!("settings-dll-import"));
             for w in [&dll_folder, &dll_pin, &dll_unpin, &dll_remove, &dll_log, &dll_import] {
                 r1.add_widget(w);
             }
             r1.add_stretch_1a(1);
             let r2 = QHBoxLayout::new_0a();
             s.add_layout_1a(&r2);
-            let dll_check = button("Check for DLL updates");
+            let dll_check = button(&t!("settings-dll-check"));
             let dll_channel = QComboBox::new_0a();
-            dll_channel.add_item_q_string_q_variant(&qs("Stable releases"), &QVariant::from_q_string(&qs("stable")));
-            dll_channel.add_item_q_string_q_variant(&qs("Include pre-releases"), &QVariant::from_q_string(&qs("prerelease")));
-            let dll_catalog = button("All versions…");
-            dll_catalog.set_tool_tip(&qs("Every published script-extender release: install an older one to roll back"));
+            dll_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-stable")), &QVariant::from_q_string(&qs("stable")));
+            dll_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-prerelease")), &QVariant::from_q_string(&qs("prerelease")));
+            let dll_catalog = button(&t!("settings-dll-catalog"));
+            dll_catalog.set_tool_tip(&qs(t!("settings-dll-catalog-tip")));
             let dll_latest = QLabel::new();
-            let dll_install = button("Install");
+            let dll_install = button(&t!("settings-install"));
             dll_install.set_visible(false);
             r2.add_widget(&dll_check);
             r2.add_widget(&dll_channel);
@@ -345,32 +344,32 @@ impl SettingsUi {
             dll_progress.set_range(0, 100);
             dll_progress.set_visible(false);
             s.add_widget(&dll_progress);
-            let dll_auto = QCheckBox::from_q_string(&qs("Also inject when the game was started outside the manager (while this app is running)"));
+            let dll_auto = QCheckBox::from_q_string(&qs(t!("settings-dll-auto")));
             s.add_widget(&dll_auto);
             let se_row = QHBoxLayout::new_0a();
             s.add_layout_1a(&se_row);
-            let se_defaults = button("Default script extender settings…");
-            se_defaults.set_tool_tip(&qs("script_extender.cfg for every profile without its own settings (a profile's own: the Settings… button next to \"Script extender\" in the launch panel)"));
+            let se_defaults = button(&t!("settings-se-defaults"));
+            se_defaults.set_tool_tip(&qs(t!("settings-se-defaults-tip")));
             se_row.add_widget(&se_defaults);
             let se_summary = label("");
             se_row.add_widget_2a(&se_summary, 1);
             v.add_widget(&g);
 
             // Three Kingdoms Coop.
-            let g = QGroupBox::from_q_string(&qs("Three Kingdoms Coop (multiplayer with up to 4 players)"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-coop")));
             let c = QVBoxLayout::new_1a(&g);
             let coop_status = label("");
             c.add_widget(&coop_status);
             let cr = QHBoxLayout::new_0a();
             c.add_layout_1a(&cr);
-            let coop_install = button("Install…");
-            coop_install.set_tool_tip(&qs("Download Coop's official Setup from GitHub (you are asked first) and run it"));
-            let coop_check = button("Check for updates");
-            let coop_workshop = button("Workshop pack");
-            coop_workshop.set_tool_tip(&qs("Open the tw3k_coop pack in Steam to subscribe"));
-            let coop_project = button("Project page");
-            let coop_uninstall = button("Uninstall…");
-            coop_uninstall.set_tool_tip(&qs("Opens Windows Settings > Apps; remove \"Three Kingdoms Coop\" there. Its uninstaller puts Steam's amd_ags_x64.dll back."));
+            let coop_install = button(&t!("settings-coop-install"));
+            coop_install.set_tool_tip(&qs(t!("settings-coop-install-tip")));
+            let coop_check = button(&t!("settings-check-updates"));
+            let coop_workshop = button(&t!("settings-coop-workshop"));
+            coop_workshop.set_tool_tip(&qs(t!("settings-coop-workshop-tip")));
+            let coop_project = button(&t!("settings-coop-project"));
+            let coop_uninstall = button(&t!("settings-coop-uninstall"));
+            coop_uninstall.set_tool_tip(&qs(t!("settings-coop-uninstall-tip")));
             for w in [&coop_install, &coop_check, &coop_workshop, &coop_project, &coop_uninstall] {
                 cr.add_widget(w);
             }
@@ -381,15 +380,15 @@ impl SettingsUi {
             coop_progress.set_range(0, 100);
             coop_progress.set_visible(false);
             c.add_widget(&coop_progress);
-            let coop_updates = QCheckBox::from_q_string(&qs("Check for Coop updates on startup (only when Coop is installed)"));
+            let coop_updates = QCheckBox::from_q_string(&qs(t!("settings-coop-updates")));
             c.add_widget(&coop_updates);
-            c.add_widget(&label("Coop is a separate mod by Thom-Ernst. Its DLL loads by itself whenever the game starts, from this manager too, and runs alongside the script extender. Steam version 1.7.2 only. The manager never changes the game folder itself: installing runs Coop's own Setup."));
+            c.add_widget(&label(&t!("settings-coop-about")));
             v.add_widget(&g);
 
             // Generated mod list.
-            let g = QGroupBox::from_q_string(&qs("Generated mod list"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-modlist")));
             let p = QVBoxLayout::new_1a(&g);
-            p.add_widget(&label("Exactly what is written to tkmm_mods.txt at launch for the active profile (before the optional skip-intro pack)."));
+            p.add_widget(&label(&t!("settings-modlist-hint")));
             let preview = QPlainTextEdit::new();
             preview.set_read_only(true);
             preview.set_minimum_height(160);
@@ -400,14 +399,14 @@ impl SettingsUi {
             v.add_widget(&g);
 
             // Profiles.
-            let g = QGroupBox::from_q_string(&qs("Profiles: import, export and co-op sync check"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-profiles")));
             let p = QVBoxLayout::new_1a(&g);
             let r = QHBoxLayout::new_0a();
-            let imp_ca = button("Import CA launcher list…");
-            let imp_collection = button("Import Workshop collection…");
-            let imp_text = button("Import from text…");
-            let export = button("Export active profile (with hashes)");
-            let verify = button("Verify against an export…");
+            let imp_ca = button(&t!("settings-import-ca"));
+            let imp_collection = button(&t!("settings-import-collection"));
+            let imp_text = button(&t!("settings-import-text"));
+            let export = button(&t!("settings-export"));
+            let verify = button(&t!("settings-verify"));
             for w in [&imp_ca, &imp_collection, &imp_text, &export, &verify] {
                 r.add_widget(w);
             }
@@ -418,12 +417,12 @@ impl SettingsUi {
             v.add_widget(&g);
 
             // About.
-            let g = QGroupBox::from_q_string(&qs("About"));
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-about")));
             let a = QHBoxLayout::new_1a(&g);
             let about = label("");
             a.add_widget_2a(&about, 1);
-            let open_data = button("Open data folder");
-            let check_app = button("Check for app updates");
+            let open_data = button(&t!("settings-open-data"));
+            let check_app = button(&t!("settings-check-app"));
             a.add_widget(&open_data);
             a.add_widget(&check_app);
             v.add_widget(&g);
@@ -539,7 +538,7 @@ impl SettingsUi {
             }};
         }
         on_click!(self.game_change, |a: &Rc<App>| {
-            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs("Select the Total War THREE KINGDOMS folder")).to_std_string();
+            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs(t!("settings-pick-game-folder"))).to_std_string();
             if !d.is_empty() {
                 SettingsUi::update_settings(a, |s| s.game_root = Some(d));
             }
@@ -557,7 +556,7 @@ impl SettingsUi {
             this.set_game_root(&root);
         }));
         on_click!(self.ws_change, |a: &Rc<App>| {
-            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs("Select the Workshop content folder (779340)")).to_std_string();
+            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs(t!("settings-pick-workshop-folder"))).to_std_string();
             if !d.is_empty() {
                 SettingsUi::update_settings(a, |s| s.workshop_dir = Some(d));
             }
@@ -573,10 +572,10 @@ impl SettingsUi {
             let key = a.settings.nexus_key.text().to_std_string().trim().to_string();
             SettingsUi::update_settings(a, |s| s.nexus_api_key = key.clone());
             if key.is_empty() {
-                a.settings.nexus_user.set_text(&qs("No key: Nexus installs are off."));
+                a.settings.nexus_user.set_text(&qs(t!("settings-nexus-no-key")));
                 return;
             }
-            a.settings.nexus_user.set_text(&qs("Checking the key…"));
+            a.settings.nexus_user.set_text(&qs(t!("settings-nexus-checking")));
             a.bus.spawn(move |_| Some(UiEvent::NexusUser(tkmm_core::nexus::validate(&key))));
         });
         on_click!(self.nexus_get_key, |_a: &Rc<App>| crate::details::open_url("https://next.nexusmods.com/settings/api-keys"));
@@ -588,14 +587,14 @@ impl SettingsUi {
                 return;
             }
             let text = match &current {
-                Some(c) => format!("Nexus download links currently open:\n\n{c}\n\nSwitch them to TK Mod Manager? The other manager can take them back from its own settings."),
-                None => "Make the \"Mod Manager Download\" button on nexusmods.com open TK Mod Manager?".to_string(),
+                Some(c) => format!("{}\n\n{c}\n\n{}", t!("settings-nexus-links-current"), t!("settings-nexus-links-switch")),
+                None => t!("settings-nexus-links-take"),
             };
-            if !crate::dialogs::confirm(&a.window, "Nexus download links", &text) {
+            if !crate::dialogs::confirm(&a.window, &t!("settings-nexus-links-title"), &text) {
                 return;
             }
             if let Err(e) = tkmm_core::nexus::register_nxm_handler(&exe) {
-                crate::dialogs::error(&a.window, &format!("Could not register the link handler: {e}"));
+                crate::dialogs::error(&a.window, &t!("settings-nexus-register-failed", error = e));
             }
             *a.settings.nxm_seen.borrow_mut() = None;
             a.mark(DIRTY_ALL);
@@ -608,7 +607,7 @@ impl SettingsUi {
             crate::details::open_url(&format!("file:///{}", dir.to_string_lossy().replace('\\', "/")));
         });
         on_click!(self.folder_add, |a: &Rc<App>| {
-            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs("Select a folder that holds .pack files")).to_std_string();
+            let d = QFileDialog::get_existing_directory_2a(&a.window, &qs(t!("settings-pick-pack-folder"))).to_std_string();
             if !d.is_empty() {
                 SettingsUi::update_settings(a, |s| {
                     if !s.extra_mod_dirs.iter().any(|x| x.eq_ignore_ascii_case(&d)) {
@@ -669,7 +668,7 @@ impl SettingsUi {
         on_click!(self.dll_pin, |a: &Rc<App>| {
             let Some(d) = a.settings.selected_dll(a) else { return };
             if !d.compatible {
-                crate::dialogs::error(&a.window, &format!("v{} was built for a different game build, so it would never be injected. Pick a version marked \"matches game\".", d.version));
+                crate::dialogs::error(&a.window, &t!("settings-dll-wrong-build", version = &d.version));
                 return;
             }
             match dll::dll_set_pin(Some(&d.version)) {
@@ -683,13 +682,13 @@ impl SettingsUi {
         });
         on_click!(self.dll_catalog, |a: &Rc<App>| {
             a.settings.dll_catalog.set_enabled(false);
-            a.settings.dll_latest.set_text(&qs("Loading all versions…"));
+            a.settings.dll_latest.set_text(&qs(t!("settings-dll-loading-versions")));
             let ctx = a.ctx.clone();
             a.bus.spawn(move |_| Some(UiEvent::DllCatalog(dll::dll_catalog(&ctx))));
         });
         on_click!(self.dll_remove, |a: &Rc<App>| {
             let Some(d) = a.settings.selected_dll(a) else { return };
-            if !crate::dialogs::confirm(&a.window, "Remove DLL", &format!("Remove script extender {}?", d.version)) {
+            if !crate::dialogs::confirm(&a.window, &t!("settings-dll-remove-title"), &t!("settings-dll-remove-question", version = &d.version)) {
                 return;
             }
             match dll::dll_remove(d.version.clone()) {
@@ -699,15 +698,15 @@ impl SettingsUi {
         });
         on_click!(self.dll_log, |a: &Rc<App>| a.set_page(PAGE_LOGS));
         on_click!(self.dll_import, |a: &Rc<App>| {
-            let file = QFileDialog::get_open_file_name_4a(&a.window, &qs("Select script_extender.dll"), &qs(""), &qs("DLL (*.dll)")).to_std_string();
+            let file = QFileDialog::get_open_file_name_4a(&a.window, &qs(t!("settings-dll-pick-file")), &qs(""), &qs(t!("settings-dll-filter"))).to_std_string();
             if file.is_empty() {
                 return;
             }
-            let Some(version) = crate::dialogs::ask_text(&a.window, "Import DLL", "Version of this DLL (semver, e.g. 0.28.0):", "") else { return };
+            let Some(version) = crate::dialogs::ask_text(&a.window, &t!("settings-dll-import-title"), &t!("settings-dll-import-version"), "") else { return };
             match dll::dll_import_local(&a.ctx, &file, &version) {
                 Ok(d) => {
                     a.refresh_dll();
-                    crate::dialogs::info(&a.window, "Imported", &format!("Imported {}; its manifest is pinned to the current game build.", d.version));
+                    crate::dialogs::info(&a.window, &t!("settings-dll-imported-title"), &t!("settings-dll-imported", version = &d.version));
                 }
                 Err(e) => crate::dialogs::error(&a.window, &e),
             }
@@ -739,7 +738,7 @@ impl SettingsUi {
         }));
         on_click!(self.dll_install, |a: &Rc<App>| {
             let Some(r) = a.settings.remote.borrow().clone() else { return };
-            if crate::dialogs::confirm(&a.window, "Install script extender", &dll_install_text(&r, false, a.settings.pinned(a).as_deref())) {
+            if crate::dialogs::confirm(&a.window, &t!("settings-dll-install-title"), &dll_install_text(&r, false, a.settings.pinned(a).as_deref())) {
                 a.settings.install_dll(a, r, false);
             }
         });
@@ -764,22 +763,22 @@ impl SettingsUi {
 
         on_click!(self.imp_ca, |a: &Rc<App>| a.settings.import_ca(a));
         on_click!(self.imp_collection, |a: &Rc<App>| {
-            let Some(input) = crate::dialogs::ask_text(&a.window, "Import Workshop collection", "Collection link or id:", "") else { return };
-            a.settings.profile_msg.set_text(&qs("Fetching the collection from Steam…"));
+            let Some(input) = crate::dialogs::ask_text(&a.window, &t!("settings-collection-title"), &t!("settings-collection-input"), "") else { return };
+            a.settings.profile_msg.set_text(&qs(t!("settings-collection-fetching")));
             a.bus.spawn(move |_| Some(UiEvent::Collection(workshop::workshop_collection(&input))));
         });
         on_click!(self.imp_text, |a: &Rc<App>| a.settings.import_text(a));
         on_click!(self.export, |a: &Rc<App>| {
-            a.settings.profile_msg.set_text(&qs("Hashing the enabled packs…"));
+            a.settings.profile_msg.set_text(&qs(t!("settings-hashing")));
             a.hash_enabled(HashPurpose::Export);
         });
         on_click!(self.verify, |a: &Rc<App>| {
-            let Some(text) = crate::dialogs::ask_multiline(&a.window, "Verify against an export", "Paste your partner's export. The enabled packs of the active profile are compared with it (file size and sha256).", "Compare")
+            let Some(text) = crate::dialogs::ask_multiline(&a.window, &t!("settings-verify-title"), &t!("settings-verify-intro"), &t!("settings-verify-compare"))
             else {
                 return;
             };
             *a.verify_text.borrow_mut() = text;
-            a.settings.profile_msg.set_text(&qs("Hashing the enabled packs…"));
+            a.settings.profile_msg.set_text(&qs(t!("settings-hashing")));
             a.hash_enabled(HashPurpose::Verify);
         });
 
@@ -795,14 +794,14 @@ impl SettingsUi {
         if cur.is_null() {
             return None;
         }
-        let version = cur.text(0).to_std_string().trim_start_matches('v').to_string();
+        let version = cur.data(0, qt_core::ItemDataRole::UserRole.to_int()).to_string().to_std_string();
         app.st.borrow().dll.as_ref()?.installed.iter().find(|d| d.version == version).cloned()
     }
 
     /// `startup`: offer a found update in a popup instead of only showing the Install button.
     pub fn check_dll(&self, app: &Rc<App>, startup: bool) {
         unsafe {
-            self.dll_latest.set_text(&qs("Checking…"));
+            self.dll_latest.set_text(&qs(t!("settings-checking")));
         }
         let ctx = app.ctx.clone();
         app.bus.spawn(move |_| Some(UiEvent::DllRemote(dll::dll_check_update(&ctx), startup)));
@@ -817,7 +816,7 @@ impl SettingsUi {
         *self.pending_pin.borrow_mut() = pin.then(|| r.version.clone());
         self.dll_install.set_enabled(false);
         self.dll_catalog.set_enabled(false);
-        self.dll_latest.set_text(&qs(format!("Downloading v{}…", r.version)));
+        self.dll_latest.set_text(&qs(t!("settings-dll-downloading", version = &r.version)));
         self.dll_progress.set_value(0);
         self.dll_progress.set_visible(true);
         let ctx = app.ctx.clone();
@@ -830,7 +829,8 @@ impl SettingsUi {
     pub unsafe fn on_dll_remote(&self, app: &Rc<App>, r: Result<RemoteDll, String>, startup: bool) {
         match r {
             Ok(remote) => {
-                self.dll_latest.set_text(&qs(format!("Latest: v{}{}", remote.version, if remote.installed { " (installed)" } else { "" })));
+                let version = format!("v{}", remote.version);
+                self.dll_latest.set_text(&qs(if remote.installed { t!("settings-latest-installed", version = version) } else { t!("settings-latest", version = version) }));
                 self.dll_latest.set_tool_tip(&qs(&remote.notes));
                 self.dll_install.set_visible(!remote.installed);
                 self.dll_install.set_enabled(true);
@@ -853,7 +853,7 @@ impl SettingsUi {
     /// `startup`: only for an installed Coop, and a newer release is offered in a popup.
     pub fn check_coop(&self, app: &Rc<App>, startup: bool) {
         if !startup {
-            unsafe { self.coop_latest.set_text(&qs("Checking GitHub…")) };
+            unsafe { self.coop_latest.set_text(&qs(t!("settings-checking-github"))) };
         }
         let ctx = app.ctx.clone();
         app.bus.spawn(move |_| {
@@ -872,29 +872,26 @@ impl SettingsUi {
         let remote = match r {
             Ok(Some(r)) => r,
             Ok(None) => {
-                self.coop_latest.set_text(&qs("No Coop release with a Setup was found on GitHub."));
+                self.coop_latest.set_text(&qs(t!("settings-coop-none-found")));
                 return;
             }
             Err(e) => {
-                self.coop_latest.set_text(&qs(format!("Coop update check failed: {e}")));
+                self.coop_latest.set_text(&qs(t!("settings-coop-check-failed", error = e)));
                 return;
             }
         };
         let installed = app.st.borrow().coop.clone();
         let newer = coop::is_newer(&remote.version, installed.as_ref().and_then(|c| c.version.as_deref()));
         let current = installed.as_ref().map(|c| c.active() && !newer).unwrap_or(false);
-        self.coop_latest.set_text(&qs(format!(
-            "Latest: v{}{}{}",
-            remote.version,
-            if remote.published.is_empty() { String::new() } else { format!(" ({})", remote.published) },
-            if current { ", installed" } else { "" }
-        )));
+        // "v1.2" or "v1.2 (2026-09-30)": data, not text.
+        let version = if remote.published.is_empty() { format!("v{}", remote.version) } else { format!("v{} ({})", remote.version, remote.published) };
+        self.coop_latest.set_text(&qs(if current { t!("settings-coop-latest-installed", version = version) } else { t!("settings-latest", version = version) }));
         self.coop_latest.set_tool_tip(&qs(crate::dialogs::clip_notes(&remote.notes)));
         *self.coop_remote.borrow_mut() = Some(remote.clone());
         if pending {
             self.confirm_coop_install(app);
         } else if startup && newer && installed.is_some() && app.ctx.settings().skipped_coop_version != remote.version {
-            match crate::dialogs::ask_update(&app.window, "Three Kingdoms Coop update", &coop_install_text(&remote, installed.as_ref())) {
+            match crate::dialogs::ask_update(&app.window, &t!("settings-coop-update-title"), &coop_install_text(&remote, installed.as_ref())) {
                 UpdateChoice::Install => self.install_coop(app, remote),
                 UpdateChoice::Skip => SettingsUi::update_settings(app, |s| s.skipped_coop_version = remote.version.clone()),
                 UpdateChoice::Later => {}
@@ -906,7 +903,7 @@ impl SettingsUi {
     unsafe fn confirm_coop_install(&self, app: &Rc<App>) {
         let Some(remote) = self.coop_remote.borrow().clone() else { return };
         let installed = app.st.borrow().coop.clone();
-        if crate::dialogs::confirm(&app.window, "Three Kingdoms Coop", &coop_install_text(&remote, installed.as_ref())) {
+        if crate::dialogs::confirm(&app.window, &t!("settings-coop-title"), &coop_install_text(&remote, installed.as_ref())) {
             self.install_coop(app, remote);
         }
     }
@@ -914,15 +911,15 @@ impl SettingsUi {
     /// Download, verify and run Setup (no questions; callers have asked).
     unsafe fn install_coop(&self, app: &Rc<App>, r: CoopRelease) {
         let Some(root) = app.st.borrow().paths.game_root.clone() else {
-            return crate::dialogs::error(&app.window, "The game folder was not found, so Coop's Setup has nowhere to install.");
+            return crate::dialogs::error(&app.window, &t!("settings-coop-no-game-folder"));
         };
         if app.st.borrow().game_running {
-            return crate::dialogs::error(&app.window, "Close the game first: Coop's Setup cannot replace its files while it runs.");
+            return crate::dialogs::error(&app.window, &t!("settings-coop-close-game"));
         }
         self.coop_busy.set(true);
         self.coop_progress.set_value(0);
         self.coop_progress.set_visible(true);
-        self.coop_latest.set_text(&qs(format!("Downloading {}…", r.setup_name)));
+        self.coop_latest.set_text(&qs(t!("settings-coop-downloading", file = &r.setup_name)));
         app.mark(DIRTY_ALL);
         app.bus.spawn(move |bus| {
             let b = bus.clone();
@@ -931,7 +928,7 @@ impl SettingsUi {
                 Err(e) => return Some(UiEvent::CoopSetupDone(Err(e))),
             };
             bus.send(UiEvent::CoopProgress(1.0));
-            bus.send(UiEvent::Task("Three Kingdoms Coop Setup is running; finish it to continue…".into()));
+            bus.send(UiEvent::Task(t!("settings-coop-setup-task")));
             Some(UiEvent::CoopSetupDone(coop::run_setup(&setup, std::path::Path::new(&root))))
         });
     }
@@ -939,7 +936,7 @@ impl SettingsUi {
     pub unsafe fn on_coop_progress(&self, f: f64) {
         self.coop_progress.set_value((f * 100.0) as i32);
         if f >= 1.0 {
-            self.coop_latest.set_text(&qs("Setup is running. Follow its window (it may ask for administrator rights)."));
+            self.coop_latest.set_text(&qs(t!("settings-coop-setup-running")));
         }
     }
 
@@ -950,17 +947,17 @@ impl SettingsUi {
         match r {
             Ok(code) => {
                 let outcome = coop::setup_outcome(code);
-                self.coop_latest.set_text(&qs(outcome));
+                self.coop_latest.set_text(&qs(&outcome));
                 if code == 0 && !app.st.borrow().coop_pack_enabled() {
                     crate::dialogs::info(
                         &app.window,
-                        "Three Kingdoms Coop",
-                        &format!("{outcome}\n\nCoop also needs its pack: subscribe to tw3k_coop on the Workshop (\"Workshop pack\" button), then enable it in the profile you play multiplayer with."),
+                        &t!("settings-coop-title"),
+                        &format!("{outcome}\n\n{}", t!("settings-coop-needs-pack")),
                     );
                 }
             }
             Err(e) => {
-                self.coop_latest.set_text(&qs("Coop install failed"));
+                self.coop_latest.set_text(&qs(t!("settings-coop-install-failed")));
                 crate::dialogs::error(&app.window, &e);
             }
         }
@@ -970,7 +967,7 @@ impl SettingsUi {
     /// Startup offer: Install / Skip this version / Not now.
     unsafe fn offer_dll(&self, app: &Rc<App>, r: RemoteDll) {
         let text = dll_install_text(&r, false, self.pinned(app).as_deref());
-        match crate::dialogs::ask_update(&app.window, "Script extender update", &text) {
+        match crate::dialogs::ask_update(&app.window, &t!("settings-dll-update-title"), &text) {
             UpdateChoice::Install => self.install_dll(app, r, false),
             UpdateChoice::Skip => SettingsUi::update_settings(app, |s| s.skipped_dll_version = r.version.clone()),
             UpdateChoice::Later => {}
@@ -984,23 +981,23 @@ impl SettingsUi {
         let entries = match r {
             Ok(e) => e,
             Err(e) => {
-                self.dll_latest.set_text(&qs(format!("Could not load versions: {e}")));
+                self.dll_latest.set_text(&qs(t!("settings-dll-versions-failed", error = e)));
                 return;
             }
         };
-        self.dll_latest.set_text(&qs(format!("{} versions published", entries.len())));
+        self.dll_latest.set_text(&qs(t!("settings-dll-versions-count", count = entries.len())));
         let (in_use, pinned) = {
             let st = app.st.borrow();
             let d = st.dll.as_ref();
             (d.and_then(|d| d.selected.as_ref()).map(|s| s.version.clone()), d.and_then(|d| d.pinned.clone()))
         };
         let chosen: Rc<RefCell<Option<CatalogEntry>>> = Rc::new(RefCell::new(None));
-        let intro = "Every published script-extender release, newest first. Pick one and choose \"Use this version\" to roll back: it is downloaded if needed (you'll be asked first) and used for every launch until you choose \"Always use newest\". Only versions made for your game build can be injected.";
-        crate::dialogs::custom(&app.window, "Script extender versions", 760, 460, |l, d| {
-            l.add_widget(&label(intro));
+        let intro = t!("settings-dll-versions-intro");
+        crate::dialogs::custom(&app.window, &t!("settings-dll-versions-title"), 760, 460, |l, d| {
+            l.add_widget(&label(&intro));
             let tree = QTreeWidget::new_0a();
             let h = QListOfQString::new_0a();
-            for t in ["Version", "Released", "Made for game build", "Status"] {
+            for t in [t!("settings-col-version"), t!("settings-col-released"), t!("settings-col-made-for"), t!("settings-col-status")] {
                 h.append_q_string(&qs(t));
             }
             tree.set_header_labels(&h);
@@ -1010,22 +1007,22 @@ impl SettingsUi {
             for e in &entries {
                 let r = &e.remote;
                 let it = QTreeWidgetItem::new();
-                it.set_text(0, &qs(format!("v{}{}", r.version, if r.prerelease { " (pre-release)" } else { "" })));
+                it.set_text(0, &qs(if r.prerelease { t!("settings-version-prerelease", version = format!("v{}", r.version)) } else { format!("v{}", r.version) }));
                 it.set_text(1, &qs(&r.published));
                 it.set_text(2, &qs(e.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| "?".into())));
                 let mut status = vec![match e.compatible {
-                    Some(true) => "matches game",
-                    Some(false) => "other game build",
-                    None => "game build unknown",
+                    Some(true) => t!("settings-status-matches"),
+                    Some(false) => t!("settings-status-other-build"),
+                    None => t!("settings-status-build-unknown"),
                 }];
                 if r.installed {
-                    status.push("installed");
+                    status.push(t!("settings-status-installed"));
                 }
                 if pinned.as_deref() == Some(r.version.as_str()) {
-                    status.push("pinned");
+                    status.push(t!("settings-status-pinned"));
                 }
                 if in_use.as_deref() == Some(r.version.as_str()) {
-                    status.push("will inject");
+                    status.push(t!("settings-status-will-inject"));
                 }
                 it.set_text(3, &qs(status.join(" · ")));
                 it.set_tool_tip(0, &qs(crate::dialogs::clip_notes(&r.notes)));
@@ -1036,7 +1033,7 @@ impl SettingsUi {
             }
             let row = QHBoxLayout::new_0a();
             l.add_layout_1a(&row);
-            let use_btn = button("Use this version");
+            let use_btn = button(&t!("settings-dll-pin"));
             row.add_widget(&use_btn);
             row.add_stretch_1a(1);
             let (tp, dp, entries, chosen) = (tree.as_ptr(), d.as_ptr(), entries.clone(), chosen.clone());
@@ -1051,18 +1048,18 @@ impl SettingsUi {
         let Some(e) = chosen.borrow_mut().take() else { return };
         let v = e.remote.version.clone();
         if e.compatible == Some(false) {
-            crate::dialogs::error(&app.window, &format!("v{v} was built for a different game build, so it would never be injected."));
+            crate::dialogs::error(&app.window, &t!("settings-dll-wrong-build-short", version = &v));
             return;
         }
         if e.remote.installed {
             match dll::dll_set_pin(Some(&v)) {
                 Ok(()) => {
-                    self.dll_latest.set_text(&qs(format!("Using v{v} for every launch")));
+                    self.dll_latest.set_text(&qs(t!("settings-dll-using", version = &v)));
                     app.refresh_dll();
                 }
                 Err(err) => crate::dialogs::error(&app.window, &err),
             }
-        } else if crate::dialogs::confirm(&app.window, "Install script extender", &dll_install_text(&e.remote, true, pinned.as_deref())) {
+        } else if crate::dialogs::confirm(&app.window, &t!("settings-dll-install-title"),&dll_install_text(&e.remote, true, pinned.as_deref())) {
             self.install_dll(app, e.remote, true);
         }
     }
@@ -1085,24 +1082,30 @@ impl SettingsUi {
                         self.dll_install.set_visible(false);
                     }
                 }
-                let mut note = if d.compatible { " (matches this game build)" } else { " (built for a different game build)" }.to_string();
+                let mut pinned = false;
                 if pin.as_deref() == Some(d.version.as_str()) {
                     match dll::dll_set_pin(Some(&d.version)) {
-                        Ok(()) => note.push_str(", used for every launch"),
+                        Ok(()) => pinned = true,
                         Err(e) => crate::dialogs::error(&app.window, &e),
                     }
                 }
-                self.dll_latest.set_text(&qs(format!("Installed v{}{note}", d.version)));
+                let v = &d.version;
+                self.dll_latest.set_text(&qs(match (d.compatible, pinned) {
+                    (true, false) => t!("settings-dll-installed-match", version = v),
+                    (false, false) => t!("settings-dll-installed-other", version = v),
+                    (true, true) => t!("settings-dll-installed-match-pinned", version = v),
+                    (false, true) => t!("settings-dll-installed-other-pinned", version = v),
+                }));
             }
             Err(e) => {
-                self.dll_latest.set_text(&qs("Install failed"));
+                self.dll_latest.set_text(&qs(t!("settings-install-failed")));
                 crate::dialogs::error(&app.window, &e)
             }
         }
     }
 
     pub unsafe fn on_hash_progress(&self, p: &Progress) {
-        self.profile_msg.set_text(&qs(format!("Hashing {} — {} of {}", p.file, format_bytes(p.done_bytes), format_bytes(p.total_bytes))));
+        self.profile_msg.set_text(&qs(t!("settings-hashing-file", file = &p.file, done = format_bytes(p.done_bytes), total = format_bytes(p.total_bytes))));
     }
 
     pub unsafe fn on_hashed(&self, app: &Rc<App>, purpose: HashPurpose, r: Result<Vec<PackHash>, String>) {
@@ -1120,7 +1123,7 @@ impl SettingsUi {
                     (st.profiles.active.clone(), format!("{y}-{m:02}-{d:02}"), dll::se_config_for(&st.active(), &app.ctx.settings()).sim_values(), st.coop.as_ref().map(|c| c.sync_version()), st.game_build())
                 };
                 let text = sync::build_export(&name, &hashes, &date, &se_sim, coop.as_deref(), game.as_ref());
-                crate::dialogs::show_text(&app.window, "Export profile", "Send this to your co-op partner. They use \"Verify against an export\" to compare.", &text);
+                crate::dialogs::show_text(&app.window, &t!("settings-export-title"), &t!("settings-export-intro"), &text);
             }
             HashPurpose::Verify => {
                 let text = app.verify_text.borrow().clone();
@@ -1145,24 +1148,24 @@ impl SettingsUi {
                 let theirs_game = sync::parse_export_game(&text);
                 let game_diff = sync::game_mismatch(theirs_game.as_ref(), app.st.borrow().game_build().as_ref());
                 let ok = result.ok && se_diffs.is_empty() && coop_diff.is_none() && game_diff.is_none();
-                crate::dialogs::custom(&app.window, "Co-op sync check", 820, 560, |l, d| {
-                    let head = label(if ok { "In sync: same game build, packs, files, order and script extender settings." } else { "Not in sync:" });
+                crate::dialogs::custom(&app.window, &t!("settings-sync-title"), 820, 560, |l, d| {
+                    let head = label(&if ok { t!("settings-sync-ok") } else { t!("settings-sync-not-ok") });
                     bold(&head);
                     colored(&head, &if ok { icons::green() } else { icons::red() });
                     l.add_widget(&head);
                     let t = QTreeWidget::new_0a();
                     let h = QListOfQString::new_0a();
-                    h.append_q_string(&qs("Status"));
-                    h.append_q_string(&qs("Load order"));
-                    h.append_q_string(&qs("Pack"));
+                    h.append_q_string(&qs(t!("settings-col-status")));
+                    h.append_q_string(&qs(t!("settings-col-load-order")));
+                    h.append_q_string(&qs(t!("settings-col-pack")));
                     t.set_header_labels(&h);
                     t.set_root_is_decorated(false);
                     t.header().set_section_resize_mode_2a(1, ResizeMode::ResizeToContents);
                     t.header().set_section_resize_mode_2a(2, ResizeMode::Stretch);
                     if let Some((theirs, mine)) = &game_diff {
                         let it = QTreeWidgetItem::new();
-                        it.set_text(0, &qs("Game build differs"));
-                        it.set_text(2, &qs(format!("Total War: THREE KINGDOMS: you {mine}, them {theirs}")));
+                        it.set_text(0, &qs(t!("settings-sync-game-differs")));
+                        it.set_text(2, &qs(t!("settings-sync-game-detail", mine = mine, theirs = theirs)));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
@@ -1170,10 +1173,10 @@ impl SettingsUi {
                         let it = QTreeWidgetItem::new();
                         it.set_text(0, &qs(r.status.label()));
                         let order = match r.ours_pos {
-                            Some(o) => format!("you {o} / them {}", r.theirs_pos),
-                            None => format!("them {}", r.theirs_pos),
+                            Some(o) => t!("settings-sync-order-both", ours = o, theirs = r.theirs_pos),
+                            None => t!("settings-sync-order-theirs", theirs = r.theirs_pos),
                         };
-                        it.set_text(1, &qs(if r.moved { format!("{order}  moved") } else { order }));
+                        it.set_text(1, &qs(if r.moved { t!("settings-sync-order-moved", order = order) } else { order }));
                         if r.moved {
                             it.set_foreground(1, &qt_gui::QBrush::from_q_color(&icons::amber()));
                         }
@@ -1189,57 +1192,57 @@ impl SettingsUi {
                     }
                     for (pos, m) in &result.extra {
                         let it = QTreeWidgetItem::new();
-                        it.set_text(0, &qs("only on your side"));
-                        it.set_text(1, &qs(format!("you {pos}")));
+                        it.set_text(0, &qs(t!("settings-sync-only-yours")));
+                        it.set_text(1, &qs(t!("settings-sync-order-yours", pos = pos)));
                         it.set_text(2, &qs(&m.file));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::amber()));
                         t.add_top_level_item(it.into_ptr());
                     }
                     for (key, mine, theirs) in &se_diffs {
-                        let name = tkmm_core::se_config::def(key).map(|d| d.label).unwrap_or(key);
+                        let name = tkmm_core::se_config::def(key).map(|d| d.label()).unwrap_or_else(|| key.to_string());
                         let it = QTreeWidgetItem::new();
-                        it.set_text(0, &qs("SE setting differs"));
-                        it.set_text(2, &qs(format!("{name} ({key}): you {mine}, them {theirs}")));
+                        it.set_text(0, &qs(t!("settings-sync-se-differs")));
+                        it.set_text(2, &qs(t!("settings-sync-se-detail", name = name, key = key, mine = mine, theirs = theirs)));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
                     if let Some((theirs, mine)) = &coop_diff {
                         let it = QTreeWidgetItem::new();
-                        it.set_text(0, &qs("Coop differs"));
-                        it.set_text(2, &qs(format!("Three Kingdoms Coop: you {mine}, them {theirs}")));
+                        it.set_text(0, &qs(t!("settings-sync-coop-differs")));
+                        it.set_text(2, &qs(t!("settings-sync-coop-detail", mine = mine, theirs = theirs)));
                         it.set_foreground(0, &qt_gui::QBrush::from_q_color(&icons::red()));
                         t.add_top_level_item(it.into_ptr());
                     }
                     l.add_widget_2a(&t, 1);
                     if game_diff.is_some() {
-                        l.add_widget(&label("Every player needs the same game build. Update the game in Steam (or Epic) on the older side, and check that nobody is on a Steam beta branch."));
+                        l.add_widget(&label(&t!("settings-sync-game-note")));
                     } else if theirs_game.is_none() {
-                        l.add_widget(&label("Your partner's export does not record the game build (made with an older TK Mod Manager), so it was not compared."));
+                        l.add_widget(&label(&t!("settings-sync-game-unknown")));
                     }
                     if coop_diff.is_some() {
-                        l.add_widget(&label("Every player needs the same Three Kingdoms Coop build (Settings > Three Kingdoms Coop)."));
+                        l.add_widget(&label(&t!("settings-sync-coop-note")));
                     }
                     if result.order_differs {
                         let row = QHBoxLayout::new_0a();
-                        let note = label("The packs marked \"moved\" load in a different place on your side. Every player in a multiplayer campaign should load the packs in the same order.");
+                        let note = label(&t!("settings-sync-moved-note"));
                         note.set_word_wrap(true);
                         row.add_widget_2a(&note, 1);
-                        let adopt = button("Use their load order");
-                        adopt.set_tool_tip(&qs("Reorder the active profile to match your partner's export. Separators, disabled packs and packs only you have stay where they are."));
+                        let adopt = button(&t!("settings-sync-adopt"));
+                        adopt.set_tool_tip(&qs(t!("settings-sync-adopt-tip")));
                         row.add_widget(&adopt);
                         l.add_layout_1a(&row);
                         let (this, order, dp) = (app.clone(), result.their_order.clone(), d.as_ptr());
                         adopt.clicked().connect(&SlotNoArgs::new(d, move || {
                             this.st.borrow_mut().update_active(|p| p.entries = profile_ops::adopt_order(&p.entries, &order));
                             this.mark(DIRTY_LIST);
-                            crate::dialogs::info(&this.window, "Load order", "The active profile now loads the shared packs in your partner's order. Run \"Verify against an export\" again to check.");
+                            crate::dialogs::info(&this.window, &t!("settings-sync-adopted-title"), &t!("settings-sync-adopted"));
                             dp.accept();
                         }));
                     }
                     if !se_diffs.is_empty() {
-                        l.add_widget(&label("Script extender settings that change the campaign must be identical, or you cannot see each other's lobby. Change them with Settings… next to \"Script extender\" in the launch panel, or import your partner's export."));
+                        l.add_widget(&label(&t!("settings-sync-se-note")));
                     } else if theirs_se.is_none() {
-                        l.add_widget(&label("Your partner's export has no script extender settings (made with an older TK Mod Manager), so those were not compared."));
+                        l.add_widget(&label(&t!("settings-sync-se-unknown")));
                     }
                 });
             }
@@ -1249,22 +1252,22 @@ impl SettingsUi {
     unsafe fn import_ca(&self, app: &Rc<App>) {
         let mut file = app.st.borrow().paths.used_mods_file.clone().unwrap_or_default();
         if file.is_empty() {
-            file = QFileDialog::get_open_file_name_4a(&app.window, &qs("Select used_mods.txt"), &qs(""), &qs("Mod list (*.txt)")).to_std_string();
+            file = QFileDialog::get_open_file_name_4a(&app.window, &qs(t!("settings-pick-used-mods")), &qs(""), &qs(t!("settings-modlist-filter"))).to_std_string();
             if file.is_empty() {
                 return;
             }
         }
-        let Some(name) = crate::dialogs::ask_text(&app.window, "Import CA launcher list", "Name for the new profile:", "CA launcher") else { return };
+        let Some(name) = crate::dialogs::ask_text(&app.window, &t!("settings-import-ca-title"), &t!("settings-new-profile-name"), &t!("settings-import-ca-default-name")) else { return };
         match ops::import_mod_list(&app.ctx, &file) {
             Ok(imported) => {
                 let keys: Vec<String> = imported.iter().filter_map(|i| i.key.clone()).collect();
                 let missing: Vec<String> = imported.iter().filter(|i| i.key.is_none()).map(|i| i.file.clone()).collect();
                 match self.make_profile(app, &name, &keys) {
-                    Ok(()) => self.profile_msg.set_text(&qs(format!(
-                        "Imported {} mods into \"{name}\"{}",
-                        keys.len(),
-                        if missing.is_empty() { String::new() } else { format!("; not installed: {}", missing.join(", ")) }
-                    ))),
+                    Ok(()) => self.profile_msg.set_text(&qs(if missing.is_empty() {
+                        t!("settings-imported", count = keys.len(), name = &name)
+                    } else {
+                        t!("settings-imported-not-installed", count = keys.len(), name = &name, missing = missing.join(", "))
+                    })),
                     Err(e) => crate::dialogs::error(&app.window, &e),
                 }
             }
@@ -1273,12 +1276,12 @@ impl SettingsUi {
     }
 
     unsafe fn import_text(&self, app: &Rc<App>) {
-        let Some(text) = crate::dialogs::ask_multiline(&app.window, "Import from text", "Paste a profile export (one pack per line).", "Next") else { return };
+        let Some(text) = crate::dialogs::ask_multiline(&app.window, &t!("settings-import-text-title"), &t!("settings-import-text-intro"), &t!("settings-next")) else { return };
         let rows = sync::parse_export(&text);
         if rows.is_empty() {
-            return crate::dialogs::error(&app.window, "Nothing to import.");
+            return crate::dialogs::error(&app.window, &t!("settings-nothing-to-import"));
         }
-        let Some(name) = crate::dialogs::ask_text(&app.window, "Import from text", "Name for the new profile:", "Imported") else { return };
+        let Some(name) = crate::dialogs::ask_text(&app.window, &t!("settings-import-text-title"), &t!("settings-new-profile-name"), &t!("settings-import-text-default-name")) else { return };
         let keys: Vec<String> = {
             let st = app.st.borrow();
             rows.iter()
@@ -1294,11 +1297,11 @@ impl SettingsUi {
         let unknown = keys.iter().filter(|k| app.st.borrow().module(k).is_none()).count();
         match self.make_profile(app, &name, &keys) {
             Ok(()) => {
-                self.profile_msg.set_text(&qs(format!(
-                    "Imported {} mods into \"{name}\"{}",
-                    keys.len() - unknown,
-                    if unknown > 0 { format!("; {unknown} not installed (kept as missing)") } else { String::new() }
-                )));
+                self.profile_msg.set_text(&qs(if unknown > 0 {
+                    t!("settings-imported-unknown", count = keys.len() - unknown, name = &name, unknown = unknown)
+                } else {
+                    t!("settings-imported", count = keys.len(), name = &name)
+                }));
                 // The new profile is active now; offer the partner's campaign settings with it.
                 if let Some(theirs) = sync::parse_export_se(&text) {
                     let base = dll::default_se_config(&app.ctx.settings());
@@ -1306,11 +1309,12 @@ impl SettingsUi {
                     if !diffs.is_empty()
                         && crate::dialogs::confirm(
                             &app.window,
-                            "Script extender settings",
+                            &t!("settings-se-import-title"),
                             &format!(
-                                "The export also carries script extender settings, and {} from your defaults:\n\n{}\n\nUse your partner's settings for \"{name}\"? (Needed to join each other's multiplayer lobby.)",
-                                if diffs.len() == 1 { "1 of them differs".to_string() } else { format!("{} of them differ", diffs.len()) },
-                                diffs.iter().map(|(k, a, b)| format!("{k}: you {a}, them {b}")).collect::<Vec<_>>().join("\n")
+                                "{}\n\n{}\n\n{}",
+                                t!("settings-se-import-differs", count = diffs.len()),
+                                diffs.iter().map(|(k, a, b)| t!("settings-se-diff-line", key = k, mine = a, theirs = b)).collect::<Vec<_>>().join("\n"),
+                                t!("settings-se-import-use", name = &name)
                             ),
                         )
                     {
@@ -1344,16 +1348,16 @@ impl SettingsUi {
                 .collect();
             (keys, missing)
         };
-        let default = if res.title.is_empty() { format!("Collection {}", res.id) } else { res.title.clone() };
-        let Some(name) = crate::dialogs::ask_text(&app.window, "Import Workshop collection", "Name for the new profile:", &default) else {
+        let default = if res.title.is_empty() { t!("settings-collection-default-name", id = &res.id) } else { res.title.clone() };
+        let Some(name) = crate::dialogs::ask_text(&app.window, &t!("settings-collection-title"), &t!("settings-new-profile-name"), &default) else {
             self.profile_msg.set_text(&qs(""));
             return;
         };
         match self.make_profile(app, &name, &keys) {
             Ok(()) => {
-                self.profile_msg.set_text(&qs(format!("\"{name}\": {} of {} collection items are installed and enabled.", keys.len(), res.children.len())));
+                self.profile_msg.set_text(&qs(t!("settings-collection-result", name = &name, installed = keys.len(), total = res.children.len())));
                 if !missing.is_empty() {
-                    crate::dialogs::show_text(&app.window, "Not installed", "Subscribe to these on the Workshop, then use Refresh mods:", &missing.join("\n"));
+                    crate::dialogs::show_text(&app.window, &t!("settings-not-installed-title"), &t!("settings-not-installed-intro"), &missing.join("\n"));
                 }
             }
             Err(e) => crate::dialogs::error(&app.window, &e),
@@ -1374,8 +1378,8 @@ impl SettingsUi {
     /// Fill the page from the current settings / state.
     pub unsafe fn on_nexus_user(&self, _app: &Rc<App>, r: Result<tkmm_core::nexus::User, String>) {
         let text = match r {
-            Ok(u) if u.premium => format!("Signed in as {} (Premium: installs from any Files tab button).", u.name),
-            Ok(u) => format!("Signed in as {}. Use the \"Mod Manager Download\" buttons on nexusmods.com to install.", u.name),
+            Ok(u) if u.premium => t!("settings-nexus-premium", name = &u.name),
+            Ok(u) => t!("settings-nexus-signed-in", name = &u.name),
             Err(e) => e,
         };
         self.nexus_user.set_text(&qs(text));
@@ -1387,7 +1391,7 @@ impl SettingsUi {
             self.nexus_key.set_text(&qs(&s.nexus_api_key));
         }
         if self.nexus_user.text().is_empty() {
-            self.nexus_user.set_text(&qs(if s.nexus_api_key.is_empty() { "No key: Nexus installs are off." } else { "Key saved." }));
+            self.nexus_user.set_text(&qs(if s.nexus_api_key.is_empty() { t!("settings-nexus-no-key") } else { t!("settings-nexus-key-saved") }));
         }
         let ours = std::env::current_exe().ok().map(|e| tkmm_core::nexus::handler_command(&e));
         let fresh = self.nxm_seen.borrow().as_ref().filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(5)).map(|(_, h)| h.clone());
@@ -1398,17 +1402,14 @@ impl SettingsUi {
         });
         let is_ours = handler.is_some() && handler == ours;
         self.nexus_handler.set_text(&qs(match &handler {
-            _ if is_ours => "Handled by TK Mod Manager.".to_string(),
-            Some(h) => format!("Handled by another program: {h}"),
-            None => "Not handled by any program.".to_string(),
+            _ if is_ours => t!("settings-nexus-handled-ours"),
+            Some(h) => t!("settings-nexus-handled-other", command = h),
+            None => t!("settings-nexus-handled-none"),
         }));
         self.nexus_register.set_enabled(!is_ours);
         let st = app.st.borrow();
-        self.game_root.set_text(&qs(format!(
-            "{}{}",
-            st.paths.game_root.clone().unwrap_or_else(|| "not found".into()),
-            if s.game_root.is_some() { "  (manual)" } else { "  (auto)" }
-        )));
+        let path = st.paths.game_root.clone().unwrap_or_else(|| t!("settings-not-found"));
+        self.game_root.set_text(&qs(if s.game_root.is_some() { t!("settings-game-root-manual", path = path) } else { t!("settings-game-root-auto", path = path) }));
         // Every copy found, plus the current folder when it is somewhere else.
         self.installs.clear();
         let current = st.paths.game_root.clone().unwrap_or_default();
@@ -1422,26 +1423,26 @@ impl SettingsUi {
             self.installs.add_item_q_string_q_variant(&qs(format!("{store} — {current}")), &QVariant::from_q_string(&qs(&current)));
         }
         if st.installs.is_empty() && current.is_empty() {
-            self.installs.add_item_q_string_q_variant(&qs("no copy found — use Change…"), &QVariant::from_q_string(&qs("")));
+            self.installs.add_item_q_string_q_variant(&qs(t!("settings-no-copy-found")), &QVariant::from_q_string(&qs("")));
         }
         let ci = self.installs.find_data_1a(&QVariant::from_q_string(&qs(&current)));
         self.installs.set_current_index(ci.max(0));
         // Only Steam has a Workshop; the other stores keep downloaded mods in <game>\mods.
         let store = st.paths.store;
         let steam = store == paths::GameStore::Steam;
-        self.ws_title.set_text(&qs(if steam { "Workshop folder" } else { "Mods folder" }));
+        self.ws_title.set_text(&qs(if steam { t!("settings-workshop-folder") } else { t!("settings-mods-folder") }));
         self.ws_dir.set_text(&qs(if steam {
-            st.paths.workshop_dir.clone().unwrap_or_else(|| "not found".into())
+            st.paths.workshop_dir.clone().unwrap_or_else(|| t!("settings-not-found"))
         } else {
             st.paths
                 .mods_dir
                 .clone()
-                .map(|d| format!("{d}  (the game's own mods folder; {} has no Workshop)", store.label()))
-                .unwrap_or_else(|| format!("none — {} keeps mods in <game folder>\\mods, which does not exist yet", store.label()))
+                .map(|d| t!("settings-mods-folder-own", path = d, store = store.label()))
+                .unwrap_or_else(|| t!("settings-mods-folder-none", store = store.label()))
         }));
         self.ws_change.set_enabled(steam);
         self.version.set_text(&qs(match (&st.paths.exe_version, st.paths.game_root.is_some()) {
-            (Some(v), true) => format!("{v} ({})", store.label()),
+            (Some(v), true) => t!("settings-game-version-store", version = v, store = store.label()),
             (Some(v), false) => v.clone(),
             (None, _) => "?".into(),
         }));
@@ -1475,22 +1476,22 @@ impl SettingsUi {
 
         self.dll_list.clear();
         if let Some(d) = &st.dll {
-            self.dll_game.set_text(&qs(format!(
-                "Game build {} / {}. A DLL is only injected when its manifest matches these values, and never into a game that already has it loaded.",
-                d.game_timestamp_hex.clone().unwrap_or_else(|| "?".into()),
-                d.game_size_hex.clone().unwrap_or_else(|| "?".into())
+            self.dll_game.set_text(&qs(t!("settings-dll-game-build",
+                timestamp = d.game_timestamp_hex.clone().unwrap_or_else(|| "?".into()),
+                size = d.game_size_hex.clone().unwrap_or_else(|| "?".into())
             )));
             for i in &d.installed {
                 let it = QTreeWidgetItem::new();
                 it.set_text(0, &qs(format!("v{}", i.version)));
-                it.set_text(1, &qs(i.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| "no manifest".into())));
+                it.set_data(0, qt_core::ItemDataRole::UserRole.to_int(), &QVariant::from_q_string(&qs(&i.version)));
+                it.set_text(1, &qs(i.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| t!("settings-no-manifest"))));
                 let selected = d.selected.as_ref().map(|s| s.version == i.version).unwrap_or(false);
-                let mut status = vec![if i.compatible { "matches game" } else { "other game build" }];
+                let mut status = vec![if i.compatible { t!("settings-status-matches") } else { t!("settings-status-other-build") }];
                 if d.pinned.as_deref() == Some(i.version.as_str()) {
-                    status.push(if i.compatible { "pinned" } else { "pinned, but can't be injected" });
+                    status.push(if i.compatible { t!("settings-status-pinned") } else { t!("settings-status-pinned-blocked") });
                 }
                 if selected {
-                    status.push("will inject");
+                    status.push(t!("settings-status-will-inject"));
                 }
                 it.set_text(2, &qs(status.join(" · ")));
                 it.set_foreground(2, &qt_gui::QBrush::from_q_color(&if i.compatible { icons::green() } else { icons::red() }));
@@ -1499,40 +1500,40 @@ impl SettingsUi {
             self.dll_unpin.set_enabled(d.pinned.is_some());
         }
         let changed = se_changed(&dll::default_se_config(&app.ctx.settings()));
-        self.se_summary.set_text(&qs(if changed.is_empty() { "Default: all script extender defaults".to_string() } else { format!("Default changes: {}", changed.join(", ")) }));
+        self.se_summary.set_text(&qs(if changed.is_empty() { t!("settings-se-all-default") } else { t!("settings-se-default-changes", keys = changed.join(", ")) }));
 
         let supported = st.coop_supported();
         let pack = if st.coop_pack_enabled() {
-            "the tw3k_coop pack is enabled in this profile"
+            t!("settings-coop-pack-enabled")
         } else if st.mods.iter().any(|m| m.file.eq_ignore_ascii_case(coop::PACK)) {
-            "the tw3k_coop pack is installed but not enabled in this profile"
+            t!("settings-coop-pack-disabled")
         } else {
-            "the tw3k_coop pack is not installed (subscribe on the Workshop)"
+            t!("settings-coop-pack-missing")
         };
         let (status, color) = match (&st.coop, supported) {
-            (_, false) if !steam => (format!("Not available on the {} copy: Coop only works on the Steam version 1.7.2.", store.label()), icons::grey()),
-            (Some(c), false) => (format!("Coop {}, but it stays inactive: this game build is not the Steam 1.7.2 build it supports.", c.summary()), icons::amber()),
-            (None, false) => ("This game build is not the Steam 1.7.2 build Coop supports.".to_string(), icons::grey()),
-            (Some(c), true) if c.active() => (format!("Coop {}; {pack}.", c.summary()), if c.debug { icons::amber() } else { icons::green() }),
-            (Some(c), true) => (format!("Coop {}.", c.summary()), icons::red()),
-            (None, true) => (format!("Not installed; {pack}."), icons::grey()),
+            (_, false) if !steam => (t!("settings-coop-wrong-store", store = store.label()), icons::grey()),
+            (Some(c), false) => (t!("settings-coop-inactive", summary = c.summary()), icons::amber()),
+            (None, false) => (t!("settings-coop-unsupported"), icons::grey()),
+            (Some(c), true) if c.active() => (t!("settings-coop-active", summary = c.summary(), pack = &pack), if c.debug { icons::amber() } else { icons::green() }),
+            (Some(c), true) => (t!("settings-coop-broken", summary = c.summary()), icons::red()),
+            (None, true) => (t!("settings-coop-not-installed", pack = &pack), icons::grey()),
         };
         self.coop_status.set_text(&qs(status));
         colored(&self.coop_status, &color);
         let busy = self.coop_busy.get();
         let can_install = supported && st.paths.game_root.is_some() && !st.game_running && !busy;
         self.coop_install.set_text(&qs(match &st.coop {
-            Some(c) if c.active() => "Update…",
-            Some(_) => "Repair…",
-            None => "Install…",
+            Some(c) if c.active() => t!("settings-coop-update"),
+            Some(_) => t!("settings-coop-repair"),
+            None => t!("settings-coop-install"),
         }));
         self.coop_install.set_enabled(can_install);
         self.coop_install.set_tool_tip(&qs(if !supported {
-            "Coop only works on the Steam version 1.7.2"
+            t!("settings-coop-steam-only")
         } else if st.game_running {
-            "Close the game first"
+            t!("settings-close-game-first")
         } else {
-            "Download Coop's official Setup from GitHub (you are asked first) and run it"
+            t!("settings-coop-install-tip")
         }));
         self.coop_check.set_enabled(!busy);
         self.coop_workshop.set_enabled(steam);
@@ -1542,11 +1543,7 @@ impl SettingsUi {
         let profile = st.active();
         drop(st);
         self.preview.set_plain_text(&qs(ops::preview_mod_list(&app.ctx, &profile)));
-        self.about.set_text(&qs(format!(
-            "TK Mod Manager v{}. Data in {}. Shortcuts: --profile \"Name\" --launch starts a profile directly; --minimized starts in the tray.",
-            ops::APP_VERSION,
-            paths::app_data_dir().display()
-        )));
+        self.about.set_text(&qs(t!("settings-about", version = ops::APP_VERSION, path = paths::app_data_dir().display().to_string())));
         let _ = DIRTY_LIST;
     }
 }
@@ -1556,7 +1553,7 @@ fn unused(_: QHBoxLayout) {}
 
 /// Labels of the keys that differ from the script extender's defaults.
 pub fn se_changed(c: &tkmm_core::se_config::SeConfig) -> Vec<String> {
-    let mut out: Vec<String> = tkmm_core::se_config::KEYS.iter().filter(|k| !c.is_default(k.key)).map(|k| k.label.to_string()).collect();
+    let mut out: Vec<String> = tkmm_core::se_config::KEYS.iter().filter(|k| !c.is_default(k.key)).map(|k| k.label()).collect();
     out.extend(c.unknown().map(|(k, _)| k.clone()));
     out
 }

@@ -12,6 +12,7 @@
 //! simulation key, defaults included. Keys this table does not know (from a newer DLL) are kept.
 
 use serde::{Deserialize, Serialize};
+use crate::t;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,8 +30,8 @@ pub enum Kind {
     /// `0` / `1`.
     Bool,
     Int { min: i64, max: i64 },
-    /// One of the listed values (value, text).
-    Choice(&'static [(&'static str, &'static str)]),
+    /// One of the listed values (their text: `KeyDef::choice_text`).
+    Choice(&'static [&'static str]),
     /// Free text on one line.
     Text,
 }
@@ -41,35 +42,112 @@ pub struct KeyDef {
     pub group: Group,
     pub kind: Kind,
     pub default: &'static str,
-    pub label: &'static str,
-    pub help: &'static str,
 }
 
-const CACHE_MODES: &[(&str, &str)] = &[("0", "Off"), ("1", "On"), ("2", "Verify only")];
+const CACHE_MODES: &[&str] = &["0", "1", "2"];
 
 /// Every key the manager knows, in the order they are written.
 pub const KEYS: &[KeyDef] = &[
-    KeyDef { key: "build_number", group: Group::Menu, kind: Kind::Text, default: "{game}", label: "Build text", help: "Main-menu build text. {game} = the game's own text, {version} = script extender version, {sync} = multiplayer settings hash. The [se version.sync] tag is always added." },
-    KeyDef { key: "build_number_short", group: Group::Menu, kind: Kind::Text, default: "{game}", label: "Short build text", help: "Short form of the build text, same placeholders." },
-    KeyDef { key: "build_modified", group: Group::Menu, kind: Kind::Bool, default: "1", label: "Show the game as modified", help: "The main menu marks the game as modified." },
-    KeyDef { key: "autoresolve_hooks", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Auto-resolve hooks", help: "Master switch for every auto-resolve hook (off also disables the duel hook)." },
-    KeyDef { key: "duel_power_hook", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Duel power hook", help: "Per-character duel bonus and stat formula in auto-resolve (190 Expanded \"Duel CEO\"). Off = those script calls are refused." },
-    KeyDef { key: "prebattle_single_delegate", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Multiplayer: one Delegate vote for all", help: "Before a battle, one human's Delegate vote counts for every human." },
-    KeyDef { key: "postbattle_single_continue", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Multiplayer: one Continue for all", help: "After a battle, one human's Continue clears the screen for every human (an unmade captive choice takes the default)." },
-    KeyDef { key: "save_chunking", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Save chunking", help: "Saved script values above the engine's 64 KiB limit are split into chunks. Off = vanilla (a large store resets on load)." },
-    KeyDef { key: "marriage_inlaws", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Relatives by marriage may marry", help: "Off = the engine rule: one marriage between two houses blocks every later one." },
-    KeyDef { key: "marriage_blood_generations", group: Group::Sim, kind: Kind::Int { min: 0, max: 6 }, default: "0", label: "Blood-relative marriage ban (generations)", help: "With in-law marriage on: blood relatives sharing an ancestor within this many generations may not marry. 0 = only the engine's close-kin rule." },
-    KeyDef { key: "horde_income", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Horde income", help: "Adds faction- and force-scoped gdp_abs effects to the treasury." },
-    KeyDef { key: "horde_income_category", group: Group::Sim, kind: Kind::Choice(&[("0", "Taxes"), ("1", "Mining (recommended)"), ("2", "Trade"), ("3", "Military force")]), default: "1", label: "Horde income line", help: "Which income line receives the horde income." },
-    KeyDef { key: "followup_hooks", group: Group::Sim, kind: Kind::Bool, default: "1", label: "Mediate-peace button repair", help: "Repairs the MEDIATE PEACE diplomacy button." },
-    KeyDef { key: "ai_recruit_hook", group: Group::Sim, kind: Kind::Bool, default: "1", label: "AI recruitment hook", help: "AI recruitment planner hook (AI scope for the recruit caches)." },
-    KeyDef { key: "recruit_perm_cache", group: Group::Sim, kind: Kind::Choice(CACHE_MODES), default: "1", label: "Unit permission cache", help: "Reuses the unit-permission table: a large end-of-turn time saving." },
-    KeyDef { key: "ai_recruit_cache", group: Group::Sim, kind: Kind::Choice(&[("0", "Off (recommended)"), ("1", "Verify only"), ("2", "Serve")]), default: "0", label: "AI recruit-list cache", help: "Diagnostic cache for AI recruit lists. Measured as not worth it: leave off." },
-    KeyDef { key: "ui_recruit_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 30_000 }, default: "5000", label: "Recruit-list UI cache (ms)", help: "How long the recruit-list UI cache lives. 0 = off." },
-    KeyDef { key: "file_probe_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 600_000 }, default: "10000", label: "Missing-file cache (ms)", help: "How long missing loose-file folders are remembered. 0 = off." },
-    KeyDef { key: "diag_crash", group: Group::Local, kind: Kind::Choice(&[("0", "Off"), ("1", "On (se_crash.txt)"), ("2", "On + activity log")]), default: "1", label: "Crash reporter", help: "1 writes se_crash.txt next to the DLL when the game faults; 2 also logs every hook and native call to se_activity.txt (large)." },
-    KeyDef { key: "diag_diplomacy", group: Group::Local, kind: Kind::Choice(&[("0", "Off"), ("1", "Counters, trace on request"), ("2", "Trace from injection")]), default: "0", label: "Diplomacy diagnostics", help: "Diplomacy counters and a trace in dip_trace.txt." },
+    KeyDef { key: "build_number", group: Group::Menu, kind: Kind::Text, default: "{game}" },
+    KeyDef { key: "build_number_short", group: Group::Menu, kind: Kind::Text, default: "{game}" },
+    KeyDef { key: "build_modified", group: Group::Menu, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "autoresolve_hooks", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "duel_power_hook", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "prebattle_single_delegate", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "postbattle_single_continue", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "save_chunking", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "marriage_inlaws", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "marriage_blood_generations", group: Group::Sim, kind: Kind::Int { min: 0, max: 6 }, default: "0" },
+    KeyDef { key: "horde_income", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "horde_income_category", group: Group::Sim, kind: Kind::Choice(&["0", "1", "2", "3"]), default: "1" },
+    KeyDef { key: "followup_hooks", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "ai_recruit_hook", group: Group::Sim, kind: Kind::Bool, default: "1" },
+    KeyDef { key: "recruit_perm_cache", group: Group::Sim, kind: Kind::Choice(CACHE_MODES), default: "1" },
+    KeyDef { key: "ai_recruit_cache", group: Group::Sim, kind: Kind::Choice(&["0", "1", "2"]), default: "0" },
+    KeyDef { key: "ui_recruit_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 30_000 }, default: "5000" },
+    KeyDef { key: "file_probe_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 600_000 }, default: "10000" },
+    KeyDef { key: "diag_crash", group: Group::Local, kind: Kind::Choice(&["0", "1", "2"]), default: "1" },
+    KeyDef { key: "diag_diplomacy", group: Group::Local, kind: Kind::Choice(&["0", "1", "2"]), default: "0" },
 ];
+
+impl KeyDef {
+    /// The setting's name for people.
+    pub fn label(&self) -> String {
+        match self.key {
+            "build_number" => t!("se-key-build-number"),
+            "build_number_short" => t!("se-key-build-number-short"),
+            "build_modified" => t!("se-key-build-modified"),
+            "autoresolve_hooks" => t!("se-key-autoresolve-hooks"),
+            "duel_power_hook" => t!("se-key-duel-power-hook"),
+            "prebattle_single_delegate" => t!("se-key-prebattle-single-delegate"),
+            "postbattle_single_continue" => t!("se-key-postbattle-single-continue"),
+            "save_chunking" => t!("se-key-save-chunking"),
+            "marriage_inlaws" => t!("se-key-marriage-inlaws"),
+            "marriage_blood_generations" => t!("se-key-marriage-blood-generations"),
+            "horde_income" => t!("se-key-horde-income"),
+            "horde_income_category" => t!("se-key-horde-income-category"),
+            "followup_hooks" => t!("se-key-followup-hooks"),
+            "ai_recruit_hook" => t!("se-key-ai-recruit-hook"),
+            "recruit_perm_cache" => t!("se-key-recruit-perm-cache"),
+            "ai_recruit_cache" => t!("se-key-ai-recruit-cache"),
+            "ui_recruit_cache_ms" => t!("se-key-ui-recruit-cache-ms"),
+            "file_probe_cache_ms" => t!("se-key-file-probe-cache-ms"),
+            "diag_crash" => t!("se-key-diag-crash"),
+            "diag_diplomacy" => t!("se-key-diag-diplomacy"),
+            other => other.to_string(),
+        }
+    }
+
+    /// One or two sentences on what the setting does.
+    pub fn help(&self) -> String {
+        match self.key {
+            "build_number" => t!("se-key-build-number-help"),
+            "build_number_short" => t!("se-key-build-number-short-help"),
+            "build_modified" => t!("se-key-build-modified-help"),
+            "autoresolve_hooks" => t!("se-key-autoresolve-hooks-help"),
+            "duel_power_hook" => t!("se-key-duel-power-hook-help"),
+            "prebattle_single_delegate" => t!("se-key-prebattle-single-delegate-help"),
+            "postbattle_single_continue" => t!("se-key-postbattle-single-continue-help"),
+            "save_chunking" => t!("se-key-save-chunking-help"),
+            "marriage_inlaws" => t!("se-key-marriage-inlaws-help"),
+            "marriage_blood_generations" => t!("se-key-marriage-blood-generations-help"),
+            "horde_income" => t!("se-key-horde-income-help"),
+            "horde_income_category" => t!("se-key-horde-income-category-help"),
+            "followup_hooks" => t!("se-key-followup-hooks-help"),
+            "ai_recruit_hook" => t!("se-key-ai-recruit-hook-help"),
+            "recruit_perm_cache" => t!("se-key-recruit-perm-cache-help"),
+            "ai_recruit_cache" => t!("se-key-ai-recruit-cache-help"),
+            "ui_recruit_cache_ms" => t!("se-key-ui-recruit-cache-ms-help"),
+            "file_probe_cache_ms" => t!("se-key-file-probe-cache-ms-help"),
+            "diag_crash" => t!("se-key-diag-crash-help"),
+            "diag_diplomacy" => t!("se-key-diag-diplomacy-help"),
+            _ => String::new(),
+        }
+    }
+
+    /// The text for one value of a `Kind::Choice` key (the value itself when unknown).
+    pub fn choice_text(&self, value: &str) -> String {
+        match (self.key, value) {
+            ("horde_income_category", "0") => t!("se-key-horde-income-category-0"),
+            ("horde_income_category", "1") => t!("se-key-horde-income-category-1"),
+            ("horde_income_category", "2") => t!("se-key-horde-income-category-2"),
+            ("horde_income_category", "3") => t!("se-key-horde-income-category-3"),
+            ("recruit_perm_cache", "0") => t!("se-key-recruit-perm-cache-0"),
+            ("recruit_perm_cache", "1") => t!("se-key-recruit-perm-cache-1"),
+            ("recruit_perm_cache", "2") => t!("se-key-recruit-perm-cache-2"),
+            ("ai_recruit_cache", "0") => t!("se-key-ai-recruit-cache-0"),
+            ("ai_recruit_cache", "1") => t!("se-key-ai-recruit-cache-1"),
+            ("ai_recruit_cache", "2") => t!("se-key-ai-recruit-cache-2"),
+            ("diag_crash", "0") => t!("se-key-diag-crash-0"),
+            ("diag_crash", "1") => t!("se-key-diag-crash-1"),
+            ("diag_crash", "2") => t!("se-key-diag-crash-2"),
+            ("diag_diplomacy", "0") => t!("se-key-diag-diplomacy-0"),
+            ("diag_diplomacy", "1") => t!("se-key-diag-diplomacy-1"),
+            ("diag_diplomacy", "2") => t!("se-key-diag-diplomacy-2"),
+            _ => value.to_string(),
+        }
+    }
+}
 
 pub fn def(key: &str) -> Option<&'static KeyDef> {
     KEYS.iter().find(|d| d.key == key)
@@ -80,7 +158,7 @@ pub fn valid(d: &KeyDef, value: &str) -> bool {
     match d.kind {
         Kind::Bool => value == "0" || value == "1",
         Kind::Int { min, max } => value.parse::<i64>().map(|v| (min..=max).contains(&v)).unwrap_or(false),
-        Kind::Choice(opts) => opts.iter().any(|(v, _)| *v == value),
+        Kind::Choice(opts) => opts.contains(&value),
         Kind::Text => !value.contains(['\n', '\r']),
     }
 }

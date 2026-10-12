@@ -50,7 +50,7 @@ pub fn log_sources(ctx: &AppContext) -> Vec<LogSource> {
     let status = dll::status_for(p.exe.as_deref().map(Path::new));
     if let Some(sel) = status.selected.or_else(|| status.installed.first().cloned()) {
         let log = Path::new(&sel.dir).join(dll::LOG_NAME);
-        if let Some(s) = source("dll", &format!("Script extender v{}", sel.version), &log) {
+        if let Some(s) = source("dll", &crate::t!("logs-script-extender", version = &sel.version), &log) {
             out.push(s);
         }
     }
@@ -59,12 +59,12 @@ pub fn log_sources(ctx: &AppContext) -> Vec<LogSource> {
             out.push(s);
         }
         if let Some(f) = newest(root, "script_log_") {
-            if let Some(s) = source("script_log", "Script log (newest)", &f) {
+            if let Some(s) = source("script_log", &crate::t!("logs-script-log"), &f) {
                 out.push(s);
             }
         }
         if let Some(f) = newest(root, "ironic_log_") {
-            if let Some(s) = source("ironic_log", "Ironic log (newest)", &f) {
+            if let Some(s) = source("ironic_log", &crate::t!("logs-ironic-log"), &f) {
                 out.push(s);
             }
         }
@@ -102,7 +102,7 @@ pub fn log_tail(ctx: &AppContext, path: &str, max_bytes: Option<u64>) -> Result<
     }
     let path = PathBuf::from(path);
     if !allowed(&path, &roots) {
-        return Err("that file is outside the game folder and the DLL folder".into());
+        return Err(crate::t!("err-log-outside"));
     }
     tail(&path, max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024))
 }
