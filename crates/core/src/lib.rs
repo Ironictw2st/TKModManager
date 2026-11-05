@@ -27,6 +27,7 @@ pub mod packs;
 pub mod paths;
 pub mod profile_ops;
 pub mod profiles;
+pub mod crash_dump;
 pub mod report;
 pub mod se_config;
 pub mod se_scan;

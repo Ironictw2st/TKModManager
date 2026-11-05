@@ -4,6 +4,13 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+### Fixed
+- **Big crash dumps now reach the developers.** "Send report" used to drop a crash dump that
+  zipped to more than 10 MB. It now packs the dump as 7z when that is smaller (about half the
+  size) and, if it is still too big for one message, posts it in parts in the same thread (up to
+  6). The report also carries a summary read from the dump on your PC (what crashed and where),
+  so a crash can be looked at even without the dump.
+
 ### Added
 - **Translations.** All text in the app can now be translated. Each language is one folder of
   plain-text files that anyone can edit (see TRANSLATING.md). When more than one language is

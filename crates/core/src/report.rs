@@ -347,8 +347,14 @@ fn crash_files(store: paths::GameStore) -> String {
         return format!("none in {}", dir.display());
     }
     let mut out = format!("{} dumps in {}; newest first. If asked, send the newest .mdmp file.\n", dumps.len(), dir.display());
-    for (t, p, size) in dumps.iter().take(3) {
+    for (i, (t, p, size)) in dumps.iter().take(3).enumerate() {
         let _ = writeln!(out, "- {} · {} · {}", when(*t), p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), format_bytes(*size));
+        // Read on this PC, so the crash can be triaged even when the dump is too big to send.
+        if i == 0 {
+            for l in crate::crash_dump::summary_text(p).lines() {
+                let _ = writeln!(out, "    {l}");
+            }
+        }
         // The stack file is one module name per frame; collapse runs of the same module.
         if let Ok(stack) = std::fs::read_to_string(p.with_extension("stack.txt")) {
             let mut runs: Vec<(String, usize)> = Vec::new();
@@ -466,20 +472,6 @@ fn recent_dump(store: paths::GameStore, now: u64, max_age_days: u64) -> Option<(
         .max_by_key(|(_, t)| *t)
 }
 
-/// The dump and its stack file, zipped at the strongest level (a 47 MB dump packs to ~10 MB).
-fn zip_dump(dump: &Path) -> Result<Vec<u8>, String> {
-    use std::io::Write as _;
-    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let opts = zip::write::SimpleFileOptions::default().compression_level(Some(9));
-    for p in [dump.to_path_buf(), dump.with_extension("stack.txt")] {
-        let Ok(bytes) = std::fs::read(&p) else { continue };
-        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        w.start_file(name, opts).map_err(|e| e.to_string())?;
-        w.write_all(&bytes).map_err(|e| e.to_string())?;
-    }
-    Ok(w.finish().map_err(|e| e.to_string())?.into_inner())
-}
-
 /// The lines under the "Check these" heading of a rendered report.
 fn checks_of(report: &str) -> Vec<&str> {
     report
@@ -533,57 +525,167 @@ fn post_text(report: &str, profile: &str, note: &str, dump: &str) -> (String, St
     (title, body)
 }
 
-/// Post the report (and the newest crash dump, when Discord accepts the size) as a new thread in
-/// a Discord forum channel through `webhook`. `note` is what the player wrote about the crash.
-/// Blocking (builds the report and uploads).
+/// Largest attachment per follow-up message (Discord's limit is 10 MiB; this leaves headroom).
+const PART_SIZE: usize = 9_500_000;
+/// Most parts a dump is split into; a bigger one is left on the player's PC (summary only).
+const MAX_PARTS: usize = 6;
+/// Room kept in the first message for the report text and the form around it.
+const MESSAGE_SLACK: usize = 64 * 1024;
+
+/// How long to wait before retrying after Discord's 429: its `retry_after` seconds (JSON body)
+/// or the `Retry-After` header, at most 30 s, at least 100 ms.
+fn retry_delay(body: &str, header: Option<&str>) -> std::time::Duration {
+    let secs = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["retry_after"].as_f64())
+        .or_else(|| header.and_then(|h| h.trim().parse::<f64>().ok()))
+        .unwrap_or(1.0);
+    std::time::Duration::from_secs_f64(secs.clamp(0.1, 30.0))
+}
+
+/// POST a multipart form (rebuilt for each try), waiting and retrying while Discord answers 429.
+/// Returns the final status and body.
+fn post_form(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    form: &dyn Fn() -> Result<reqwest::blocking::multipart::Form, String>,
+) -> Result<(reqwest::StatusCode, String), String> {
+    let mut tries = 0;
+    loop {
+        let resp = client.post(url).multipart(form()?).send().map_err(|e| crate::t!("report-unreachable", error = e.to_string()))?;
+        let status = resp.status();
+        let header = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let body = resp.text().unwrap_or_default();
+        tries += 1;
+        if status.as_u16() == 429 && tries < 5 {
+            std::thread::sleep(retry_delay(&body, header.as_deref()));
+            continue;
+        }
+        return Ok((status, body));
+    }
+}
+
+/// The id of the forum thread a webhook post created (the message's channel).
+fn thread_id_of(body: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body).ok()?["channel_id"].as_str().map(str::to_string)
+}
+
+/// Post parts 2.. of the dump into the thread, one message each.
+fn post_follow_ups(client: &reqwest::blocking::Client, webhook: &str, thread: &str, base: &str, parts: &[&[u8]]) -> Result<(), String> {
+    use reqwest::blocking::multipart::{Form, Part};
+    let url = format!("{webhook}?thread_id={thread}&wait=true");
+    for (i, bytes) in parts.iter().enumerate().skip(1) {
+        let name = crate::crash_dump::part_name(base, i, parts.len());
+        let payload = serde_json::json!({
+            "content": format!("Crash dump part {} of {} ({name}, {}).", i + 1, parts.len(), format_bytes(bytes.len() as u64)),
+            "allowed_mentions": { "parse": [] },
+        });
+        let build = || -> Result<Form, String> {
+            let part = Part::bytes(bytes.to_vec()).file_name(name.clone()).mime_str("application/octet-stream").map_err(|e| e.to_string())?;
+            Ok(Form::new().text("payload_json", payload.to_string()).part("files[0]", part))
+        };
+        let (status, body) = post_form(client, &url, &build)?;
+        if !status.is_success() {
+            return Err(crate::t!("report-refused", status = status.to_string(), message = clip(&body, 300)));
+        }
+    }
+    Ok(())
+}
+
+/// What the first message says about the dump.
+fn dump_line(sig: Option<&str>, name: &str, when_text: &str, packed: Option<(&crate::crash_dump::Packed, usize, bool)>) -> String {
+    let mut out = String::new();
+    if let Some(s) = sig {
+        let _ = writeln!(out, "{s}");
+    }
+    match packed {
+        Some((z, 1, true)) => {
+            let _ = write!(out, "Crash dump {name} from {when_text} attached ({} {}).", format_bytes(z.bytes.len() as u64), z.method);
+        }
+        Some((z, n, true)) => {
+            let _ = write!(
+                out,
+                "Crash dump {name} from {when_text}: {} {} in {n} parts, posted below. Join: `{}` (7-Zip also opens .001 directly).",
+                format_bytes(z.bytes.len() as u64),
+                z.method,
+                crate::crash_dump::join_command(z.name, n)
+            );
+        }
+        Some((z, _, false)) => {
+            let _ = write!(out, "Crash dump {name} from {when_text} is too big for Discord ({} {}); ask the player for it.", format_bytes(z.bytes.len() as u64), z.method);
+        }
+        None => out.push_str("No crash dump from the last 7 days."),
+    }
+    out
+}
+
+/// Post the report (and the newest crash dump) as a new thread in a Discord forum channel
+/// through `webhook`. `note` is what the player wrote about the crash. A dump that does not fit
+/// one message is packed as small as possible (zip, or 7z when that is smaller) and posted in
+/// parts as follow-ups in the same thread; one that needs more than `MAX_PARTS` is left out (the
+/// crash summary in the report still says where it crashed). Blocking.
 pub fn send_to_discord(ctx: &AppContext, profile: &Profile, webhook: &str, note: &str) -> Result<String, String> {
+    use crate::crash_dump::{pack, part_name, split_ranges};
     use reqwest::blocking::multipart::{Form, Part};
     let report = build(ctx, profile);
     let game = ctx.game_paths();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let dump = recent_dump(game.store, now, 7).and_then(|(p, t)| zip_dump(&p).ok().map(|z| (p, t, z)));
+    let first_cap = DISCORD_LIMIT.saturating_sub(report.len() + MESSAGE_SLACK).min(PART_SIZE);
+    let dump = recent_dump(game.store, now, 7).and_then(|(p, t)| pack(&p, first_cap).ok().map(|z| (p, t, z)));
+    let ranges = dump.as_ref().and_then(|(_, _, z)| split_ranges(z.bytes.len(), first_cap, PART_SIZE, MAX_PARTS));
     let (y, m, d) = ymd(now);
     let report_name = format!("mod_report_{y}-{m:02}-{d:02}.txt");
+    let sig = report.lines().find(|l| l.trim_start().starts_with("Crash signature:")).map(|l| l.trim().to_string());
     let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(300)).build().map_err(|e| e.to_string())?;
 
     // With the dump first when it could fit; Discord answers 413 when the message is too big,
     // and then the report goes alone.
-    let mut attempts: Vec<Option<&(PathBuf, u64, Vec<u8>)>> = Vec::new();
-    if let Some(z) = dump.as_ref().filter(|z| z.2.len() + report.len() <= DISCORD_LIMIT) {
-        attempts.push(Some(z));
+    let mut attempts = vec![ranges.is_some()];
+    if ranges.is_some() {
+        attempts.push(false);
     }
-    attempts.push(None);
     let mut last_err = String::new();
     for with in attempts {
-        let dump_line = match (with, &dump) {
-            (Some((p, t, z)), _) => {
-                format!("Crash dump {} from {} attached ({}).", p.file_name().unwrap_or_default().to_string_lossy(), when(*t), format_bytes(z.len() as u64))
-            }
-            (None, Some((p, t, z))) => format!(
-                "Crash dump {} from {} is too big for Discord ({} zipped); ask the player for it.",
-                p.file_name().unwrap_or_default().to_string_lossy(),
-                when(*t),
-                format_bytes(z.len() as u64)
-            ),
-            (None, None) => "No crash dump from the last 7 days.".to_string(),
-        };
-        let (title, content) = post_text(&report, &profile.name, note, &dump_line);
+        let (name, when_text) = dump
+            .as_ref()
+            .map(|(p, t, _)| (p.file_name().unwrap_or_default().to_string_lossy().into_owned(), when(*t)))
+            .unwrap_or_default();
+        let line = dump_line(sig.as_deref(), &name, &when_text, dump.as_ref().map(|(_, _, z)| (z, ranges.as_ref().map_or(0, |r| r.len()), with)));
+        let (title, content) = post_text(&report, &profile.name, note, &line);
         let payload = serde_json::json!({
             "thread_name": title,
             "content": content,
             "allowed_mentions": { "parse": [] },
         });
-        let text_part = Part::bytes(report.clone().into_bytes()).file_name(report_name.clone()).mime_str("text/plain").map_err(|e| e.to_string())?;
-        let mut form = Form::new().text("payload_json", payload.to_string()).part("files[0]", text_part);
-        if let Some((_, _, z)) = with {
-            form = form.part("files[1]", Part::bytes(z.clone()).file_name("crash_dump.zip").mime_str("application/zip").map_err(|e| e.to_string())?);
-        }
-        let resp = client.post(format!("{webhook}?wait=true")).multipart(form).send().map_err(|e| crate::t!("report-unreachable", error = e.to_string()))?;
-        let status = resp.status();
+        let first_part: Option<(&[u8], String)> = match (with, &dump, &ranges) {
+            (true, Some((_, _, z)), Some(r)) => Some((&z.bytes[r[0].clone()], part_name(z.name, 0, r.len()))),
+            _ => None,
+        };
+        let build = || -> Result<Form, String> {
+            let text_part = Part::bytes(report.clone().into_bytes()).file_name(report_name.clone()).mime_str("text/plain").map_err(|e| e.to_string())?;
+            let mut form = Form::new().text("payload_json", payload.to_string()).part("files[0]", text_part);
+            if let Some((bytes, fname)) = &first_part {
+                form = form.part("files[1]", Part::bytes(bytes.to_vec()).file_name(fname.clone()).mime_str("application/octet-stream").map_err(|e| e.to_string())?);
+            }
+            Ok(form)
+        };
+        let (status, body) = post_form(&client, &format!("{webhook}?wait=true"), &build)?;
         if status.is_success() {
-            return Ok(if with.is_some() { crate::t!("report-sent-with-dump") } else { crate::t!("report-sent") });
+            let (Some((_, _, z)), Some(r), true) = (&dump, &ranges, with) else {
+                return Ok(if dump.is_some() { crate::t!("report-sent-dump-too-big") } else { crate::t!("report-sent") });
+            };
+            if r.len() == 1 {
+                return Ok(crate::t!("report-sent-with-dump"));
+            }
+            let parts: Vec<&[u8]> = r.iter().map(|x| &z.bytes[x.clone()]).collect();
+            let Some(thread) = thread_id_of(&body) else {
+                return Ok(crate::t!("report-parts-failed", part = "2", error = "Discord did not return the thread id".to_string()));
+            };
+            return match post_follow_ups(&client, webhook, &thread, z.name, &parts) {
+                Ok(()) => Ok(crate::t!("report-sent-with-parts", parts = r.len().to_string())),
+                Err(e) => Ok(crate::t!("report-parts-failed", part = "2+", error = e)),
+            };
         }
-        let body = resp.text().unwrap_or_default();
         last_err = crate::t!("report-refused", status = status.to_string(), message = clip(&body, 300));
         if status.as_u16() != 413 && !body.contains("40005") {
             break;
@@ -706,6 +808,105 @@ mod tests {
         assert!(checks_of(&many).len() > 80);
         let (_, body) = post_text(&many, "P", "", "Crash dump attached.");
         assert!(body.chars().count() <= 2000 && body.ends_with("Crash dump attached."));
+    }
+
+    #[test]
+    fn post_text_keeps_signature_and_join_line_within_limits() {
+        let sig = "Crash signature: 0xC0000005 EXCEPTION_ACCESS_VIOLATION_READ at Three_Kingdoms.exe+0x123456";
+        let z = crate::crash_dump::Packed { name: "crash_dump.7z", method: "7z", bytes: vec![0; 3] };
+        let line = dump_line(Some(sig), "D2026.mdmp", "2026-11-03 12:00", Some((&z, 6, true)));
+        assert!(line.starts_with(sig));
+        assert!(line.contains("copy /b crash_dump.7z.001+crash_dump.7z.002+crash_dump.7z.003+crash_dump.7z.004+crash_dump.7z.005+crash_dump.7z.006 crash_dump.7z"));
+        let report = format!("x
+Mod manager 1
+
+== Check these ==
+{}
+", "- a warning that is rather long indeed
+".repeat(200));
+        let (_, body) = post_text(&report, "P", &"n".repeat(900), &line);
+        assert!(body.chars().count() <= 2000, "{}", body.chars().count());
+        assert!(body.ends_with("(7-Zip also opens .001 directly)."));
+        assert!(body.contains(sig));
+        // Too big to send at all: the signature is still there.
+        let line = dump_line(Some(sig), "D.mdmp", "t", Some((&z, 0, false)));
+        assert!(line.contains("ask the player") && line.contains(sig));
+        assert_eq!(dump_line(None, "", "", None), "No crash dump from the last 7 days.");
+    }
+
+    #[test]
+    fn retry_delay_honours_discord() {
+        use std::time::Duration;
+        assert_eq!(retry_delay(r#"{"retry_after": 2.5}"#, None), Duration::from_secs_f64(2.5));
+        assert_eq!(retry_delay("", Some("3")), Duration::from_secs(3));
+        assert_eq!(retry_delay(r#"{"retry_after": 900}"#, None), Duration::from_secs(30));
+        assert_eq!(retry_delay("garbage", None), Duration::from_secs(1));
+        assert_eq!(thread_id_of(r#"{"id":"1","channel_id":"42"}"#).as_deref(), Some("42"));
+    }
+
+    /// A one-shot HTTP server on localhost: answers each request with the next canned reply and
+    /// hands back the request lines + bodies it saw.
+    fn mock_server(replies: Vec<(u16, String)>) -> (String, std::thread::JoinHandle<Vec<(String, usize)>>) {
+        use std::io::{Read, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for (code, body) in replies {
+                let (mut s, _) = listener.accept().unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 8192];
+                let (head_end, len) = loop {
+                    let n = s.read(&mut chunk).unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..p]).to_lowercase();
+                        let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                        break (p + 4, if head.contains("transfer-encoding: chunked") { usize::MAX } else { len });
+                    }
+                };
+                // Content-Length bodies are read to the end; chunked ones until the 0-chunk.
+                while if len == usize::MAX { !buf.ends_with(b"0\r\n\r\n") } else { buf.len() < head_end + len } {
+                    let n = s.read(&mut chunk).unwrap();
+                    assert!(n > 0, "client hung up early");
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let len = buf.len() - head_end;
+                seen.push((String::from_utf8_lossy(&buf).lines().next().unwrap_or("").to_string(), len));
+                let reason = if code == 429 { "Too Many Requests" } else { "OK" };
+                let head = format!("HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = s.write_all(head.as_bytes());
+                let _ = s.write_all(body.as_bytes());
+            }
+            seen
+        });
+        (url, h)
+    }
+
+    #[test]
+    fn follow_up_parts_go_to_the_thread_and_wait_out_a_429() {
+        let (url, server) = mock_server(vec![
+            (429, r#"{"retry_after": 0.1}"#.into()),
+            (200, "{}".into()),
+            (200, "{}".into()),
+        ]);
+        let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let (p1, p2, p3) = (vec![1u8; 10], vec![2u8; 2000], vec![3u8; 30]);
+        post_follow_ups(&client, &url, "777", "crash_dump.zip", &[&p1, &p2, &p3]).unwrap();
+        let seen = server.join().unwrap();
+        // Part 1 went with the first message, so only 2 and 3 are posted (2 after one 429).
+        assert_eq!(seen.len(), 3);
+        assert!(seen.iter().all(|(l, _)| l.starts_with("POST /hook?thread_id=777&wait=true")), "{seen:?}");
+        assert!(seen[1].1 > 2000 && seen[2].1 < seen[1].1);
+    }
+
+    #[test]
+    fn a_refused_part_is_an_error() {
+        let (url, server) = mock_server(vec![(413, r#"{"message":"too big","code":40005}"#.into())]);
+        let client = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let e = post_follow_ups(&client, &url, "1", "crash_dump.zip", &[&[0u8; 1], &[0u8; 5]]).unwrap_err();
+        server.join().unwrap();
+        assert!(e.contains("413"), "{e}");
     }
 
     #[test]
