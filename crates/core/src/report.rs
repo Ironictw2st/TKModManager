@@ -330,7 +330,7 @@ fn file_tail(path: &Path, lines: usize) -> Option<String> {
 
 /// The game's own crash dumps (`<user dir>\crash_report\D<date>.mdmp` + `.stack.txt`), newest
 /// first. The dump itself is too big for a text report; its path is listed so it can be sent.
-fn crash_files(store: paths::GameStore) -> String {
+fn crash_files(store: paths::GameStore, cc: &CrashContext) -> String {
     let Some(dir) = paths::game_user_dir(store).map(|d| d.join("crash_report")) else { return "game user folder not found".into() };
     let Ok(rd) = std::fs::read_dir(&dir) else { return format!("none ({} does not exist)", dir.display()) };
     let mut dumps: Vec<(u64, PathBuf, u64)> = rd
@@ -349,6 +349,17 @@ fn crash_files(store: paths::GameStore) -> String {
     let mut out = format!("{} dumps in {}; newest first. If asked, send the newest .mdmp file.\n", dumps.len(), dir.display());
     for (i, (t, p, size)) in dumps.iter().take(3).enumerate() {
         let _ = writeln!(out, "- {} · {} · {}", when(*t), p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), format_bytes(*size));
+        if i == 0 {
+            match cc.dump_match(*t) {
+                DumpMatch::Matches => {
+                    let _ = writeln!(out, "    belongs to the latest crash");
+                }
+                DumpMatch::Earlier(why) => {
+                    let _ = writeln!(out, "    FROM AN EARLIER CRASH ({why}); the latest crash has no dump");
+                }
+                DumpMatch::Unverified => {}
+            }
+        }
         // Read on this PC, so the crash can be triaged even when the dump is too big to send.
         if i == 0 {
             for l in crate::crash_dump::summary_text(p).lines() {
@@ -373,38 +384,198 @@ fn crash_files(store: paths::GameStore) -> String {
     out
 }
 
+/// One Windows "Application Error" event (id 1000) for the game.
+#[derive(Clone, Debug, PartialEq)]
+struct CrashEvent {
+    /// Unix seconds, UTC (from the event's SystemTime; the text form of wevtutil prints local
+    /// time with a "Z", so it is not used).
+    when: u64,
+    app_version: String,
+    app_stamp: String,
+    module: String,
+    module_version: String,
+    code: String,
+    offset: String,
+}
+
+impl CrashEvent {
+    /// "Three_Kingdoms.exe+0x2326aa4" (leading zeros of the offset dropped).
+    fn location(&self) -> String {
+        let hex = self.offset.trim().trim_start_matches("0x").trim_start_matches('0');
+        format!("{}+0x{}", self.module, if hex.is_empty() { "0" } else { hex })
+    }
+}
+
+/// "2026-11-08T04:03:09.1760000Z" -> unix seconds.
+fn parse_system_time(s: &str) -> Option<u64> {
+    let (date, time) = s.split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time.trim_end_matches('Z').split(':');
+    let (h, mi) = (t.next()?.parse::<u64>().ok()?, t.next()?.parse::<u64>().ok()?);
+    let sec = t.next()?.split('.').next()?.parse::<u64>().ok()?;
+    Some(crate::fmt::days_from_civil(y, m as u32, day as u32) + h * 3600 + mi * 60 + sec)
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+/// The game's events from `wevtutil qe ... /f:xml` output, in the order given (newest first).
+fn parse_crash_events(xml: &str) -> Vec<CrashEvent> {
+    xml.split("<Event ")
+        .skip(1)
+        .filter_map(|e| {
+            let st = e.split("SystemTime='").nth(1)?.split('\'').next()?;
+            let data: Vec<String> = e
+                .split("<Data>")
+                .skip(1)
+                .map(|d| xml_unescape(d.split("</Data>").next().unwrap_or("")))
+                .collect();
+            // Event 1000 data: app, app version, app stamp, module, module version, module stamp,
+            // exception code, fault offset, ...
+            if data.len() < 8 || !data[0].eq_ignore_ascii_case(paths::EXE_NAME) {
+                return None;
+            }
+            Some(CrashEvent {
+                when: parse_system_time(st)?,
+                app_version: data[1].clone(),
+                app_stamp: data[2].clone(),
+                module: data[3].clone(),
+                module_version: data[4].clone(),
+                code: data[6].clone(),
+                offset: data[7].clone(),
+            })
+        })
+        .take(5)
+        .collect()
+}
+
 /// Windows "Application Error" events for the game (exception code, faulting module and
 /// offset), newest first.
-fn windows_errors() -> String {
+fn windows_crash_events() -> Result<Vec<CrashEvent>, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let exe = std::env::var("SystemRoot").map(|r| PathBuf::from(r).join("System32").join("wevtutil.exe")).unwrap_or_else(|_| PathBuf::from("wevtutil.exe"));
     let run = std::process::Command::new(exe)
-        .args(["qe", "Application", "/q:*[System[Provider[@Name='Application Error']]]", "/c:300", "/rd:true", "/f:text"])
+        .args(["qe", "Application", "/q:*[System[Provider[@Name='Application Error']]]", "/c:300", "/rd:true", "/f:xml"])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
-    let text = match run {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-        Err(e) => return format!("could not read the Windows event log: {e}"),
+    match run {
+        Ok(o) => Ok(parse_crash_events(&String::from_utf8_lossy(&o.stdout))),
+        Err(e) => Err(format!("could not read the Windows event log: {e}")),
+    }
+}
+
+fn render_crash_events(events: &Result<Vec<CrashEvent>, String>) -> String {
+    let events = match events {
+        Ok(e) => e,
+        Err(e) => return e.clone(),
     };
-    let keep = ["Date:", "Faulting module name", "Exception code", "Fault offset", "Faulting application name"];
-    let events: Vec<String> = text
-        .split("Event[")
-        .filter(|e| e.contains(paths::EXE_NAME))
-        .take(5)
-        .map(|e| e.lines().map(str::trim).filter(|l| keep.iter().any(|k| l.starts_with(k))).collect::<Vec<_>>().join("\n  "))
-        .collect();
     if events.is_empty() {
         return format!("no crash of {} recorded by Windows", paths::EXE_NAME);
     }
-    events.iter().map(|e| format!("- {e}")).collect::<Vec<_>>().join("\n")
+    events
+        .iter()
+        .map(|e| {
+            format!(
+                "- Date: {}\n  Faulting application name: {}, version: {}, time stamp: 0x{}\n  Faulting module name: {}, version: {}\n  Exception code: {}\n  Fault offset: {} ({})",
+                when(e.when),
+                paths::EXE_NAME,
+                e.app_version,
+                e.app_stamp,
+                e.module,
+                e.module_version,
+                e.code,
+                e.offset,
+                e.location()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn extras(ctx: &AppContext, game: &paths::GamePaths) -> Vec<(String, String)> {
+/// Whether the newest crash dump belongs to the crash being reported.
+#[derive(Clone, Debug, PartialEq)]
+enum DumpMatch {
+    /// Written next to the newest Windows crash event, or during the last launch.
+    Matches,
+    /// Older than the newest crash (or the last launch): it is from an earlier crash.
+    Earlier(String),
+    /// Nothing to compare with (no Windows event, no recorded launch).
+    Unverified,
+}
+
+/// The game's reporter writes its dump a few seconds before Windows logs the crash; allow
+/// 10 minutes before and 2 after.
+const DUMP_BEFORE_EVENT: u64 = 600;
+const DUMP_AFTER_EVENT: u64 = 120;
+
+fn match_dump(dump: u64, newest_crash: Option<u64>, last_launch: Option<u64>) -> DumpMatch {
+    if let Some(c) = newest_crash {
+        if dump + DUMP_BEFORE_EVENT >= c && dump <= c + DUMP_AFTER_EVENT {
+            return DumpMatch::Matches;
+        }
+        if dump < c {
+            return DumpMatch::Earlier(format!("Windows recorded a newer crash at {}", when(c)));
+        }
+    }
+    match last_launch {
+        Some(l) if dump + 60 >= l => DumpMatch::Matches,
+        Some(l) => DumpMatch::Earlier(format!("it is older than the last launch at {}", when(l))),
+        None => DumpMatch::Unverified,
+    }
+}
+
+/// What this PC knows about the most recent crash: Windows events and the last launch start.
+struct CrashContext {
+    events: Result<Vec<CrashEvent>, String>,
+    last_launch: Option<u64>,
+}
+
+impl CrashContext {
+    fn gather(launches: &[history::LaunchRecord]) -> Self {
+        CrashContext { events: windows_crash_events(), last_launch: launches.first().map(|r| r.started) }
+    }
+    fn newest(&self) -> Option<&CrashEvent> {
+        self.events.as_ref().ok().and_then(|e| e.first())
+    }
+    fn dump_match(&self, dump: u64) -> DumpMatch {
+        match_dump(dump, self.newest().map(|e| e.when), self.last_launch)
+    }
+}
+
+/// `se_crash.txt` next to the script extender DLL. The DLL appends to it every session, so only
+/// a file written since the last launch (or near the newest crash) counts, and only its end is
+/// sent.
+const SE_CRASH_TAIL: u64 = 256 * 1024;
+
+fn se_crash_file(dll_dir: Option<&Path>, cc: &CrashContext, now: u64) -> Option<(PathBuf, u64, u64)> {
+    let path = dll_dir?.join("se_crash.txt");
+    let meta = std::fs::metadata(&path).ok()?;
+    let t = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let recent = match (cc.last_launch, cc.newest()) {
+        (Some(l), _) => t + 60 >= l,
+        (None, Some(e)) => t + DUMP_BEFORE_EVENT >= e.when,
+        (None, None) => now.saturating_sub(t) <= 86_400,
+    };
+    recent.then_some((path, t, meta.len()))
+}
+
+fn se_crash_tail(path: &Path) -> Option<Vec<u8>> {
+    crate::logs::tail(path, SE_CRASH_TAIL).ok().map(String::into_bytes)
+}
+
+fn extras(ctx: &AppContext, game: &paths::GamePaths, cc: &CrashContext, se_crash: Option<&(PathBuf, u64, u64)>) -> Vec<(String, String)> {
     let mut out = vec![
-        ("Game crash dumps".to_string(), crash_files(game.store)),
-        (format!("Windows crash events for {}", paths::EXE_NAME), windows_errors()),
+        ("Game crash dumps".to_string(), crash_files(game.store, cc)),
+        (format!("Windows crash events for {}", paths::EXE_NAME), render_crash_events(&cc.events)),
     ];
+    let se_text = match se_crash {
+        Some((p, t, size)) => format!("{} · written {} · {} (its end is attached when the report is sent)", p.display(), when(*t), format_bytes(*size)),
+        None => "none written since the last launch".to_string(),
+    };
+    out.push(("Script extender crash report (se_crash.txt)".to_string(), se_text));
     if let Some(gfx) = paths::game_user_dir(game.store).map(|d| d.join("logs").join("gfx.log.txt")).and_then(|p| file_tail(&p, 40)) {
         out.push(("Graphics (gfx.log.txt)".into(), gfx));
     }
@@ -418,6 +589,20 @@ fn extras(ctx: &AppContext, game: &paths::GamePaths) -> Vec<(String, String)> {
 
 /// Gather everything for `profile` (asks Steam for fresh details; blocking) and render it.
 pub fn build(ctx: &AppContext, profile: &Profile) -> String {
+    let launches = history::launch_history();
+    let cc = CrashContext::gather(&launches);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let se_crash = se_crash_file(selected_dll_dir(ctx).as_deref(), &cc, now);
+    build_with(ctx, profile, &launches, &cc, se_crash.as_ref())
+}
+
+/// Folder of the script extender DLL a launch would inject.
+fn selected_dll_dir(ctx: &AppContext) -> Option<PathBuf> {
+    let game = ctx.game_paths();
+    dll::status_for(game.exe.as_deref().map(std::path::Path::new)).selected.map(|d| PathBuf::from(d.dir))
+}
+
+fn build_with(ctx: &AppContext, profile: &Profile, launches: &[history::LaunchRecord], cc: &CrashContext, se_crash: Option<&(PathBuf, u64, u64)>) -> String {
     let scan = ctx.scan();
     let game = ctx.game_paths();
     let mut ids: Vec<String> = scan.iter().filter(|m| m.source == ModSource::Workshop).filter_map(|m| m.workshop_id.clone()).collect();
@@ -439,11 +624,10 @@ pub fn build(ctx: &AppContext, profile: &Profile) -> String {
     let keys: Vec<String> = ops::enabled_packs(profile, &scan).iter().map(|m| m.key.clone()).collect();
     let se = if keys.is_empty() { HashMap::new() } else { se_scan::se_requirements(ctx, &keys) };
     let dll = dll::status_for(game.exe.as_deref().map(std::path::Path::new)).selected.map(|d| d.version);
-    let launches = history::launch_history();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let extras = extras(ctx, &game);
+    let extras = extras(ctx, &game, cc, se_crash);
     let coop = game.game_root.as_deref().and_then(|r| crate::coop::detect(std::path::Path::new(r))).map(|c| c.summary());
-    render(&ReportData { now, profile, scan: &scan, workshop: &ws, workshop_live: live, se: &se, game: &game, dll, coop, launches: &launches, extras })
+    render(&ReportData { now, profile, scan: &scan, workshop: &ws, workshop_live: live, se: &se, game: &game, dll, coop, launches, extras })
 }
 
 /// Write the report to the Desktop (or the app folder when there is none) and return its path.
@@ -619,6 +803,22 @@ fn dump_line(sig: Option<&str>, name: &str, when_text: &str, packed: Option<(&cr
     out
 }
 
+/// Lines of the first message about the latest crash, above the dump line: where Windows saw it
+/// crash, why an old dump was left out, and whether `se_crash.txt` is attached.
+fn crash_lines(newest: Option<&CrashEvent>, earlier: Option<(&str, &str, &str)>, se_attached: bool) -> String {
+    let mut out = String::new();
+    if let Some(e) = newest {
+        let _ = writeln!(out, "**Latest crash (Windows):** {} · {} · {}", e.location(), e.code, when(e.when));
+    }
+    if let Some((name, t, why)) = earlier {
+        let _ = writeln!(out, "No crash dump for this crash: the newest dump ({name}, {t}) is from an earlier crash; {why}.");
+    }
+    if se_attached {
+        let _ = writeln!(out, "Script extender crash report attached (se_crash.txt).");
+    }
+    out
+}
+
 /// Post the report (and the newest crash dump) as a new thread in a Discord forum channel
 /// through `webhook`. `note` is what the player wrote about the crash. A dump that does not fit
 /// one message is packed as small as possible (zip, or 7z when that is smaller) and posted in
@@ -627,15 +827,32 @@ fn dump_line(sig: Option<&str>, name: &str, when_text: &str, packed: Option<(&cr
 pub fn send_to_discord(ctx: &AppContext, profile: &Profile, webhook: &str, note: &str) -> Result<String, String> {
     use crate::crash_dump::{pack, part_name, split_ranges};
     use reqwest::blocking::multipart::{Form, Part};
-    let report = build(ctx, profile);
-    let game = ctx.game_paths();
+    let launches = history::launch_history();
+    let cc = CrashContext::gather(&launches);
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let first_cap = DISCORD_LIMIT.saturating_sub(report.len() + MESSAGE_SLACK).min(PART_SIZE);
-    let dump = recent_dump(game.store, now, 7).and_then(|(p, t)| pack(&p, first_cap).ok().map(|z| (p, t, z)));
+    let se_file = se_crash_file(selected_dll_dir(ctx).as_deref(), &cc, now);
+    let report = build_with(ctx, profile, &launches, &cc, se_file.as_ref());
+    let se_bytes = se_file.as_ref().and_then(|(p, _, _)| se_crash_tail(p));
+    let game = ctx.game_paths();
+    let first_cap = DISCORD_LIMIT.saturating_sub(report.len() + se_bytes.as_ref().map_or(0, Vec::len) + MESSAGE_SLACK).min(PART_SIZE);
+    // Only a dump that belongs to the latest crash is sent; an older one would be mistaken for it.
+    let mut earlier: Option<(String, String, String)> = None;
+    let dump = recent_dump(game.store, now, 7)
+        .filter(|(p, t)| match cc.dump_match(*t) {
+            DumpMatch::Earlier(why) => {
+                earlier = Some((p.file_name().unwrap_or_default().to_string_lossy().into_owned(), when(*t), why));
+                false
+            }
+            _ => true,
+        })
+        .and_then(|(p, t)| pack(&p, first_cap).ok().map(|z| (p, t, z)));
+    let newest = cc.newest().filter(|e| now.saturating_sub(e.when) <= 7 * 86_400);
+    let head = crash_lines(newest, earlier.as_ref().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())), se_bytes.is_some());
     let ranges = dump.as_ref().and_then(|(_, _, z)| split_ranges(z.bytes.len(), first_cap, PART_SIZE, MAX_PARTS));
     let (y, m, d) = ymd(now);
     let report_name = format!("mod_report_{y}-{m:02}-{d:02}.txt");
-    let sig = report.lines().find(|l| l.trim_start().starts_with("Crash signature:")).map(|l| l.trim().to_string());
+    // The signature is read from the newest dump; it describes this crash only when that dump is sent.
+    let sig = dump.as_ref().and_then(|_| report.lines().find(|l| l.trim_start().starts_with("Crash signature:")).map(|l| l.trim().to_string()));
     let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(300)).build().map_err(|e| e.to_string())?;
 
     // With the dump first when it could fit; Discord answers 413 when the message is too big,
@@ -650,7 +867,11 @@ pub fn send_to_discord(ctx: &AppContext, profile: &Profile, webhook: &str, note:
             .as_ref()
             .map(|(p, t, _)| (p.file_name().unwrap_or_default().to_string_lossy().into_owned(), when(*t)))
             .unwrap_or_default();
-        let line = dump_line(sig.as_deref(), &name, &when_text, dump.as_ref().map(|(_, _, z)| (z, ranges.as_ref().map_or(0, |r| r.len()), with)));
+        let mut line = head.clone();
+        if dump.is_some() || earlier.is_none() {
+            line.push_str(&dump_line(sig.as_deref(), &name, &when_text, dump.as_ref().map(|(_, _, z)| (z, ranges.as_ref().map_or(0, |r| r.len()), with))));
+        }
+        let line = line.trim_end().to_string();
         let (title, content) = post_text(&report, &profile.name, note, &line);
         let payload = serde_json::json!({
             "thread_name": title,
@@ -664,8 +885,13 @@ pub fn send_to_discord(ctx: &AppContext, profile: &Profile, webhook: &str, note:
         let build = || -> Result<Form, String> {
             let text_part = Part::bytes(report.clone().into_bytes()).file_name(report_name.clone()).mime_str("text/plain").map_err(|e| e.to_string())?;
             let mut form = Form::new().text("payload_json", payload.to_string()).part("files[0]", text_part);
+            let mut next = 1;
+            if let Some(se) = &se_bytes {
+                form = form.part("files[1]", Part::bytes(se.clone()).file_name("se_crash.txt").mime_str("text/plain").map_err(|e| e.to_string())?);
+                next = 2;
+            }
             if let Some((bytes, fname)) = &first_part {
-                form = form.part("files[1]", Part::bytes(bytes.to_vec()).file_name(fname.clone()).mime_str("application/octet-stream").map_err(|e| e.to_string())?);
+                form = form.part(format!("files[{next}]"), Part::bytes(bytes.to_vec()).file_name(fname.clone()).mime_str("application/octet-stream").map_err(|e| e.to_string())?);
             }
             Ok(form)
         };
@@ -914,4 +1140,68 @@ Mod manager 1
         assert_eq!(when(0), "unknown");
         assert_eq!(when(1_758_000_000), "2025-09-16 05:20 UTC");
     }
+
+    const EVENT_XML: &str = "<Event xmlns='x'><System><Provider Name='Application Error'/><EventID>1000</EventID><TimeCreated SystemTime='2026-11-08T04:03:09.1760000Z'/></System><EventData><Data>Three_Kingdoms.exe</Data><Data>1.7.6.0</Data><Data>69ce4df8</Data><Data>Three_Kingdoms.exe</Data><Data>1.7.6.0</Data><Data>69ce4df8</Data><Data>c0000005</Data><Data>0000000002326aa4</Data><Data>1</Data></EventData></Event><Event xmlns='x'><System><TimeCreated SystemTime='2026-11-08T04:00:00.0Z'/></System><EventData><Data>GCC.exe</Data><Data>1</Data><Data>2</Data><Data>KERNELBASE.dll</Data><Data>1</Data><Data>2</Data><Data>e0434352</Data><Data>25369</Data></EventData></Event><Event xmlns='x'><System><TimeCreated SystemTime='2026-11-08T03:36:57.082Z'/></System><EventData><Data>Three_Kingdoms.exe</Data><Data>1.7.6.0</Data><Data>69ce4df8</Data><Data>Three_Kingdoms.exe</Data><Data>1.7.6.0</Data><Data>69ce4df8</Data><Data>c0000005</Data><Data>000000000055b7e0</Data></EventData></Event>";
+
+    fn utc(y: i64, mo: u32, d: u32, h: u64, mi: u64, s: u64) -> u64 {
+        crate::fmt::days_from_civil(y, mo, d) + h * 3600 + mi * 60 + s
+    }
+
+    #[test]
+    fn crash_events_parse_utc_and_skip_other_programs() {
+        let ev = parse_crash_events(EVENT_XML);
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[0].when, utc(2026, 11, 8, 4, 3, 9));
+        assert_eq!(ev[0].location(), "Three_Kingdoms.exe+0x2326aa4");
+        assert_eq!(ev[0].code, "c0000005");
+        assert_eq!(ev[1].location(), "Three_Kingdoms.exe+0x55b7e0");
+        let text = render_crash_events(&Ok(ev));
+        assert!(text.contains("- Date: 2026-11-08 04:03 UTC"));
+        assert!(text.contains("time stamp: 0x69ce4df8"));
+        assert!(text.contains("Fault offset: 0000000002326aa4 (Three_Kingdoms.exe+0x2326aa4)"));
+    }
+
+    // The real case (thread 1568838476181545013): court-tab crash at 03:36 wrote a dump at 03:36:41;
+    // the game was launched again at 03:50; the battle crash at 04:03:09 wrote no dump.
+    #[test]
+    fn an_old_dump_is_not_matched_to_a_newer_crash() {
+        let dump = utc(2026, 11, 8, 3, 36, 41);
+        let launch = Some(utc(2026, 11, 8, 3, 50, 0));
+        assert!(matches!(match_dump(dump, Some(utc(2026, 11, 8, 4, 3, 9)), launch), DumpMatch::Earlier(_)));
+        // The same dump for the court-tab report (event 16 s after the dump, launch at 03:22 before it).
+        assert_eq!(match_dump(dump, Some(utc(2026, 11, 8, 3, 36, 57)), Some(utc(2026, 11, 7, 23, 22, 0))), DumpMatch::Matches);
+    }
+
+    #[test]
+    fn dump_match_falls_back_to_the_last_launch() {
+        let l = 1_000_000;
+        assert_eq!(match_dump(l + 500, None, Some(l)), DumpMatch::Matches);
+        assert!(matches!(match_dump(l - 500, None, Some(l)), DumpMatch::Earlier(_)));
+        assert_eq!(match_dump(l, None, None), DumpMatch::Unverified);
+        // A dump well after the newest Windows event (Windows missed that crash) during the last launch.
+        assert_eq!(match_dump(l + 5_000, Some(l + 100), Some(l)), DumpMatch::Matches);
+    }
+
+    #[test]
+    fn crash_lines_name_the_crash_and_the_left_out_dump() {
+        let ev = parse_crash_events(EVENT_XML);
+        let t = crash_lines(ev.first(), Some(("D2026-11-07_T22-36-41.mdmp", "2026-11-08 03:36 UTC", "Windows recorded a newer crash at 2026-11-08 04:03 UTC")), true);
+        assert!(t.contains("**Latest crash (Windows):** Three_Kingdoms.exe+0x2326aa4 · c0000005 · 2026-11-08 04:03 UTC"));
+        assert!(t.contains("No crash dump for this crash: the newest dump (D2026-11-07_T22-36-41.mdmp, 2026-11-08 03:36 UTC) is from an earlier crash"));
+        assert!(t.contains("se_crash.txt"));
+        assert_eq!(crash_lines(None, None, false), "");
+    }
+
+    #[test]
+    fn se_crash_file_counts_only_since_the_last_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("se_crash.txt"), "fault").unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let cc = |l: Option<u64>| CrashContext { events: Ok(vec![]), last_launch: l };
+        assert!(se_crash_file(Some(dir.path()), &cc(Some(now - 100)), now).is_some());
+        assert!(se_crash_file(Some(dir.path()), &cc(Some(now + 3_600)), now).is_none());
+        assert!(se_crash_file(Some(dir.path()), &cc(None), now).is_some());
+        assert!(se_crash_file(None, &cc(None), now).is_none());
+    }
+
 }

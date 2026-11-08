@@ -10,6 +10,13 @@ The section for a tagged version becomes that release's notes, shown in the app'
   size) and, if it is still too big for one message, posts it in parts in the same thread (up to
   6). The report also carries a summary read from the dump on your PC (what crashed and where),
   so a crash can be looked at even without the dump.
+- **"Send report" no longer sends an old crash dump as if it were the new crash.** The game does
+  not write a dump for every crash (most battle crashes have none), and the report used to attach
+  the newest dump on disk anyway. A dump is now sent only when it belongs to the latest crash
+  (written next to the crash Windows recorded, or during the last launch); otherwise the post says
+  the latest crash has no dump. The post also names where Windows saw the game crash, and the
+  script extender's crash report (se_crash.txt) is attached when it was written since the last
+  launch. Windows crash times in the report are now real UTC (they were local time marked "Z").
 
 ### Added
 - **Translations.** All text in the app can now be translated. Each language is one folder of
