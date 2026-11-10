@@ -8,7 +8,7 @@ use crate::icons;
 use qt_core::{qs, QBox, QDate, QListOfQString, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt};
 use qt_widgets::{
     q_header_view::ResizeMode, QCheckBox, QComboBox, QDateEdit, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,8 +21,46 @@ use tkmm_core::sync::{self, SyncStatus};
 use tkmm_core::workshop::CollectionResult;
 use tkmm_core::{ops, paths, profile_ops, workshop};
 
+/// The sections of the Settings page, in list order.
+#[derive(Clone, Copy)]
+#[allow(dead_code)] // every section can be opened directly; not all have a caller yet
+pub enum Section {
+    General = 0,
+    Game = 1,
+    Updates = 2,
+    Nexus = 3,
+    Together = 4,
+    Advanced = 5,
+}
+
+/// One section: an entry in the list and a scrolling page with a title and one line on what it
+/// is for. Returns the page's layout for its groups.
+unsafe fn section_page(nav: &QBox<QListWidget>, pages: &QBox<QStackedWidget>, title: &str, intro: &str) -> QBox<QVBoxLayout> {
+    nav.add_item_q_string(&qs(title));
+    let scroll = QScrollArea::new_0a();
+    scroll.set_widget_resizable(true);
+    scroll.set_frame_shape(qt_widgets::q_frame::Shape::NoFrame);
+    let page = QWidget::new_0a();
+    let v = QVBoxLayout::new_1a(&page);
+    v.set_contents_margins_4a(8, 0, 8, 0);
+    v.set_spacing(10);
+    let head = label(title);
+    let f = qt_gui::QFont::new_copy(head.font());
+    f.set_bold(true);
+    f.set_point_size(f.point_size() + 2);
+    head.set_font(&f);
+    v.add_widget(&head);
+    let note = label(intro);
+    colored(&note, &icons::grey());
+    v.add_widget(&note);
+    scroll.set_widget(&page);
+    pages.add_widget(&scroll);
+    v
+}
+
 pub struct SettingsUi {
-    pub root: QBox<QScrollArea>,
+    pub root: QBox<QSplitter>,
+    nav: QBox<QListWidget>,
     // game
     installs: QBox<QComboBox>,
     game_root: QBox<QLabel>,
@@ -159,13 +197,26 @@ unsafe fn button(text: &str) -> QBox<QPushButton> {
 impl SettingsUi {
     pub fn build() -> SettingsUi {
         unsafe {
-            let root = QScrollArea::new_0a();
-            root.set_widget_resizable(true);
-            root.set_frame_shape(qt_widgets::q_frame::Shape::NoFrame);
-            let page = QWidget::new_0a();
-            let v = QVBoxLayout::new_1a(&page);
-            v.set_contents_margins_4a(0, 0, 8, 0);
-            v.set_spacing(10);
+            // Sections listed on the left, one page each on the right.
+            let root = QSplitter::new();
+            let nav = QListWidget::new_0a();
+            nav.set_style_sheet(&qs(crate::dll_tab::CARD_STYLE));
+            nav.set_minimum_width(150);
+            nav.set_maximum_width(220);
+            root.add_widget(&nav);
+            let pages = QStackedWidget::new_0a();
+            root.add_widget(&pages);
+            root.set_stretch_factor(0, 0);
+            root.set_stretch_factor(1, 1);
+            root.set_children_collapsible(false);
+            let general = section_page(&nav, &pages, &t!("settings-section-general"), &t!("settings-section-general-intro"));
+            let game = section_page(&nav, &pages, &t!("settings-section-game"), &t!("settings-section-game-intro"));
+            let updates = section_page(&nav, &pages, &t!("settings-section-updates"), &t!("settings-section-updates-intro"));
+            let nexus = section_page(&nav, &pages, &t!("settings-section-nexus"), &t!("settings-section-nexus-intro"));
+            let together = section_page(&nav, &pages, &t!("settings-section-together"), &t!("settings-section-together-intro"));
+            let advanced = section_page(&nav, &pages, &t!("settings-section-advanced"), &t!("settings-section-advanced-intro"));
+            nav.set_current_row_1a(0);
+            let v = &game;
 
             // Game and mod folders.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-folders")));
@@ -217,22 +268,41 @@ impl SettingsUi {
             grid.add_widget_3a(&cutoff_reset, 5, 2);
             v.add_widget(&g);
 
-            // Behaviour.
+            // General: how the app looks and behaves.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-behaviour")));
             let b = QVBoxLayout::new_1a(&g);
+            let lr = QHBoxLayout::new_0a();
+            b.add_layout_1a(&lr);
+            lr.add_widget(QLabel::from_q_string(&qs(t!("settings-language"))).into_ptr());
+            let language = crate::language::combo();
+            language.set_tool_tip(&qs(t!("settings-language-tip")));
+            lr.add_widget(&language);
+            lr.add_stretch_1a(1);
+            let dr = QHBoxLayout::new_0a();
+            b.add_layout_1a(&dr);
+            dr.add_widget(QLabel::from_q_string(&qs(t!("settings-row-size"))).into_ptr());
+            let density = crate::mod_list::density_combo();
+            dr.add_widget(&density);
+            dr.add_stretch_1a(1);
             let tray = QCheckBox::from_q_string(&qs(t!("settings-tray")));
+            b.add_widget(&tray);
+            b.add_widget(&label(&t!("settings-theme-note")));
+            general.add_widget(&g);
+
+            // Updates.
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-updates")));
+            let b = QVBoxLayout::new_1a(&g);
             let app_updates = QCheckBox::from_q_string(&qs(t!("settings-app-updates")));
             let app_channel = QComboBox::new_0a();
             app_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-stable")), &QVariant::from_q_string(&qs("stable")));
             app_channel.add_item_q_string_q_variant(&qs(t!("settings-channel-prerelease")), &QVariant::from_q_string(&qs("prerelease")));
             app_channel.set_tool_tip(&qs(t!("settings-app-channel-tip")));
-            let dll_updates = QCheckBox::from_q_string(&qs(t!("settings-dll-updates")));
-            b.add_widget(&tray);
             let ar = QHBoxLayout::new_0a();
             b.add_layout_1a(&ar);
             ar.add_widget(&app_updates);
             ar.add_widget(&app_channel);
             ar.add_stretch_1a(1);
+            let dll_updates = QCheckBox::from_q_string(&qs(t!("settings-dll-updates")));
             b.add_widget(&dll_updates);
             let ws_updates = QCheckBox::from_q_string(&qs(t!("settings-ws-updates")));
             ws_updates.set_tool_tip(&qs(t!("settings-ws-updates-tip")));
@@ -245,21 +315,8 @@ impl SettingsUi {
             cache_hours.set_suffix(&qs(t!("settings-cache-hours-suffix")));
             hr.add_widget(&cache_hours);
             hr.add_stretch_1a(1);
-            let dr = QHBoxLayout::new_0a();
-            b.add_layout_1a(&dr);
-            dr.add_widget(QLabel::from_q_string(&qs(t!("settings-row-size"))).into_ptr());
-            let density = crate::mod_list::density_combo();
-            dr.add_widget(&density);
-            dr.add_stretch_1a(1);
-            let lr = QHBoxLayout::new_0a();
-            b.add_layout_1a(&lr);
-            lr.add_widget(QLabel::from_q_string(&qs(t!("settings-language"))).into_ptr());
-            let language = crate::language::combo();
-            language.set_tool_tip(&qs(t!("settings-language-tip")));
-            lr.add_widget(&language);
-            lr.add_stretch_1a(1);
-            b.add_widget(&label(&t!("settings-theme-note")));
-            v.add_widget(&g);
+            updates.add_widget(&g);
+            let v = &nexus;
 
             // Nexus Mods.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-nexus")));
@@ -354,11 +411,12 @@ impl SettingsUi {
             s.add_widget_2a(&label(&t!("settings-dll-moved")), 1);
             let dll_open_tab = button(&t!("settings-dll-open-tab"));
             s.add_widget(&dll_open_tab);
-            v.add_widget(&g);
+            updates.add_widget(&g);
+            let v = &together;
 
             // Three Kingdoms Coop.
-            let g = QGroupBox::from_q_string(&qs(t!("settings-group-coop")));
-            let c = QVBoxLayout::new_1a(&g);
+            let coop_group = QGroupBox::from_q_string(&qs(t!("settings-group-coop")));
+            let c = QVBoxLayout::new_1a(&coop_group);
             let coop_status = label("");
             c.add_widget(&coop_status);
             let cr = QHBoxLayout::new_0a();
@@ -384,22 +442,8 @@ impl SettingsUi {
             let coop_updates = QCheckBox::from_q_string(&qs(t!("settings-coop-updates")));
             c.add_widget(&coop_updates);
             c.add_widget(&label(&t!("settings-coop-about")));
-            v.add_widget(&g);
 
-            // Generated mod list.
-            let g = QGroupBox::from_q_string(&qs(t!("settings-group-modlist")));
-            let p = QVBoxLayout::new_1a(&g);
-            p.add_widget(&label(&t!("settings-modlist-hint")));
-            let preview = QPlainTextEdit::new();
-            preview.set_read_only(true);
-            preview.set_minimum_height(160);
-            let f = qt_gui::QFont::new_copy(preview.font());
-            f.set_family(&qs("Consolas"));
-            preview.set_font(&f);
-            p.add_widget(&preview);
-            v.add_widget(&g);
-
-            // Profiles.
+            // Profiles: sharing a mod list with a co-op partner, first on the page.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-profiles")));
             let p = QVBoxLayout::new_1a(&g);
             let r = QHBoxLayout::new_0a();
@@ -416,6 +460,20 @@ impl SettingsUi {
             let profile_msg = label("");
             p.add_widget(&profile_msg);
             v.add_widget(&g);
+            v.add_widget(&coop_group);
+
+            // Generated mod list.
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-modlist")));
+            let p = QVBoxLayout::new_1a(&g);
+            p.add_widget(&label(&t!("settings-modlist-hint")));
+            let preview = QPlainTextEdit::new();
+            preview.set_read_only(true);
+            preview.set_minimum_height(220);
+            let f = qt_gui::QFont::new_copy(preview.font());
+            f.set_family(&qs("Consolas"));
+            preview.set_font(&f);
+            p.add_widget(&preview);
+            advanced.add_widget(&g);
 
             // About.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-about")));
@@ -426,12 +484,16 @@ impl SettingsUi {
             let check_app = button(&t!("settings-check-app"));
             a.add_widget(&open_data);
             a.add_widget(&check_app);
-            v.add_widget(&g);
-            v.add_stretch_1a(1);
-            root.set_widget(&page);
+            advanced.add_widget(&g);
+            for p in [&general, &game, &updates, &nexus, &together, &advanced] {
+                p.add_stretch_1a(1);
+            }
+            let pp = pages.as_ptr();
+            nav.current_row_changed().connect(&SlotOfInt::new(&root, move |i| pp.set_current_index(i)));
 
             SettingsUi {
                 root,
+                nav,
                 installs,
                 game_root,
                 game_change,
@@ -509,6 +571,10 @@ impl SettingsUi {
                 coop_busy: std::cell::Cell::new(false),
             }
         }
+    }
+
+    pub unsafe fn show_section(&self, s: Section) {
+        self.nav.set_current_row_1a(s as i32);
     }
 
     /// Change settings through the context (persists) and redraw.

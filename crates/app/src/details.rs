@@ -236,7 +236,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
         }));
         let b = QPushButton::from_q_string(&qs(t!("details-coop-settings")));
         let this = app.clone();
-        b.clicked().connect(&SlotNoArgs::new(&b, move || this.set_page(crate::app::PAGE_SETTINGS)));
+        b.clicked().connect(&SlotNoArgs::new(&b, move || this.open_settings(crate::settings_ui::Section::Together)));
         let row = QHBoxLayout::new_0a();
         l.add_layout_1a(&row);
         row.add_widget(&b);

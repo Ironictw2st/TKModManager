@@ -1,5 +1,21 @@
 # Settings tab, and the script extender features in the DLLs tab (se-ui-*).
 
+## Sections (list on the left of the Settings page; each page starts with its intro line)
+
+settings-section-general = General
+settings-section-general-intro = Language and how the manager looks and behaves.
+settings-section-game = Game
+settings-section-game-intro = Where your game and your mods are. The manager finds these by itself; change them only if it picked the wrong place.
+settings-section-updates = Updates
+settings-section-updates-intro = What the manager checks for when it starts. It always asks before installing anything.
+settings-section-nexus = Nexus Mods
+settings-section-nexus-intro = Install mods from Nexus Mods with one click on the website.
+settings-section-together = Playing together
+settings-section-together-intro = Share your mod list with a friend and check that you both have the same mods, so you can join each other's campaign.
+settings-section-advanced = Advanced
+settings-section-advanced-intro = For modders and troubleshooting: the exact mod list the game reads, and where the manager keeps its files.
+settings-group-updates = Check at startup
+
 ## Shared
 
 settings-change = Change…
@@ -59,7 +75,7 @@ settings-pick-pack-folder = Select a folder that holds .pack files
 
 ## Behaviour
 
-settings-group-behaviour = Behaviour
+settings-group-behaviour = Appearance and behaviour
 settings-tray = Keep running in the tray when the window is closed (tray menu: Play, profiles, Quit)
 settings-app-updates = Check for app updates on startup
 settings-app-channel-tip = Pre-release builds are only offered when you pick them here
@@ -219,7 +235,7 @@ settings-modlist-hint = Exactly what is written to tkmm_mods.txt at launch for t
 
 ## Profiles: import, export, co-op sync check
 
-settings-group-profiles = Profiles: import, export and co-op sync check
+settings-group-profiles = Share and compare mod lists
 settings-import-ca = Import CA launcher list…
 settings-import-ca-title = Import CA launcher list
 settings-import-ca-default-name = CA launcher

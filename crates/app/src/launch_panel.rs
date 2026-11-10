@@ -1,7 +1,7 @@
 //! Bottom of the right column (mockup order): Play, Script extender, Skip intro, Load save,
 //! plus script-extender warnings, the crash notice and the launch status line.
 
-use crate::app::{App, DIRTY_LAUNCH, DIRTY_LIST, DIRTY_DETAILS, PAGE_DLLS, PAGE_LOGS, PAGE_SETTINGS};
+use crate::app::{App, DIRTY_LAUNCH, DIRTY_LIST, DIRTY_DETAILS, PAGE_DLLS, PAGE_LOGS};
 use crate::details::{bold, colored, label};
 use crate::icons;
 use qt_core::{qs, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt};
@@ -163,7 +163,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
         let this = app.clone();
         b.clicked().connect(&SlotNoArgs::new(&b, move || match p {
             CoopProblem::UnsupportedBuild => crate::details::open_url(&tkmm_core::coop::repo_url()),
-            _ => this.set_page(PAGE_SETTINGS),
+            _ => this.open_settings(crate::settings_ui::Section::Together),
         }));
         l.add_widget(&b);
         v.add_widget(&frame);

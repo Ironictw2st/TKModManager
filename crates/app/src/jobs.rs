@@ -33,7 +33,7 @@ impl App {
                 &self.window,
                 &t!("jobs-nexus-no-key"),
             );
-            self.set_page(crate::app::PAGE_SETTINGS);
+            self.open_settings(crate::settings_ui::Section::Nexus);
             return;
         }
         self.set_task(&t!("jobs-nexus-fetching", mod_id = link.mod_id.to_string(), file_id = link.file_id.to_string()));

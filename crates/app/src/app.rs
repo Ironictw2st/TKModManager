@@ -305,6 +305,12 @@ impl App {
         }
     }
 
+    /// Settings, at one section.
+    pub unsafe fn open_settings(self: &Rc<Self>, section: settings_ui::Section) {
+        self.set_page(PAGE_SETTINGS);
+        self.settings.show_section(section);
+    }
+
     /// Wire every signal, start the pump and the background jobs, show the window.
     pub unsafe fn start(self: &Rc<Self>) {
         let this = self.clone();
