@@ -36,3 +36,15 @@ dlls-se-must-match = In co-op both players need the same setting.
 dlls-se-reset-question = Set every feature back to the script extender's defaults?
 dlls-se-show-advanced = Show advanced features
 dlls-se-show-advanced-tip = Performance tuning, sound, diagnostics and the main-menu text. Stays open while any of them is changed from its default.
+
+## Cards: who made each DLL, and the second line of a card
+
+dlls-se-author = By Ironic
+dlls-coop-name = Three Kingdoms Coop
+dlls-coop-author = By Thom-Ernst
+dlls-coop-about = Play a campaign together with up to 4 players. Both of you need it, with the same version, and the same mods (Settings > Playing together checks that).
+# Title of a DLL's install / update box.
+dlls-install-updates = Install and updates
+dlls-card-installed = Installed · v{ $version }
+dlls-card-needs-repair = Needs a repair
+dlls-card-steam-only = Steam only

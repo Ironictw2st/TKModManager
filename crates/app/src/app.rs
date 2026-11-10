@@ -190,7 +190,7 @@ impl App {
             let conflicts = tabs::ConflictsUi::build();
             let logs = tabs::LogsUi::build();
             let settings = settings_ui::SettingsUi::build();
-            let dll_tab = dll_tab::DllTabUi::build(&settings.dll_box);
+            let dll_tab = dll_tab::DllTabUi::build(&settings.dll_box, &settings.coop_box);
             stack.add_widget(&ml.root);
             stack.add_widget(&dll_tab.root);
             stack.add_widget(&conflicts.root);
@@ -303,6 +303,12 @@ impl App {
         if page == PAGE_DLLS {
             self.mark(DIRTY_DLLS);
         }
+    }
+
+    /// The DLLs tab, at one card.
+    pub unsafe fn open_dll_card(self: &Rc<Self>, card: dll_tab::Card) {
+        self.set_page(PAGE_DLLS);
+        self.dll_tab.show_card(card);
     }
 
     /// Settings, at one section.

@@ -116,6 +116,8 @@ pub struct SettingsUi {
     /// The script extender's versions box, shown in the DLLs tab.
     pub dll_box: QBox<QGroupBox>,
     dll_open_tab: QBox<QPushButton>,
+    /// Three Kingdoms Coop's install box, shown on its card in the DLLs tab.
+    pub coop_box: QBox<QGroupBox>,
     // three kingdoms coop
     coop_status: QBox<QLabel>,
     coop_install: QBox<QPushButton>,
@@ -460,7 +462,9 @@ impl SettingsUi {
             let profile_msg = label("");
             p.add_widget(&profile_msg);
             v.add_widget(&g);
-            v.add_widget(&coop_group);
+            // The Coop box lives in the DLLs tab, as its own card (dll_tab.rs adds it there).
+            let coop_box = coop_group;
+            coop_box.set_title(&qs(t!("dlls-install-updates")));
 
             // Generated mod list.
             let g = QGroupBox::from_q_string(&qs(t!("settings-group-modlist")));
@@ -544,6 +548,7 @@ impl SettingsUi {
                 dll_auto,
                 dll_box,
                 dll_open_tab,
+                coop_box,
                 coop_status,
                 coop_install,
                 coop_check,
@@ -1535,6 +1540,19 @@ impl SettingsUi {
         let li = self.language.find_data_1a(&QVariant::from_q_string(&qs(tkmm_core::i18n::current())));
         self.language.set_current_index(li.max(0));
 
+        let profile = st.active();
+        drop(st);
+        self.preview.set_plain_text(&qs(ops::preview_mod_list(&app.ctx, &profile)));
+        self.about.set_text(&qs(t!("settings-about", version = ops::APP_VERSION, path = paths::app_data_dir().display().to_string())));
+        let _ = DIRTY_LIST;
+    }
+
+    /// Three Kingdoms Coop's install box (shown on its card in the DLLs tab).
+    pub unsafe fn refresh_coop_box(&self, app: &Rc<App>) {
+        let s = app.ctx.settings();
+        let st = app.st.borrow();
+        let store = st.paths.store;
+        let steam = store == paths::GameStore::Steam;
         let supported = st.coop_supported();
         let pack = if st.coop_pack_enabled() {
             t!("settings-coop-pack-enabled")
@@ -1572,12 +1590,6 @@ impl SettingsUi {
         self.coop_workshop.set_enabled(steam);
         self.coop_uninstall.set_enabled(st.coop.is_some());
         self.coop_updates.set_checked(s.check_coop_updates);
-
-        let profile = st.active();
-        drop(st);
-        self.preview.set_plain_text(&qs(ops::preview_mod_list(&app.ctx, &profile)));
-        self.about.set_text(&qs(t!("settings-about", version = ops::APP_VERSION, path = paths::app_data_dir().display().to_string())));
-        let _ = DIRTY_LIST;
     }
 
     /// The script extender's versions box (shown in the DLLs tab).

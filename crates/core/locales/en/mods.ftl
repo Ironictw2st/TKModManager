@@ -152,7 +152,7 @@ details-coop-title = Three Kingdoms Coop
 # $summary describes the installed Coop DLL, e.g. "v1.2 installed".
 details-coop-dll = Coop DLL { $summary }.
 details-coop-missing = Coop's DLL is not installed. This pack needs it for the extra lobby seats: install it from Settings > Three Kingdoms Coop.
-details-coop-settings = Coop settings
+details-coop-settings = Open Coop in the DLLs tab
 details-movie-help = Movie packs load after every mod pack and cannot be ordered. Enabled = loaded; disabled = excluded through the mod list. Files are never renamed or moved.
 # Another copy of the same pack file; $place is where it is (e.g. "Workshop 123456" or "data/").
 details-copy-newer = { $place } (newer)
