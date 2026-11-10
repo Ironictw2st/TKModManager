@@ -19,15 +19,33 @@ The section for a tagged version becomes that release's notes, shown in the app'
   launch. Windows crash times in the report are now real UTC (they were local time marked "Z").
 
 ### Added
-- **DLLs tab.** The script extender now has its own tab instead of a box in Settings and a
-  settings window. It shows whether this profile uses it, its installed versions (install,
-  update, pick a version) and all of its features grouped by what they affect: battles, campaign
-  AI, characters and diplomacy, economy, multiplayer, stability, performance, interface and
-  sound, diagnostics. Switching a feature on or off is saved at once and used at the next launch,
-  for this profile or for every profile that follows the defaults. Features that change the
-  campaign say so, because co-op partners need the same setting. The 15 features the script
-  extender gained since 0.44 (battles on water fought on land, engine crash guards, AI siege
-  assaults, campaign-AI nudges, mod audio and others) can now be switched here too.
+- **First-time setup and a tour.** On its first start the manager walks you through finding the
+  game, bringing in a mod list, installing the script extender and choosing update checks, then
+  offers a one-minute tour of the window. The **?** button next to Settings runs either again.
+  If you already use the manager, a bar at the top offers the tour once.
+- **DLLs tab.** The script extender and Three Kingdoms Coop each get a card in a new tab, instead
+  of boxes in Settings and a settings window. The script extender's card shows whether this
+  profile uses it, its installed versions (install, update, pick a version) and all of its
+  features grouped by what they affect: battles, campaign AI, characters and diplomacy, economy,
+  multiplayer, stability (the rarely needed ones fold under "Show advanced features").
+  Switching a feature on or off is saved at once and used at the next launch, for this profile
+  or for every profile that follows the defaults. Features that change the campaign say so,
+  because co-op partners need the same setting. The 15 features the script extender gained
+  since 0.44 (battles on water fought on land, engine crash guards, AI siege assaults,
+  campaign-AI nudges, mod audio and others) can now be switched here too.
+
+### Changed
+- **Conflicts in plain words.** The Conflicts tab now opens on one card per pair of mods
+  ("B replaces 156 files from A"), marked "check" when game data or scripts are involved and
+  "usually fine" for models, art and text, with what it means and how to swap the order. "Show
+  files" lists that pair's files; "Show in mod list" selects both mods. The full file list is
+  still under "All files".
+- **Logs is now Troubleshooting.** It opens on what happened the last time the game ran (closed
+  normally or crashed, script extender on or off, mods changed since the last clean run) with
+  Send report right there. The raw log files fold away under "Log files (for modders)".
+- **Settings in sections:** General, Game, Updates, Nexus Mods, Playing together and Advanced,
+  each with a line on what it is for, instead of one long page.
+- The right-hand column explains the page you are on when it is not the mod list.
 - **Translations.** All text in the app can now be translated. Each language is one folder of
   plain-text files that anyone can edit (see TRANSLATING.md). When more than one language is
   available, the first start asks which to use, and Settings > Behaviour > Language changes it

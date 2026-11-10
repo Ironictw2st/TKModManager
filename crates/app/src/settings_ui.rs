@@ -64,7 +64,7 @@ pub struct SettingsUi {
     // game
     installs: QBox<QComboBox>,
     game_root: QBox<QLabel>,
-    game_change: QBox<QPushButton>,
+    pub game_change: QBox<QPushButton>,
     game_auto: QBox<QPushButton>,
     ws_title: QBox<QLabel>,
     ws_dir: QBox<QLabel>,
@@ -131,8 +131,8 @@ pub struct SettingsUi {
     // mod list preview
     preview: QBox<QPlainTextEdit>,
     // profiles
-    imp_ca: QBox<QPushButton>,
-    imp_collection: QBox<QPushButton>,
+    pub imp_ca: QBox<QPushButton>,
+    pub imp_collection: QBox<QPushButton>,
     imp_text: QBox<QPushButton>,
     export: QBox<QPushButton>,
     verify: QBox<QPushButton>,

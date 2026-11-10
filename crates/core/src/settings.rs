@@ -56,6 +56,45 @@ pub struct Settings {
     /// UI language: a folder name under `locales/` ("en", "de", "pt-BR"). "" = not chosen yet,
     /// so the first start asks.
     pub language: String,
+    /// The first-time setup / tour version this user has been through or offered. 0 = never.
+    pub setup_done: u32,
+}
+
+/// Bump when the setup or tour gains something existing users should be offered again.
+pub const SETUP_VERSION: u32 = 1;
+
+/// No profile file was ever saved in `dir`: the manager's first start on this PC. Existing
+/// users have one (`profiles.json`, or per store `profiles-epic.json`).
+pub fn first_start_in(dir: &std::path::Path) -> bool {
+    !std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().to_ascii_lowercase();
+            n.starts_with("profiles") && n.ends_with(".json")
+        }))
+        .unwrap_or(false)
+}
+
+pub fn first_start() -> bool {
+    first_start_in(&crate::paths::app_data_dir())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_start_means_no_profile_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(first_start_in(dir.path()));
+        assert!(first_start_in(&dir.path().join("missing")));
+        std::fs::write(dir.path().join("settings.json"), "{}").unwrap();
+        assert!(first_start_in(dir.path()), "settings alone (language picked) is still a first start");
+        std::fs::write(dir.path().join("profiles-epic.json"), "{}").unwrap();
+        assert!(!first_start_in(dir.path()));
+        // Older settings files have no setupDone: they read as 0.
+        let s: Settings = serde_json::from_str("{\"language\":\"en\"}").unwrap();
+        assert_eq!(s.setup_done, 0);
+    }
 }
 
 impl Default for Settings {
@@ -85,6 +124,7 @@ impl Default for Settings {
             last_crash_seen: 0,
             se_config_default: None,
             language: String::new(),
+            setup_done: 0,
         }
     }
 }

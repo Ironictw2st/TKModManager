@@ -27,6 +27,13 @@ app-profile = Profile
 app-profile-actions = Actions
 app-profile-actions-tip = Profile actions
 app-settings = Settings
+app-help-tip = Help: the tour and the first-time setup
+app-help-tour = Take the tour
+app-help-setup = Run the first-time setup again…
+# Bar under the header for people who used the manager before the tour existed.
+app-whats-new = New: a DLLs tab for the script extender and Coop, clearer Conflicts and Troubleshooting pages, and a one-minute tour.
+app-whats-new-tour = Take the tour
+app-whats-new-close = Not now
 # Shown above the mod list when the game can't be found.
 app-game-not-found = Three Kingdoms was not found in Steam, Epic or Game Pass. Set the game folder in Settings.
 

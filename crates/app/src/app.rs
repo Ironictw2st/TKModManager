@@ -74,8 +74,17 @@ pub struct App {
     /// A launch is waiting for the pre-launch Workshop update to finish.
     pub launch_after_steam: Cell<bool>,
 
+    /// No profile was ever saved on this PC: run the first-time setup.
+    pub first_start: Cell<bool>,
+    pub tour: RefCell<Option<Rc<crate::tour::Tour>>>,
+
     pub window: QBox<QMainWindow>,
     pub tabs: QBox<QTabBar>,
+    help_menu: QBox<QMenu>,
+    /// "New: … Take the tour" for users who had the manager before the tour existed.
+    whats_new: QBox<QWidget>,
+    whats_new_tour: QBox<QPushButton>,
+    whats_new_close: QBox<QPushButton>,
     pub profile_combo: QBox<QComboBox>,
     pub profile_btn: QBox<QToolButton>,
     pub profile_menu: QBox<QMenu>,
@@ -160,10 +169,30 @@ impl App {
             profile_btn.set_menu(&profile_menu);
             header.add_widget(&profile_btn);
             header.add_stretch_1a(1);
+            let help_btn = QToolButton::new_0a();
+            help_btn.set_text(&qs("?"));
+            help_btn.set_tool_tip(&qs(t!("app-help-tip")));
+            help_btn.set_popup_mode(qt_widgets::q_tool_button::ToolButtonPopupMode::InstantPopup);
+            let help_menu = QMenu::new();
+            help_btn.set_menu(&help_menu);
+            header.add_widget(&help_btn);
             let settings_btn = QPushButton::from_q_string(&qs(t!("app-settings")));
             settings_btn.set_checkable(true);
             header.add_widget(&settings_btn);
             left_layout.add_layout_1a(&header);
+
+            let whats_new = QWidget::new_0a();
+            let wn = QHBoxLayout::new_1a(&whats_new);
+            wn.set_contents_margins_4a(0, 0, 0, 0);
+            let wn_text = QLabel::from_q_string(&qs(t!("app-whats-new")));
+            wn_text.set_word_wrap(true);
+            wn.add_widget_2a(&wn_text, 1);
+            let whats_new_tour = QPushButton::from_q_string(&qs(t!("app-whats-new-tour")));
+            let whats_new_close = QPushButton::from_q_string(&qs(t!("app-whats-new-close")));
+            wn.add_widget(&whats_new_tour);
+            wn.add_widget(&whats_new_close);
+            whats_new.set_visible(false);
+            left_layout.add_widget(&whats_new);
 
             let banner = QLabel::new();
             banner.set_word_wrap(true);
@@ -250,8 +279,14 @@ impl App {
                 task_expires: Cell::new(None),
                 steam_results: RefCell::new(Vec::new()),
                 launch_after_steam: Cell::new(false),
+                first_start: Cell::new(false),
+                tour: RefCell::new(None),
                 window,
                 tabs,
+                help_menu,
+                whats_new,
+                whats_new_tour,
+                whats_new_close,
                 profile_combo,
                 profile_btn,
                 profile_menu,
@@ -356,18 +391,38 @@ impl App {
         timer.start_1a(50);
         std::mem::forget(timer); // parented to the window
 
+        // "?" menu: the tour and the first-time setup, any time.
+        let this = self.clone();
+        self.help_menu.add_action_q_string(&qs(t!("app-help-tour"))).triggered().connect(&SlotNoArgs::new(&self.window, move || crate::tour::start(&this)));
+        let this = self.clone();
+        self.help_menu.add_action_q_string(&qs(t!("app-help-setup"))).triggered().connect(&SlotNoArgs::new(&self.window, move || crate::setup::run(&this)));
+        let this = self.clone();
+        self.whats_new_tour.clicked().connect(&SlotNoArgs::new(&self.window, move || {
+            this.dismiss_whats_new();
+            crate::tour::start(&this);
+        }));
+        let this = self.clone();
+        self.whats_new_close.clicked().connect(&SlotNoArgs::new(&self.window, move || this.dismiss_whats_new()));
+
         self.rescan();
         self.refresh_dll();
         let s = self.ctx.settings();
-        // Startup checks offer each update in a popup. The DLL check waits for the app
-        // check's answer (see UiEvent::AppUpdate) so the two popups never stack.
-        // The Coop check comes last, after the DLL popup (`after_dll_startup_check`).
-        if s.check_app_updates {
-            self.check_app_update(false);
-        } else if s.check_dll_updates {
-            self.settings.check_dll(self, true);
+        let new_setup = s.setup_done < tkmm_core::settings::SETUP_VERSION;
+        if new_setup && self.first_start.get() && !self.hidden_ok.get() {
+            // First start on this PC: the setup runs once the window is up and the first scan
+            // had a moment; the update popups wait until it is closed.
+            let this = self.clone();
+            let t = QTimer::new_1a(&self.window);
+            t.set_single_shot(true);
+            t.timeout().connect(&SlotNoArgs::new(&self.window, move || {
+                crate::setup::run(&this);
+                this.startup_checks();
+            }));
+            t.start_1a(800);
+            t.into_ptr();
         } else {
-            self.after_dll_startup_check();
+            self.whats_new.set_visible(new_setup);
+            self.startup_checks();
         }
         let bus = self.bus.clone();
         let emit: Emit = Arc::new(move |st| bus.send(UiEvent::Launch(st)));
@@ -379,6 +434,28 @@ impl App {
             self.window.show();
         }
         self.notice_crash_log();
+    }
+
+    /// Startup checks offer each update in a popup. The DLL check waits for the app check's
+    /// answer (see UiEvent::AppUpdate) so the two popups never stack. The Coop check comes
+    /// last, after the DLL popup (`after_dll_startup_check`).
+    unsafe fn startup_checks(self: &Rc<Self>) {
+        let s = self.ctx.settings();
+        if s.check_app_updates {
+            self.check_app_update(false);
+        } else if s.check_dll_updates {
+            self.settings.check_dll(self, true);
+        } else {
+            self.after_dll_startup_check();
+        }
+    }
+
+    /// The "what's new" bar was answered: don't offer it again until the next setup version.
+    unsafe fn dismiss_whats_new(self: &Rc<Self>) {
+        self.whats_new.set_visible(false);
+        let mut s = self.ctx.settings();
+        s.setup_done = tkmm_core::settings::SETUP_VERSION;
+        let _ = self.ctx.set_settings(s);
     }
 
     /// Tell the user once about a crash.log newer than the last one they saw.
@@ -891,6 +968,9 @@ impl App {
         }
 
         self.ml.flush_drop(self);
+        if self.tour.borrow().is_some() {
+            crate::tour::place(self);
+        }
 
         if self.task_expires.get().map(|t| Instant::now() > t).unwrap_or(false) {
             self.set_task("");

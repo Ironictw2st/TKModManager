@@ -16,10 +16,12 @@ mod launch_panel;
 mod mod_list;
 mod se_settings;
 mod settings_ui;
+mod setup;
 mod single_instance;
 mod state;
 mod tabs;
 mod theme;
+mod tour;
 mod tray;
 
 use qt_core::qs;
@@ -81,12 +83,15 @@ fn main() {
         qt_gui::QGuiApplication::set_quit_on_last_window_closed(false);
         qt_core::QCoreApplication::set_application_name(&qs("TK Mod Manager"));
 
+        // Before anything saves a profile: is this the manager's first start on this PC?
+        let first_start = tkmm_core::settings::first_start();
         let ctx = AppContext::load();
         language::choose_and_load(&ctx);
         tkmm_core::dll::migrate_default_se_config(&ctx);
         let (bus, rx) = events::Bus::new();
         single_instance::listen(listener, bus.clone());
         let app = app::App::new(ctx, bus, rx, startup);
+        app.first_start.set(first_start);
         app.start();
         QApplication::exec()
     })
