@@ -29,7 +29,8 @@ pub const DIRTY_DETAILS: u32 = 2;
 pub const DIRTY_LAUNCH: u32 = 4;
 pub const DIRTY_HEADER: u32 = 8;
 pub const DIRTY_SETTINGS: u32 = 16;
-pub const DIRTY_DLLS: u32 = 32;
+/// The visible page's own content (DLLs tab, Troubleshooting summary).
+pub const DIRTY_PAGE: u32 = 32;
 pub const DIRTY_ALL: u32 = 63;
 
 // Pages of the stack; the header tabs use the same index (Settings has a button instead).
@@ -300,8 +301,8 @@ impl App {
         if page == PAGE_SETTINGS {
             self.mark(DIRTY_SETTINGS);
         }
-        if page == PAGE_DLLS {
-            self.mark(DIRTY_DLLS);
+        if page == PAGE_DLLS || page == PAGE_LOGS {
+            self.mark(DIRTY_PAGE);
         }
     }
 
@@ -921,8 +922,12 @@ impl App {
             self.settings.refresh(self);
         }
         // The features follow the active profile, which DIRTY_LAUNCH announces.
-        if bits & (DIRTY_DLLS | DIRTY_SETTINGS | DIRTY_LAUNCH) != 0 && self.page() == PAGE_DLLS {
+        if bits & (DIRTY_PAGE | DIRTY_SETTINGS | DIRTY_LAUNCH) != 0 && self.page() == PAGE_DLLS {
             self.dll_tab.refresh(self);
+        }
+        // The last game's summary changes when a game starts or ends (DIRTY_LAUNCH).
+        if bits & (DIRTY_PAGE | DIRTY_LAUNCH) != 0 && self.page() == PAGE_LOGS {
+            self.logs.refresh_summary(self);
         }
         self.suppress.set(false);
     }

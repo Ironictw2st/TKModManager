@@ -51,6 +51,29 @@ tabs-conflicts-pair-files = Show files
 tabs-conflicts-pair-show = Show in mod list
 tabs-conflicts-pair-show-tip = Selects both mods in the mod list
 
+## Troubleshooting tab: the last game, in words
+
+tabs-trouble-last-game = Last game
+tabs-trouble-never = You have not started the game from the manager yet.
+tabs-trouble-running = The game is running.
+# $date = when it started, $profile = the profile it used
+tabs-trouble-closed = { $date } ({ $profile }): the game closed normally.
+tabs-trouble-crashed = { $date } ({ $profile }): the game crashed.
+tabs-trouble-unknown = { $date } ({ $profile }): the manager did not see how the game ended.
+tabs-trouble-se-on = Script extender v{ $version } was on.
+tabs-trouble-se-missing = The script extender was on, but no version for your game is installed.
+tabs-trouble-se-off = The script extender was off.
+tabs-trouble-nothing-changed = Your mods are the same as the last time the game closed normally.
+tabs-trouble-changed = { $count } { $count ->
+        [one] mod changed
+       *[other] mods changed
+    } since the last time the game closed normally ("What changed" lists them).
+tabs-trouble-what-to-do = Press Send report: it posts everything the developers need to the 190 Expanded Discord. You do not need to find any files.
+tabs-trouble-changes = What changed
+tabs-trouble-changes-tip = Mods added, updated or removed since the last time the game closed normally
+tabs-trouble-show-logs = Log files (for modders)
+tabs-trouble-show-logs-tip = The raw log files the game and the script extender write
+
 ## Logs tab
 
 tabs-logs-filter = Filter lines (e.g. error)

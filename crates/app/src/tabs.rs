@@ -3,7 +3,7 @@
 use crate::app::App;
 use crate::details::{colored, label};
 use crate::icons;
-use qt_core::{qs, QBox, QListOfQString, QVariant, SlotNoArgs, SlotOfInt, SlotOfQString};
+use qt_core::{qs, QBox, QListOfQString, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt, SlotOfQString};
 use qt_gui::QBrush;
 use qt_widgets::{
     q_header_view::ResizeMode, QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QSplitter,
@@ -318,8 +318,12 @@ impl ConflictsUi {
     }
 }
 
+/// The Troubleshooting tab: what happened the last time the game ran, in words, with Send
+/// report; the raw log files fold away underneath for modders.
 pub struct LogsUi {
     pub root: QBox<QWidget>,
+    summary_layout: QBox<QVBoxLayout>,
+    summary: RefCell<Option<QBox<QWidget>>>,
     pub source: QBox<QComboBox>,
     pub filter: QBox<QLineEdit>,
     pub follow: QBox<QCheckBox>,
@@ -332,7 +336,31 @@ impl LogsUi {
     pub fn build() -> LogsUi {
         unsafe {
             let root = QWidget::new_0a();
-            let v = QVBoxLayout::new_1a(&root);
+            let outer = QVBoxLayout::new_1a(&root);
+            outer.set_contents_margins_4a(0, 0, 0, 0);
+            let g = qt_widgets::QGroupBox::from_q_string(&qs(t!("tabs-trouble-last-game")));
+            let summary_layout = QVBoxLayout::new_1a(&g);
+            outer.add_widget(&g);
+            let show_logs = QPushButton::from_q_string(&qs(t!("tabs-trouble-show-logs")));
+            show_logs.set_checkable(true);
+            show_logs.set_tool_tip(&qs(t!("tabs-trouble-show-logs-tip")));
+            let sl = QHBoxLayout::new_0a();
+            outer.add_layout_1a(&sl);
+            sl.add_widget(&show_logs);
+            sl.add_stretch_1a(1);
+            let logs_box = QWidget::new_0a();
+            outer.add_widget_2a(&logs_box, 1);
+            logs_box.set_visible(false);
+            let spacer = QWidget::new_0a();
+            outer.add_widget_2a(&spacer, 1);
+            let sp = spacer.as_ptr();
+            let lb = logs_box.as_ptr();
+            show_logs.toggled().connect(&SlotOfBool::new(&root, move |on| {
+                lb.set_visible(on);
+                sp.set_visible(!on);
+            }));
+            spacer.into_ptr();
+            let v = QVBoxLayout::new_1a(&logs_box);
             v.set_contents_margins_4a(0, 0, 0, 0);
             let bar = QHBoxLayout::new_0a();
             let source = QComboBox::new_0a();
@@ -356,8 +384,78 @@ impl LogsUi {
             text.set_font(&f);
             text.set_placeholder_text(&qs(t!("tabs-logs-placeholder")));
             v.add_widget_2a(&text, 1);
-            LogsUi { root, source, filter, follow, text, show_file, last: RefCell::new(String::new()) }
+            LogsUi { root, summary_layout, summary: RefCell::new(None), source, filter, follow, text, show_file, last: RefCell::new(String::new()) }
         }
+    }
+
+    /// Rebuild the "Last game" box from the launch history.
+    pub unsafe fn refresh_summary(&self, app: &Rc<App>) {
+        if let Some(old) = self.summary.borrow_mut().take() {
+            old.delete_later();
+        }
+        let w = QWidget::new_0a();
+        let l = QVBoxLayout::new_1a(&w);
+        l.set_contents_margins_4a(0, 0, 0, 0);
+        let (running, se_on, se_version) = {
+            let st = app.st.borrow();
+            (st.game_running, st.active().dll, st.dll_version())
+        };
+        let report = history::crash_report(None);
+        let mut crashed = false;
+        let head = match &report {
+            None => (t!("tabs-trouble-never"), icons::grey()),
+            Some(_) if running => (t!("tabs-trouble-running"), icons::green()),
+            Some(r) => {
+                let when = format_date(r.record.started);
+                match (r.record.ended, r.record.exit_code) {
+                    (_, Some(0)) => (t!("tabs-trouble-closed", date = when, profile = &r.record.profile), icons::green()),
+                    (None, _) => (t!("tabs-trouble-unknown", date = when, profile = &r.record.profile), icons::amber()),
+                    _ => {
+                        crashed = true;
+                        (t!("tabs-trouble-crashed", date = when, profile = &r.record.profile), icons::red())
+                    }
+                }
+            }
+        };
+        let h = label(&head.0);
+        crate::details::bold(&h);
+        colored(&h, &head.1);
+        l.add_widget(&h);
+        l.add_widget(&label(&match (se_on, &se_version) {
+            (true, Some(v)) => t!("tabs-trouble-se-on", version = v),
+            (true, None) => t!("tabs-trouble-se-missing"),
+            (false, _) => t!("tabs-trouble-se-off"),
+        }));
+        if crashed {
+            if let Some(d) = report.as_ref().and_then(|r| r.diff.as_ref()) {
+                let changes = d.added.len() + d.changed.len() + d.removed.len();
+                l.add_widget(&label(&if changes == 0 && !d.reordered {
+                    t!("tabs-trouble-nothing-changed")
+                } else {
+                    t!("tabs-trouble-changed", count = changes)
+                }));
+            }
+            let what = label(&t!("tabs-trouble-what-to-do"));
+            colored(&what, &icons::grey());
+            l.add_widget(&what);
+        }
+        let row = QHBoxLayout::new_0a();
+        l.add_layout_1a(&row);
+        let send = QPushButton::from_q_string(&qs(t!("launch-panel-send-report")));
+        send.set_tool_tip(&qs(t!("launch-panel-send-report-tip")));
+        let this = app.clone();
+        send.clicked().connect(&SlotNoArgs::new(&send, move || this.send_report()));
+        row.add_widget(&send);
+        if report.is_some() {
+            let more = QPushButton::from_q_string(&qs(t!("tabs-trouble-changes")));
+            more.set_tool_tip(&qs(t!("tabs-trouble-changes-tip")));
+            let this = app.clone();
+            more.clicked().connect(&SlotNoArgs::new(&more, move || crash_dialog(&this, None)));
+            row.add_widget(&more);
+        }
+        row.add_stretch_1a(1);
+        self.summary_layout.add_widget(&w);
+        *self.summary.borrow_mut() = Some(w);
     }
 
     pub unsafe fn connect(&self, app: &Rc<App>) {
