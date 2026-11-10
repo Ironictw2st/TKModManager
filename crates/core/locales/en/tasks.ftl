@@ -18,6 +18,38 @@ tabs-conflicts-shown = { $count } shared { $count ->
         [one] file
        *[other] files
     }
+tabs-conflicts-shown-pair = { $count } { $count ->
+        [one] file
+       *[other] files
+    } { $winner } takes from { $loser }
+tabs-conflicts-explain = When two mods have the same file, the game uses the copy from the mod lower in your load order. Most overlaps are on purpose (fixes and compatibility patches); the ones marked "check" are worth a look.
+tabs-conflicts-view-pairs = By mod
+tabs-conflicts-view-files = All files
+tabs-conflicts-pairs-count = { $count } { $count ->
+        [one] overlap
+       *[other] overlaps
+    } between mods
+tabs-conflicts-none = No two enabled mods share a file.
+# One card per pair of mods. $winner loads later, so the game uses its copies.
+tabs-conflicts-pair-card = { $winner } replaces { $count } { $count ->
+        [one] file
+       *[other] files
+    } from { $loser }
+# Second line of a card: the main kind of file, and how much it matters.
+tabs-conflicts-pair-card-sub = Mostly { $kind } · { $level }
+tabs-conflicts-level-check = check
+tabs-conflicts-level-fine = usually fine
+tabs-conflicts-pair-title = { $winner } replaces { $count } { $count ->
+        [one] file
+       *[other] files
+    } from { $loser }
+tabs-conflicts-kind-count = { $kind }: { $count }
+tabs-conflicts-pair-check = Some of these are game data or scripts. The game uses { $winner }'s version, so the matching changes from { $loser } do not apply. That is fine when { $winner } is a patch made for { $loser }; otherwise part of { $loser } may not work.
+tabs-conflicts-pair-fine = These are models, art or text. The game shows { $winner }'s version; nothing breaks.
+tabs-conflicts-pair-order = To use { $loser }'s version instead, move it below { $winner } in the mod list.
+tabs-conflicts-pair-files = Show files
+tabs-conflicts-pair-show = Show in mod list
+tabs-conflicts-pair-show-tip = Selects both mods in the mod list
 
 ## Logs tab
 

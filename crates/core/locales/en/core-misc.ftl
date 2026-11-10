@@ -86,3 +86,12 @@ sync-not-installed = not installed
 sync-disabled = installed, not enabled
 sync-different = different file
 sync-unverified = present (no hash)
+
+## Kinds of file in the Conflicts tab (lower case: they go into sentences)
+
+conflicts-kind-data = game data
+conflicts-kind-scripts = scripts
+conflicts-kind-interface = interface
+conflicts-kind-text = text
+conflicts-kind-art = models and art
+conflicts-kind-other = other files

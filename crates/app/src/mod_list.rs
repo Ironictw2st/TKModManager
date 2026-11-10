@@ -119,6 +119,8 @@ pub struct ModListUi {
     pub view: QBox<QTreeView>,
     pub model: QBox<QStandardItemModel>,
     pub pending_drop: RefCell<Vec<CppBox<QPersistentModelIndex>>>,
+    /// Scroll the focused mod into view on the next refresh (another page selected it).
+    pub reveal_focused: std::cell::Cell<bool>,
 }
 
 unsafe fn combo(items: &[(String, &str)]) -> QBox<QComboBox> {
@@ -276,6 +278,7 @@ impl ModListUi {
                 view,
                 model,
                 pending_drop: RefCell::new(Vec::new()),
+                reveal_focused: std::cell::Cell::new(false),
             }
         }
     }
@@ -957,10 +960,13 @@ impl ModListUi {
                 visit(top.child_1a(c));
             }
         }
+        self.view.vertical_scroll_bar().set_value(scroll);
         if let Some(c) = current {
             sel.set_current_index(&c, QFlags::from(qt_core::q_item_selection_model::SelectionFlag::NoUpdate));
+            if self.reveal_focused.replace(false) {
+                self.view.scroll_to_2a(&c, qt_widgets::q_abstract_item_view::ScrollHint::PositionAtCenter);
+            }
         }
-        self.view.vertical_scroll_bar().set_value(scroll);
 
         let total = profile.entries.iter().filter(|e| !e.is_separator()).count() - missing_count;
         let enabled = st.count_enabled(&profile);

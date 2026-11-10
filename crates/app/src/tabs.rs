@@ -7,22 +7,34 @@ use qt_core::{qs, QBox, QListOfQString, QVariant, SlotNoArgs, SlotOfInt, SlotOfQ
 use qt_gui::QBrush;
 use qt_widgets::{
     q_header_view::ResizeMode, QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QSplitter,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-use tkmm_core::conflicts::ConflictReport;
+use tkmm_core::conflicts::{summarize, ConflictReport, PairSummary};
 use tkmm_core::fmt::format_date;
 use tkmm_core::{history, logs};
 
 pub struct ConflictsUi {
     pub root: QBox<QWidget>,
+    /// 0 = mod pairs (the default), 1 = every file.
+    views: QBox<QStackedWidget>,
+    by_pair: QBox<QPushButton>,
+    all_files: QBox<QPushButton>,
+    pairs: QBox<QListWidget>,
+    pair_title: QBox<QLabel>,
+    pair_text: QBox<QLabel>,
+    pair_files: QBox<QPushButton>,
+    pair_show: QBox<QPushButton>,
     pub packs: QBox<QListWidget>,
     pub table: QBox<QTreeWidget>,
     pub filter: QBox<QLineEdit>,
     pub info: QBox<QLabel>,
     pub rescan: QBox<QPushButton>,
     report: RefCell<Option<ConflictReport>>,
+    summary: RefCell<Vec<PairSummary>>,
+    /// The file view shows only this pair's files (from "Show files").
+    pair_filter: RefCell<Option<(String, String)>>,
 }
 
 impl ConflictsUi {
@@ -31,16 +43,60 @@ impl ConflictsUi {
             let root = QWidget::new_0a();
             let v = QVBoxLayout::new_1a(&root);
             v.set_contents_margins_4a(0, 0, 0, 0);
+            let explain = label(&t!("tabs-conflicts-explain"));
+            colored(&explain, &icons::grey());
+            v.add_widget(&explain);
             let bar = QHBoxLayout::new_0a();
+            let by_pair = QPushButton::from_q_string(&qs(t!("tabs-conflicts-view-pairs")));
+            let all_files = QPushButton::from_q_string(&qs(t!("tabs-conflicts-view-files")));
+            for b in [&by_pair, &all_files] {
+                b.set_checkable(true);
+                b.set_auto_exclusive(true);
+                bar.add_widget(b);
+            }
+            by_pair.set_checked(true);
             let filter = QLineEdit::new();
             filter.set_placeholder_text(&qs(t!("tabs-conflicts-filter")));
             filter.set_clear_button_enabled(true);
+            filter.set_visible(false);
             bar.add_widget_2a(&filter, 1);
+            bar.add_stretch_1a(0);
             let info = QLabel::new();
             bar.add_widget(&info);
             let rescan = QPushButton::from_q_string(&qs(t!("tabs-conflicts-rescan")));
             bar.add_widget(&rescan);
             v.add_layout_1a(&bar);
+            let views = QStackedWidget::new_0a();
+            v.add_widget_2a(&views, 1);
+
+            // Mod pairs: a card per pair on the left, what it means on the right.
+            let psplit = QSplitter::new();
+            let pairs = QListWidget::new_0a();
+            pairs.set_style_sheet(&qs(crate::dll_tab::CARD_STYLE));
+            pairs.set_word_wrap(true);
+            psplit.add_widget(&pairs);
+            let detail = QWidget::new_0a();
+            let dl = QVBoxLayout::new_1a(&detail);
+            dl.set_contents_margins_4a(10, 0, 4, 0);
+            let pair_title = label("");
+            crate::details::bold(&pair_title);
+            dl.add_widget(&pair_title);
+            let pair_text = label("");
+            dl.add_widget(&pair_text);
+            let br = QHBoxLayout::new_0a();
+            dl.add_layout_1a(&br);
+            let pair_files = QPushButton::from_q_string(&qs(t!("tabs-conflicts-pair-files")));
+            let pair_show = QPushButton::from_q_string(&qs(t!("tabs-conflicts-pair-show")));
+            pair_show.set_tool_tip(&qs(t!("tabs-conflicts-pair-show-tip")));
+            br.add_widget(&pair_files);
+            br.add_widget(&pair_show);
+            br.add_stretch_1a(1);
+            dl.add_stretch_1a(1);
+            psplit.add_widget(&detail);
+            psplit.set_stretch_factor(0, 3);
+            psplit.set_stretch_factor(1, 2);
+            views.add_widget(&psplit);
+
             let split = QSplitter::new();
             let packs = QListWidget::new_0a();
             let table = QTreeWidget::new_0a();
@@ -56,18 +112,112 @@ impl ConflictsUi {
             split.add_widget(&table);
             split.set_stretch_factor(0, 1);
             split.set_stretch_factor(1, 3);
-            v.add_widget_2a(&split, 1);
-            ConflictsUi { root, packs, table, filter, info, rescan, report: RefCell::new(None) }
+            views.add_widget(&split);
+            ConflictsUi {
+                root,
+                views,
+                by_pair,
+                all_files,
+                pairs,
+                pair_title,
+                pair_text,
+                pair_files,
+                pair_show,
+                packs,
+                table,
+                filter,
+                info,
+                rescan,
+                report: RefCell::new(None),
+                summary: RefCell::new(Vec::new()),
+                pair_filter: RefCell::new(None),
+            }
         }
     }
 
     pub unsafe fn connect(&self, app: &Rc<App>) {
+        let w = &app.window;
         let this = app.clone();
-        self.rescan.clicked().connect(&SlotNoArgs::new(&app.window, move || this.run_conflicts()));
+        self.rescan.clicked().connect(&SlotNoArgs::new(w, move || this.run_conflicts()));
         let this = app.clone();
-        self.filter.text_changed().connect(&SlotOfQString::new(&app.window, move |_| this.conflicts.fill_table(&this)));
+        self.filter.text_changed().connect(&SlotOfQString::new(w, move |_| this.conflicts.fill_table(&this)));
         let this = app.clone();
-        self.packs.current_row_changed().connect(&SlotOfInt::new(&app.window, move |_| this.conflicts.fill_table(&this)));
+        self.packs.current_row_changed().connect(&SlotOfInt::new(w, move |_| {
+            // Picking a pack in the list ends "Show files" for one pair.
+            if !this.suppress.get() {
+                *this.conflicts.pair_filter.borrow_mut() = None;
+            }
+            this.conflicts.fill_table(&this);
+        }));
+        let this = app.clone();
+        self.by_pair.clicked().connect(&SlotNoArgs::new(w, move || this.conflicts.show_view(&this, 0)));
+        let this = app.clone();
+        self.all_files.clicked().connect(&SlotNoArgs::new(w, move || {
+            *this.conflicts.pair_filter.borrow_mut() = None;
+            this.conflicts.show_view(&this, 1);
+        }));
+        let this = app.clone();
+        self.pairs.current_row_changed().connect(&SlotOfInt::new(w, move |_| this.conflicts.fill_pair(&this)));
+        let this = app.clone();
+        self.pair_files.clicked().connect(&SlotNoArgs::new(w, move || {
+            let Some(p) = this.conflicts.current_pair() else { return };
+            *this.conflicts.pair_filter.borrow_mut() = Some((p.winner, p.loser));
+            this.conflicts.show_view(&this, 1);
+        }));
+        let this = app.clone();
+        self.pair_show.clicked().connect(&SlotNoArgs::new(w, move || {
+            let Some(p) = this.conflicts.current_pair() else { return };
+            {
+                let mut st = this.st.borrow_mut();
+                st.selected = vec![p.loser.clone(), p.winner.clone()];
+                st.focused = Some(p.winner.clone());
+            }
+            this.ml.reveal_focused.set(true);
+            this.set_page(crate::app::PAGE_MODS);
+            this.mark(crate::app::DIRTY_LIST | crate::app::DIRTY_DETAILS);
+        }));
+    }
+
+    unsafe fn show_view(&self, app: &Rc<App>, i: i32) {
+        self.views.set_current_index(i);
+        self.by_pair.set_checked(i == 0);
+        self.all_files.set_checked(i == 1);
+        self.filter.set_visible(i == 1);
+        if i == 1 {
+            app.suppress.set(true);
+            self.packs.set_current_row_1a(0);
+            app.suppress.set(false);
+            self.fill_table(app);
+        } else {
+            self.info.set_text(&qs(t!("tabs-conflicts-pairs-count", count = self.summary.borrow().len())));
+        }
+    }
+
+    unsafe fn current_pair(&self) -> Option<PairSummary> {
+        let i = self.pairs.current_row();
+        if i < 0 {
+            return None;
+        }
+        self.summary.borrow().get(i as usize).cloned()
+    }
+
+    /// The right-hand text for the selected pair.
+    unsafe fn fill_pair(&self, app: &Rc<App>) {
+        let Some(p) = self.current_pair() else {
+            self.pair_title.set_text(&qs(""));
+            self.pair_text.set_text(&qs(if self.summary.borrow().is_empty() { t!("tabs-conflicts-none") } else { String::new() }));
+            self.pair_files.set_visible(false);
+            self.pair_show.set_visible(false);
+            return;
+        };
+        let st = app.st.borrow();
+        let (winner, loser) = (st.title_of(&p.winner), st.title_of(&p.loser));
+        self.pair_title.set_text(&qs(t!("tabs-conflicts-pair-title", winner = &winner, loser = &loser, count = p.files)));
+        let kinds: Vec<String> = p.kinds.iter().map(|(k, n)| t!("tabs-conflicts-kind-count", kind = k.label(), count = *n)).collect();
+        let meaning = if p.check { t!("tabs-conflicts-pair-check", winner = &winner, loser = &loser) } else { t!("tabs-conflicts-pair-fine", winner = &winner, loser = &loser) };
+        self.pair_text.set_text(&qs(format!("{}\n\n{meaning}\n\n{}", kinds.join("\n"), t!("tabs-conflicts-pair-order", winner = &winner, loser = &loser))));
+        self.pair_files.set_visible(true);
+        self.pair_show.set_visible(true);
     }
 
     pub unsafe fn set_busy(&self, busy: bool) {
@@ -100,9 +250,32 @@ impl ConflictsUi {
                 self.packs.add_item_q_list_widget_item(it.into_ptr());
             }
         }
+        let summary = summarize(&r);
+        self.pairs.clear();
+        {
+            let st = app.st.borrow();
+            for p in &summary {
+                let main = p.kinds.first().map(|(k, _)| k.label()).unwrap_or_default();
+                let text = format!(
+                    "{}\n{}",
+                    t!("tabs-conflicts-pair-card", winner = st.title_of(&p.winner), loser = st.title_of(&p.loser), count = p.files),
+                    t!("tabs-conflicts-pair-card-sub", kind = main, level = if p.check { t!("tabs-conflicts-level-check") } else { t!("tabs-conflicts-level-fine") })
+                );
+                let it = QListWidgetItem::from_q_string(&qs(text));
+                if p.check {
+                    it.set_foreground(&QBrush::from_q_color(&icons::amber()));
+                }
+                self.pairs.add_item_q_list_widget_item(it.into_ptr());
+            }
+        }
+        *self.summary.borrow_mut() = summary;
         *self.report.borrow_mut() = Some(r);
         self.packs.set_current_row_1a(0);
         self.fill_table(app);
+        self.pairs.set_current_row_1a(0);
+        self.fill_pair(app);
+        let view = self.views.current_index();
+        self.show_view(app, view);
     }
 
     unsafe fn fill_table(&self, app: &Rc<App>) {
@@ -114,11 +287,18 @@ impl ConflictsUi {
             if cur.is_null() { String::new() } else { cur.data(qt_core::ItemDataRole::UserRole.to_int()).to_string().to_std_string() }
         };
         let q = self.filter.text().to_std_string().to_lowercase();
+        let pair = self.pair_filter.borrow().clone();
         let st = app.st.borrow();
         let mut shown = 0;
         for c in &r.conflicts {
             if (!only.is_empty() && !c.packs.contains(&only)) || (!q.is_empty() && !c.path.contains(&q)) {
                 continue;
+            }
+            // One pair: files the winner wins and the loser also has.
+            if let Some((w, l)) = &pair {
+                if c.packs.last() != Some(w) || !c.packs.contains(l) {
+                    continue;
+                }
             }
             shown += 1;
             if shown > 5000 {
@@ -131,7 +311,10 @@ impl ConflictsUi {
             it.set_tool_tip(1, &qs(t!("tabs-conflicts-winner", pack = names.last().cloned().unwrap_or_default())));
             self.table.add_top_level_item(it.into_ptr());
         }
-        self.info.set_text(&qs(t!("tabs-conflicts-shown", count = shown)));
+        self.info.set_text(&qs(match &pair {
+            Some((w, l)) => t!("tabs-conflicts-shown-pair", count = shown, winner = st.title_of(w), loser = st.title_of(l)),
+            None => t!("tabs-conflicts-shown", count = shown),
+        }));
     }
 }
 
