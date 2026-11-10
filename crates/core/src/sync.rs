@@ -433,7 +433,8 @@ mod tests {
         let text = build_export("MP", &[ph("ws:1/a.pack", "a.pack", 10, 'a')], "d", &c.sim_values(), Some("0.9.0"), None);
         assert_eq!(parse_export(&text).len(), 1, "@se lines are not packs");
         let theirs = parse_export_se(&text).unwrap();
-        assert_eq!(theirs.len(), 13);
+        assert_eq!(theirs.len(), 24);
+        assert_eq!(theirs.get("siege_odds_bands").map(String::as_str), Some("1.5:25,3:10,6:2.5"));
         let d = crate::se_config::diff_sim(&crate::se_config::SeConfig::default().sim_values(), &theirs);
         assert_eq!(d, vec![("marriage_inlaws".to_string(), "1".to_string(), "0".to_string())]);
     }

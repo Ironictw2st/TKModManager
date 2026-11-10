@@ -7,6 +7,7 @@ extern crate tkmm_core;
 mod app;
 mod details;
 mod dialogs;
+mod dll_tab;
 mod events;
 mod icons;
 mod jobs;

@@ -19,6 +19,15 @@ The section for a tagged version becomes that release's notes, shown in the app'
   launch. Windows crash times in the report are now real UTC (they were local time marked "Z").
 
 ### Added
+- **DLLs tab.** The script extender now has its own tab instead of a box in Settings and a
+  settings window. It shows whether this profile uses it, its installed versions (install,
+  update, pick a version) and all of its features grouped by what they affect: battles, campaign
+  AI, characters and diplomacy, economy, multiplayer, stability, performance, interface and
+  sound, diagnostics. Switching a feature on or off is saved at once and used at the next launch,
+  for this profile or for every profile that follows the defaults. Features that change the
+  campaign say so, because co-op partners need the same setting. The 15 features the script
+  extender gained since 0.44 (battles on water fought on land, engine crash guards, AI siege
+  assaults, campaign-AI nudges, mod audio and others) can now be switched here too.
 - **Translations.** All text in the app can now be translated. Each language is one folder of
   plain-text files that anyone can edit (see TRANSLATING.md). When more than one language is
   available, the first start asks which to use, and Settings > Behaviour > Language changes it

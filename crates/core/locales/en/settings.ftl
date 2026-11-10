@@ -1,4 +1,4 @@
-# Settings tab, and the script extender settings dialog (se-ui-*).
+# Settings tab, and the script extender features in the DLLs tab (se-ui-*).
 
 ## Shared
 
@@ -152,10 +152,8 @@ settings-dll-wrong-build = v{ $version } was built for a different game build, s
 settings-dll-wrong-build-short = v{ $version } was built for a different game build, so it would never be injected.
 settings-dll-using = Using v{ $version } for every launch
 settings-dll-auto = Also inject when the game was started outside the manager (while this app is running)
-settings-se-defaults = Default script extender settings…
-settings-se-defaults-tip = script_extender.cfg for every profile without its own settings (a profile's own: the Settings… button next to "Script extender" in the launch panel)
-settings-se-all-default = Default: all script extender defaults
-settings-se-default-changes = Default changes: { $keys }
+settings-dll-moved = The script extender's versions and features are in the DLLs tab.
+settings-dll-open-tab = Open the DLLs tab
 settings-dll-update-title = Script extender update
 settings-dll-install-title = Install script extender
 settings-dll-install-question = Download and install script extender v{ $version }?
@@ -302,7 +300,7 @@ settings-sync-adopt = Use their load order
 settings-sync-adopt-tip = Reorder the active profile to match your partner's export. Separators, disabled packs and packs only you have stay where they are.
 settings-sync-adopted-title = Load order
 settings-sync-adopted = The active profile now loads the shared packs in your partner's order. Run "Verify against an export" again to check.
-settings-sync-se-note = Script extender settings that change the campaign must be identical, or you cannot see each other's lobby. Change them with Settings… next to "Script extender" in the launch panel, or import your partner's export.
+settings-sync-se-note = Script extender settings that change the campaign must be identical, or you cannot see each other's lobby. Change them in the DLLs tab, or import your partner's export.
 settings-sync-se-unknown = Your partner's export has no script extender settings (made with an older TK Mod Manager), so those were not compared.
 
 ## About
@@ -313,18 +311,9 @@ settings-about = TK Mod Manager v{ $version }. Data in { $path }. Shortcuts: --p
 settings-open-data = Open data folder
 settings-check-app = Check for app updates
 
-## Script extender settings dialog
+## Script extender features (DLLs tab)
 
-se-ui-title-profile = Script extender settings: { $profile }
-se-ui-title-default = Default script extender settings
-se-ui-intro-profile = Settings the script extender reads when this profile starts the game (script_extender.cfg). Changes apply at the next launch.
-se-ui-intro-default = Used by every profile that has no settings of its own. Changes apply at the next launch.
-se-ui-use-default = Use the default settings (Settings > Script extender)
-se-ui-group-sim = Multiplayer: every player must match
-se-ui-group-sim-note = These change the campaign itself. Every value is part of the version lock in the main-menu build text, so players with different values cannot see each other's lobbies. Profile export carries them, and the co-op sync check compares them.
-se-ui-group-local = Local
-se-ui-group-local-note = Performance and diagnostics on this PC only; may differ between players.
-se-ui-group-menu = Main-menu text
+se-ui-use-default = Use the default settings
 # $game, $version and $sync show the placeholders as typed in the file ({game} ...); "[se version.sync]" stays as it is.
 se-ui-group-menu-note = Placeholders: { $game } = the game's own text, { $version } = script extender version, { $sync } = multiplayer settings hash. The [se version.sync] tag is always added.
 # Tooltip line under each setting's help: the key name in script_extender.cfg and its default value.

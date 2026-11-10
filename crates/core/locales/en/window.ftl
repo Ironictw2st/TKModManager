@@ -20,6 +20,7 @@ tray-quit = Quit
 ## Main window
 
 app-tab-mods = Mods
+app-tab-dlls = DLLs
 app-tab-conflicts = Conflicts
 app-tab-logs = Logs
 app-profile = Profile

@@ -6,7 +6,7 @@
 err-game-running = Three_Kingdoms.exe is already running
 err-game-folder-not-found = game folder not found; set it in Settings
 err-epic-load-save = the Epic version cannot be told to load a save; start the campaign from the main menu
-err-launch-no-dll = no script-extender DLL installed (Settings > Script extender)
+err-launch-no-dll = no script-extender DLL installed (DLLs tab)
 err-launch-no-matching-dll = no installed DLL matches this game build; injection would be refused
 err-epic-not-listed = Epic's launcher does not list this install; start the game from Epic once
 err-open-epic = cannot open Epic's launcher: { $error }

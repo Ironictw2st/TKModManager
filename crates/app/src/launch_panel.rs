@@ -1,7 +1,7 @@
 //! Bottom of the right column (mockup order): Play, Script extender, Skip intro, Load save,
 //! plus script-extender warnings, the crash notice and the launch status line.
 
-use crate::app::{App, DIRTY_LAUNCH, DIRTY_LIST, DIRTY_DETAILS, PAGE_LOGS, PAGE_SETTINGS};
+use crate::app::{App, DIRTY_LAUNCH, DIRTY_LIST, DIRTY_DETAILS, PAGE_DLLS, PAGE_LOGS, PAGE_SETTINGS};
 use crate::details::{bold, colored, label};
 use crate::icons;
 use qt_core::{qs, QVariant, SlotNoArgs, SlotOfBool, SlotOfInt};
@@ -139,7 +139,7 @@ pub unsafe fn refresh(app: &Rc<App>) {
                 this.st.borrow_mut().update_active(|p| p.dll = true);
                 this.mark(DIRTY_LAUNCH | DIRTY_LIST | DIRTY_DETAILS);
             } else {
-                this.set_page(PAGE_SETTINGS);
+                this.set_page(PAGE_DLLS);
             }
         }));
         l.add_widget(&b);
@@ -187,14 +187,14 @@ pub unsafe fn refresh(app: &Rc<App>) {
     se_cfg.set_enabled(!running);
     se_cfg.set_tool_tip(&qs(t!("launch-panel-se-config-tip")));
     let this = app.clone();
-    se_cfg.clicked().connect(&SlotNoArgs::new(&se_cfg, move || crate::se_settings::open(&this, crate::se_settings::Target::Profile)));
+    se_cfg.clicked().connect(&SlotNoArgs::new(&se_cfg, move || this.set_page(PAGE_DLLS)));
     se_row.add_widget(&se_cfg);
     se_row.add_stretch_1a(1);
     let ver = QPushButton::from_q_string(&qs(have.as_ref().map(|v| format!("v{v}")).unwrap_or_else(|| t!("launch-panel-no-dll"))));
     ver.set_flat(true);
     ver.set_tool_tip(&qs(if have.is_some() { t!("launch-panel-dll-tip") } else { t!("launch-panel-no-dll-tip") }));
     let this = app.clone();
-    ver.clicked().connect(&SlotNoArgs::new(&ver, move || this.set_page(PAGE_SETTINGS)));
+    ver.clicked().connect(&SlotNoArgs::new(&ver, move || this.set_page(PAGE_DLLS)));
     se_row.add_widget(&ver);
     if profile.dll {
         if let Some(c) = &profile.se_config {

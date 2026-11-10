@@ -7,7 +7,7 @@
 use crate::dialogs::UpdateChoice;
 use crate::events::{Bus, HashPurpose, UiEvent};
 use crate::state::State;
-use crate::{details, launch_panel, mod_list, settings_ui, tabs, tray};
+use crate::{details, dll_tab, launch_panel, mod_list, settings_ui, tabs, tray};
 use cpp_core::{Ptr, StaticUpcast};
 use qt_core::{qs, QBox, QObject, QTimer, SlotNoArgs, SlotOfInt};
 use qt_gui::{QGuiApplication, QIcon, QPixmap};
@@ -29,11 +29,14 @@ pub const DIRTY_DETAILS: u32 = 2;
 pub const DIRTY_LAUNCH: u32 = 4;
 pub const DIRTY_HEADER: u32 = 8;
 pub const DIRTY_SETTINGS: u32 = 16;
-pub const DIRTY_ALL: u32 = 31;
+pub const DIRTY_DLLS: u32 = 32;
+pub const DIRTY_ALL: u32 = 63;
 
-pub const PAGE_CONFLICTS: i32 = 1;
-pub const PAGE_LOGS: i32 = 2;
-pub const PAGE_SETTINGS: i32 = 3;
+// Pages of the stack; the header tabs use the same index (Settings has a button instead).
+pub const PAGE_DLLS: i32 = 1;
+pub const PAGE_CONFLICTS: i32 = 2;
+pub const PAGE_LOGS: i32 = 3;
+pub const PAGE_SETTINGS: i32 = 4;
 
 pub struct App {
     pub ctx: Ctx,
@@ -85,6 +88,7 @@ pub struct App {
     pub details_area: QBox<QScrollArea>,
     pub launch_layout: QBox<QVBoxLayout>,
     pub ml: mod_list::ModListUi,
+    pub dll_tab: dll_tab::DllTabUi,
     pub conflicts: tabs::ConflictsUi,
     pub logs: tabs::LogsUi,
     pub settings: settings_ui::SettingsUi,
@@ -136,6 +140,7 @@ impl App {
             header.add_spacing(12);
             let tabs = QTabBar::new_0a();
             tabs.add_tab_1a(&qs(t!("app-tab-mods")));
+            tabs.add_tab_1a(&qs(t!("app-tab-dlls")));
             tabs.add_tab_1a(&qs(t!("app-tab-conflicts")));
             tabs.add_tab_1a(&qs(t!("app-tab-logs")));
             tabs.set_draw_base(false);
@@ -184,7 +189,9 @@ impl App {
             let conflicts = tabs::ConflictsUi::build();
             let logs = tabs::LogsUi::build();
             let settings = settings_ui::SettingsUi::build();
+            let dll_tab = dll_tab::DllTabUi::build(&settings.dll_box);
             stack.add_widget(&ml.root);
+            stack.add_widget(&dll_tab.root);
             stack.add_widget(&conflicts.root);
             stack.add_widget(&logs.root);
             stack.add_widget(&settings.root);
@@ -256,6 +263,7 @@ impl App {
                 details_area,
                 launch_layout,
                 ml,
+                dll_tab,
                 conflicts,
                 logs,
                 settings,
@@ -289,6 +297,9 @@ impl App {
         if page == PAGE_SETTINGS {
             self.mark(DIRTY_SETTINGS);
         }
+        if page == PAGE_DLLS {
+            self.mark(DIRTY_DLLS);
+        }
     }
 
     /// Wire every signal, start the pump and the background jobs, show the window.
@@ -317,6 +328,7 @@ impl App {
         self.update_btn.clicked().connect(&SlotNoArgs::new(&self.window, move || this.confirm_app_update()));
 
         self.ml.connect(self);
+        self.dll_tab.connect(self);
         self.conflicts.connect(self);
         self.logs.connect(self);
         self.settings.connect(self);
@@ -892,6 +904,10 @@ impl App {
         }
         if bits & DIRTY_SETTINGS != 0 && self.page() == PAGE_SETTINGS {
             self.settings.refresh(self);
+        }
+        // The features follow the active profile, which DIRTY_LAUNCH announces.
+        if bits & (DIRTY_DLLS | DIRTY_SETTINGS | DIRTY_LAUNCH) != 0 && self.page() == PAGE_DLLS {
+            self.dll_tab.refresh(self);
         }
         self.suppress.set(false);
     }

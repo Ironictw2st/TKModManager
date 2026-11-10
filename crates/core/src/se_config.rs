@@ -36,38 +36,106 @@ pub enum Kind {
     Text,
 }
 
+/// What part of the game a setting is about: how the DLLs tab groups the features.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Area {
+    Battle,
+    CampaignAi,
+    Characters,
+    Economy,
+    Multiplayer,
+    Stability,
+    Performance,
+    Interface,
+    Diagnostics,
+    MenuText,
+}
+
+impl Area {
+    /// In the order the DLLs tab shows them.
+    pub const ALL: [Area; 10] = [
+        Area::Battle,
+        Area::CampaignAi,
+        Area::Characters,
+        Area::Economy,
+        Area::Multiplayer,
+        Area::Stability,
+        Area::Performance,
+        Area::Interface,
+        Area::Diagnostics,
+        Area::MenuText,
+    ];
+
+    pub fn label(self) -> String {
+        match self {
+            Area::Battle => t!("se-area-battle"),
+            Area::CampaignAi => t!("se-area-campaign-ai"),
+            Area::Characters => t!("se-area-characters"),
+            Area::Economy => t!("se-area-economy"),
+            Area::Multiplayer => t!("se-area-multiplayer"),
+            Area::Stability => t!("se-area-stability"),
+            Area::Performance => t!("se-area-performance"),
+            Area::Interface => t!("se-area-interface"),
+            Area::Diagnostics => t!("se-area-diagnostics"),
+            Area::MenuText => t!("se-area-menu-text"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct KeyDef {
     pub key: &'static str,
     pub group: Group,
+    pub area: Area,
     pub kind: Kind,
     pub default: &'static str,
 }
 
 const CACHE_MODES: &[&str] = &["0", "1", "2"];
+const B: Kind = Kind::Bool;
 
-/// Every key the manager knows, in the order they are written.
+const fn k(key: &'static str, group: Group, area: Area, kind: Kind, default: &'static str) -> KeyDef {
+    KeyDef { key, group, area, kind, default }
+}
+
+/// Every key the manager knows, in the order they are written. Defaults are the DLL's own
+/// (TK-ScriptExtender `build.rs` KNOWN_KEYS, docs/SCRIPTING.md "The configuration file").
 pub const KEYS: &[KeyDef] = &[
-    KeyDef { key: "build_number", group: Group::Menu, kind: Kind::Text, default: "{game}" },
-    KeyDef { key: "build_number_short", group: Group::Menu, kind: Kind::Text, default: "{game}" },
-    KeyDef { key: "build_modified", group: Group::Menu, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "autoresolve_hooks", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "duel_power_hook", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "prebattle_single_delegate", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "postbattle_single_continue", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "save_chunking", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "marriage_inlaws", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "marriage_blood_generations", group: Group::Sim, kind: Kind::Int { min: 0, max: 6 }, default: "0" },
-    KeyDef { key: "horde_income", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "horde_income_category", group: Group::Sim, kind: Kind::Choice(&["0", "1", "2", "3"]), default: "1" },
-    KeyDef { key: "followup_hooks", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "ai_recruit_hook", group: Group::Sim, kind: Kind::Bool, default: "1" },
-    KeyDef { key: "recruit_perm_cache", group: Group::Sim, kind: Kind::Choice(CACHE_MODES), default: "1" },
-    KeyDef { key: "ai_recruit_cache", group: Group::Sim, kind: Kind::Choice(&["0", "1", "2"]), default: "0" },
-    KeyDef { key: "ui_recruit_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 30_000 }, default: "5000" },
-    KeyDef { key: "file_probe_cache_ms", group: Group::Local, kind: Kind::Int { min: 0, max: 600_000 }, default: "10000" },
-    KeyDef { key: "diag_crash", group: Group::Local, kind: Kind::Choice(&["0", "1", "2"]), default: "1" },
-    KeyDef { key: "diag_diplomacy", group: Group::Local, kind: Kind::Choice(&["0", "1", "2"]), default: "0" },
+    k("build_number", Group::Menu, Area::MenuText, Kind::Text, "{game}"),
+    k("build_number_short", Group::Menu, Area::MenuText, Kind::Text, "{game}"),
+    k("build_modified", Group::Menu, Area::MenuText, B, "1"),
+    k("autoresolve_hooks", Group::Sim, Area::Battle, B, "1"),
+    k("duel_power_hook", Group::Sim, Area::Battle, B, "1"),
+    k("prebattle_single_delegate", Group::Sim, Area::Multiplayer, B, "1"),
+    k("postbattle_single_continue", Group::Sim, Area::Multiplayer, B, "1"),
+    k("save_chunking", Group::Sim, Area::Stability, B, "1"),
+    k("marriage_inlaws", Group::Sim, Area::Characters, B, "1"),
+    k("marriage_blood_generations", Group::Sim, Area::Characters, Kind::Int { min: 0, max: 6 }, "0"),
+    k("horde_income", Group::Sim, Area::Economy, B, "1"),
+    k("horde_income_category", Group::Sim, Area::Economy, Kind::Choice(&["0", "1", "2", "3"]), "1"),
+    k("followup_hooks", Group::Sim, Area::Characters, B, "1"),
+    k("ai_recruit_hook", Group::Sim, Area::CampaignAi, B, "1"),
+    k("recruit_perm_cache", Group::Sim, Area::Performance, Kind::Choice(CACHE_MODES), "1"),
+    k("ai_recruit_cache", Group::Sim, Area::Performance, Kind::Choice(&["0", "1", "2"]), "0"),
+    k("naval_to_land", Group::Sim, Area::Battle, B, "1"),
+    k("followup_respond_hook", Group::Sim, Area::Characters, B, "1"),
+    k("engine_crash_guards", Group::Sim, Area::Stability, B, "1"),
+    k("cai_null_guard", Group::Sim, Area::Stability, B, "1"),
+    k("siege_force_assault", Group::Sim, Area::CampaignAi, B, "1"),
+    k("siege_odds_gate", Group::Sim, Area::CampaignAi, B, "0"),
+    k("siege_odds_bands", Group::Sim, Area::CampaignAi, Kind::Text, "1.5:25,3:10,6:2.5"),
+    k("ai_skills", Group::Sim, Area::CampaignAi, B, "1"),
+    k("ai_ceos", Group::Sim, Area::CampaignAi, B, "1"),
+    k("ai_court", Group::Sim, Area::CampaignAi, B, "1"),
+    k("ai_build", Group::Sim, Area::CampaignAi, B, "1"),
+    k("ui_recruit_cache_ms", Group::Local, Area::Performance, Kind::Int { min: 0, max: 30_000 }, "5000"),
+    k("file_probe_cache_ms", Group::Local, Area::Performance, Kind::Int { min: 0, max: 600_000 }, "10000"),
+    k("battle_xform_fast", Group::Local, Area::Performance, B, "1"),
+    k("ceo_ui_refresh", Group::Local, Area::Interface, B, "1"),
+    k("audio", Group::Local, Area::Interface, B, "1"),
+    k("diag_crash", Group::Local, Area::Diagnostics, Kind::Choice(&["0", "1", "2"]), "1"),
+    k("diag_diplomacy", Group::Local, Area::Diagnostics, Kind::Choice(&["0", "1", "2"]), "0"),
+    k("ui_dev_loader", Group::Local, Area::Diagnostics, B, "0"),
 ];
 
 impl KeyDef {
@@ -94,6 +162,21 @@ impl KeyDef {
             "file_probe_cache_ms" => t!("se-key-file-probe-cache-ms"),
             "diag_crash" => t!("se-key-diag-crash"),
             "diag_diplomacy" => t!("se-key-diag-diplomacy"),
+            "naval_to_land" => t!("se-key-naval-to-land"),
+            "followup_respond_hook" => t!("se-key-followup-respond-hook"),
+            "engine_crash_guards" => t!("se-key-engine-crash-guards"),
+            "cai_null_guard" => t!("se-key-cai-null-guard"),
+            "siege_force_assault" => t!("se-key-siege-force-assault"),
+            "siege_odds_gate" => t!("se-key-siege-odds-gate"),
+            "siege_odds_bands" => t!("se-key-siege-odds-bands"),
+            "ai_skills" => t!("se-key-ai-skills"),
+            "ai_ceos" => t!("se-key-ai-ceos"),
+            "ai_court" => t!("se-key-ai-court"),
+            "ai_build" => t!("se-key-ai-build"),
+            "battle_xform_fast" => t!("se-key-battle-xform-fast"),
+            "ceo_ui_refresh" => t!("se-key-ceo-ui-refresh"),
+            "audio" => t!("se-key-audio"),
+            "ui_dev_loader" => t!("se-key-ui-dev-loader"),
             other => other.to_string(),
         }
     }
@@ -121,6 +204,21 @@ impl KeyDef {
             "file_probe_cache_ms" => t!("se-key-file-probe-cache-ms-help"),
             "diag_crash" => t!("se-key-diag-crash-help"),
             "diag_diplomacy" => t!("se-key-diag-diplomacy-help"),
+            "naval_to_land" => t!("se-key-naval-to-land-help"),
+            "followup_respond_hook" => t!("se-key-followup-respond-hook-help"),
+            "engine_crash_guards" => t!("se-key-engine-crash-guards-help"),
+            "cai_null_guard" => t!("se-key-cai-null-guard-help"),
+            "siege_force_assault" => t!("se-key-siege-force-assault-help"),
+            "siege_odds_gate" => t!("se-key-siege-odds-gate-help"),
+            "siege_odds_bands" => t!("se-key-siege-odds-bands-help"),
+            "ai_skills" => t!("se-key-ai-skills-help"),
+            "ai_ceos" => t!("se-key-ai-ceos-help"),
+            "ai_court" => t!("se-key-ai-court-help"),
+            "ai_build" => t!("se-key-ai-build-help"),
+            "battle_xform_fast" => t!("se-key-battle-xform-fast-help"),
+            "ceo_ui_refresh" => t!("se-key-ceo-ui-refresh-help"),
+            "audio" => t!("se-key-audio-help"),
+            "ui_dev_loader" => t!("se-key-ui-dev-loader-help"),
             _ => String::new(),
         }
     }
@@ -285,11 +383,46 @@ pub fn diff_sim(mine: &BTreeMap<String, String>, theirs: &BTreeMap<String, Strin
 mod tests {
     use super::*;
 
+    /// The DLL's KNOWN_KEYS (TK-ScriptExtender 0.47.0-beta.4, build.rs) and the keys its
+    /// `sync_tag()` hashes. Update both when the DLL gains a setting.
+    const DLL_KEYS: &[&str] = &[
+        "build_number", "build_number_short", "build_modified",
+        "autoresolve_hooks", "horde_income", "horde_income_category", "ai_recruit_hook", "followup_hooks",
+        "marriage_inlaws", "marriage_blood_generations",
+        "ui_recruit_cache_ms", "ai_recruit_cache", "recruit_perm_cache", "file_probe_cache_ms",
+        "diag_diplomacy", "diag_crash", "save_chunking", "duel_power_hook", "prebattle_single_delegate", "postbattle_single_continue",
+        "naval_to_land", "followup_respond_hook", "ceo_ui_refresh", "audio", "ui_dev_loader", "engine_crash_guards",
+        "cai_null_guard", "battle_xform_fast", "siege_odds_gate", "siege_odds_bands", "siege_force_assault",
+        "ai_skills", "ai_ceos", "ai_court", "ai_build",
+    ];
+    const DLL_SYNC_KEYS: &[&str] = &[
+        "autoresolve_hooks", "ai_recruit_cache", "recruit_perm_cache", "horde_income", "horde_income_category",
+        "ai_recruit_hook", "followup_hooks", "marriage_inlaws", "save_chunking", "duel_power_hook", "prebattle_single_delegate",
+        "postbattle_single_continue", "naval_to_land", "followup_respond_hook", "engine_crash_guards", "cai_null_guard",
+        "siege_force_assault", "siege_odds_gate", "siege_odds_bands", "ai_skills", "ai_ceos", "ai_court", "ai_build",
+        "marriage_blood_generations",
+    ];
+
     #[test]
-    fn thirteen_sim_keys() {
-        assert_eq!(KEYS.iter().filter(|d| d.group == Group::Sim).count(), 13);
+    fn table_matches_the_dll() {
+        let mut ours: Vec<&str> = KEYS.iter().map(|d| d.key).collect();
+        let mut theirs = DLL_KEYS.to_vec();
+        ours.sort();
+        theirs.sort();
+        assert_eq!(ours, theirs);
+        let mut sim: Vec<&str> = KEYS.iter().filter(|d| d.group == Group::Sim).map(|d| d.key).collect();
+        let mut sync = DLL_SYNC_KEYS.to_vec();
+        sim.sort();
+        sync.sort();
+        assert_eq!(sim, sync, "Group::Sim must be exactly the keys in the DLL's version lock");
         for d in KEYS {
             assert!(valid(d, d.default), "{} default invalid", d.key);
+            assert!(Area::ALL.contains(&d.area));
+            assert_ne!(d.label(), d.key, "{} has no label", d.key);
+            assert!(!d.help().is_empty(), "{} has no help", d.key);
+        }
+        for a in Area::ALL {
+            assert!(KEYS.iter().any(|d| d.area == a), "{a:?} is empty");
         }
     }
 

@@ -1,6 +1,6 @@
 //! The Settings page (opened with the Settings button in the header).
 
-use crate::app::{App, DIRTY_ALL, DIRTY_LIST, PAGE_LOGS};
+use crate::app::{App, DIRTY_ALL, DIRTY_LIST, PAGE_DLLS, PAGE_LOGS};
 use crate::details::{bold, colored, label};
 use crate::dialogs::UpdateChoice;
 use crate::events::{HashPurpose, UiEvent};
@@ -75,8 +75,9 @@ pub struct SettingsUi {
     dll_install: QBox<QPushButton>,
     dll_progress: QBox<QProgressBar>,
     dll_auto: QBox<QCheckBox>,
-    se_defaults: QBox<QPushButton>,
-    se_summary: QBox<QLabel>,
+    /// The script extender's versions box, shown in the DLLs tab.
+    pub dll_box: QBox<QGroupBox>,
+    dll_open_tab: QBox<QPushButton>,
     // three kingdoms coop
     coop_status: QBox<QLabel>,
     coop_install: QBox<QPushButton>,
@@ -346,13 +347,13 @@ impl SettingsUi {
             s.add_widget(&dll_progress);
             let dll_auto = QCheckBox::from_q_string(&qs(t!("settings-dll-auto")));
             s.add_widget(&dll_auto);
-            let se_row = QHBoxLayout::new_0a();
-            s.add_layout_1a(&se_row);
-            let se_defaults = button(&t!("settings-se-defaults"));
-            se_defaults.set_tool_tip(&qs(t!("settings-se-defaults-tip")));
-            se_row.add_widget(&se_defaults);
-            let se_summary = label("");
-            se_row.add_widget_2a(&se_summary, 1);
+            // The box lives in the DLLs tab (dll_tab.rs adds it there); Settings points to it.
+            let dll_box = g;
+            let g = QGroupBox::from_q_string(&qs(t!("settings-group-dll")));
+            let s = QHBoxLayout::new_1a(&g);
+            s.add_widget_2a(&label(&t!("settings-dll-moved")), 1);
+            let dll_open_tab = button(&t!("settings-dll-open-tab"));
+            s.add_widget(&dll_open_tab);
             v.add_widget(&g);
 
             // Three Kingdoms Coop.
@@ -479,8 +480,8 @@ impl SettingsUi {
                 dll_install,
                 dll_progress,
                 dll_auto,
-                se_defaults,
-                se_summary,
+                dll_box,
+                dll_open_tab,
                 coop_status,
                 coop_install,
                 coop_check,
@@ -756,10 +757,7 @@ impl SettingsUi {
         on_click!(self.coop_uninstall, |_a: &Rc<App>| crate::details::open_url("ms-settings:appsfeatures"));
         let this = app.clone();
         self.coop_updates.clicked().connect(&SlotOfBool::new(w, move |on| SettingsUi::update_settings(&this, |s| s.check_coop_updates = on)));
-        on_click!(self.se_defaults, |a: &Rc<App>| {
-            crate::se_settings::open(a, crate::se_settings::Target::Default);
-            a.mark(DIRTY_ALL);
-        });
+        on_click!(self.dll_open_tab, |a: &Rc<App>| a.set_page(PAGE_DLLS));
 
         on_click!(self.imp_ca, |a: &Rc<App>| a.settings.import_ca(a));
         on_click!(self.imp_collection, |a: &Rc<App>| {
@@ -1462,45 +1460,14 @@ impl SettingsUi {
         self.app_updates.set_checked(s.check_app_updates);
         self.dll_updates.set_checked(s.check_dll_updates);
         self.ws_updates.set_checked(s.update_workshop_on_launch);
-        self.dll_auto.set_checked(s.auto_inject_external);
         self.cache_hours.set_value(s.workshop_cache_hours as i32);
         let di = self.density.find_data_1a(&QVariant::from_q_string(&qs(&s.list_density)));
         self.density.set_current_index(if di < 0 { 1 } else { di });
-        let ch = self.dll_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.dll_channel)));
-        self.dll_channel.set_current_index(ch.max(0));
         let ac = self.app_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.app_channel)));
         self.app_channel.set_current_index(ac.max(0));
         self.app_channel.set_enabled(s.check_app_updates);
         let li = self.language.find_data_1a(&QVariant::from_q_string(&qs(tkmm_core::i18n::current())));
         self.language.set_current_index(li.max(0));
-
-        self.dll_list.clear();
-        if let Some(d) = &st.dll {
-            self.dll_game.set_text(&qs(t!("settings-dll-game-build",
-                timestamp = d.game_timestamp_hex.clone().unwrap_or_else(|| "?".into()),
-                size = d.game_size_hex.clone().unwrap_or_else(|| "?".into())
-            )));
-            for i in &d.installed {
-                let it = QTreeWidgetItem::new();
-                it.set_text(0, &qs(format!("v{}", i.version)));
-                it.set_data(0, qt_core::ItemDataRole::UserRole.to_int(), &QVariant::from_q_string(&qs(&i.version)));
-                it.set_text(1, &qs(i.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| t!("settings-no-manifest"))));
-                let selected = d.selected.as_ref().map(|s| s.version == i.version).unwrap_or(false);
-                let mut status = vec![if i.compatible { t!("settings-status-matches") } else { t!("settings-status-other-build") }];
-                if d.pinned.as_deref() == Some(i.version.as_str()) {
-                    status.push(if i.compatible { t!("settings-status-pinned") } else { t!("settings-status-pinned-blocked") });
-                }
-                if selected {
-                    status.push(t!("settings-status-will-inject"));
-                }
-                it.set_text(2, &qs(status.join(" · ")));
-                it.set_foreground(2, &qt_gui::QBrush::from_q_color(&if i.compatible { icons::green() } else { icons::red() }));
-                self.dll_list.add_top_level_item(it.into_ptr());
-            }
-            self.dll_unpin.set_enabled(d.pinned.is_some());
-        }
-        let changed = se_changed(&dll::default_se_config(&app.ctx.settings()));
-        self.se_summary.set_text(&qs(if changed.is_empty() { t!("settings-se-all-default") } else { t!("settings-se-default-changes", keys = changed.join(", ")) }));
 
         let supported = st.coop_supported();
         let pack = if st.coop_pack_enabled() {
@@ -1545,6 +1512,40 @@ impl SettingsUi {
         self.preview.set_plain_text(&qs(ops::preview_mod_list(&app.ctx, &profile)));
         self.about.set_text(&qs(t!("settings-about", version = ops::APP_VERSION, path = paths::app_data_dir().display().to_string())));
         let _ = DIRTY_LIST;
+    }
+
+    /// The script extender's versions box (shown in the DLLs tab).
+    pub unsafe fn refresh_dll_box(&self, app: &Rc<App>) {
+        let s = app.ctx.settings();
+        self.dll_auto.set_checked(s.auto_inject_external);
+        let ch = self.dll_channel.find_data_1a(&QVariant::from_q_string(&qs(&s.dll_channel)));
+        self.dll_channel.set_current_index(ch.max(0));
+        let st = app.st.borrow();
+        self.dll_list.clear();
+        if let Some(d) = &st.dll {
+            self.dll_game.set_text(&qs(t!("settings-dll-game-build",
+                timestamp = d.game_timestamp_hex.clone().unwrap_or_else(|| "?".into()),
+                size = d.game_size_hex.clone().unwrap_or_else(|| "?".into())
+            )));
+            for i in &d.installed {
+                let it = QTreeWidgetItem::new();
+                it.set_text(0, &qs(format!("v{}", i.version)));
+                it.set_data(0, qt_core::ItemDataRole::UserRole.to_int(), &QVariant::from_q_string(&qs(&i.version)));
+                it.set_text(1, &qs(i.manifest.as_ref().map(|m| if m.game_exe_version.is_empty() { m.exe_timestamp.clone() } else { m.game_exe_version.clone() }).unwrap_or_else(|| t!("settings-no-manifest"))));
+                let selected = d.selected.as_ref().map(|s| s.version == i.version).unwrap_or(false);
+                let mut status = vec![if i.compatible { t!("settings-status-matches") } else { t!("settings-status-other-build") }];
+                if d.pinned.as_deref() == Some(i.version.as_str()) {
+                    status.push(if i.compatible { t!("settings-status-pinned") } else { t!("settings-status-pinned-blocked") });
+                }
+                if selected {
+                    status.push(t!("settings-status-will-inject"));
+                }
+                it.set_text(2, &qs(status.join(" · ")));
+                it.set_foreground(2, &qt_gui::QBrush::from_q_color(&if i.compatible { icons::green() } else { icons::red() }));
+                self.dll_list.add_top_level_item(it.into_ptr());
+            }
+            self.dll_unpin.set_enabled(d.pinned.is_some());
+        }
     }
 }
 

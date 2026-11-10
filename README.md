@@ -24,12 +24,14 @@ injected once; the DLL verifies the game build itself and the launch panel shows
 A DLL built for another game build is never injected. The injection itself is done by
 `tkmm-inject.exe` next to the manager, which runs only for profiles that use the script extender.
 
-### Script extender settings
+### DLLs tab: script extender versions and features
 
-**Settings…** next to "Script extender" in the launch panel edits `script_extender.cfg` for the
-active profile; **Settings > Script extender > Default script extender settings…** edits the
-default for profiles without their own. Every key has its own control (multiplayer settings,
-local settings, main-menu text), and **Edit as text…** shows the whole file, including keys from
+The **DLLs** tab holds the script extender: whether the active profile uses it, its installed
+versions (install, update, pin one) and its features, grouped by what they affect (battles,
+campaign AI, characters and diplomacy, economy, multiplayer, stability, performance, interface
+and sound, diagnostics, main-menu text). **Settings for** picks the active profile (its own
+`script_extender.cfg`, or "Use the default settings") or the default for every profile without
+its own. Changes are saved at once. **Edit as text…** shows the whole file, including keys from
 a newer DLL that the manager doesn't know yet; those are kept. The file is written to
 `%APPDATA%\TKModManager\dll\script_extender.cfg` before each launch. A `script_extender.cfg`
 inside a DLL's own version folder overrides it, and the launch panel warns about that.
