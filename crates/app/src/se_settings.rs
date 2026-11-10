@@ -97,6 +97,9 @@ impl Form {
     }
 }
 
+/// Areas behind "Show advanced features": tuning and tools most players never need.
+const ADVANCED: [Area; 4] = [Area::Performance, Area::Interface, Area::Diagnostics, Area::MenuText];
+
 /// Which settings the panel edits (the combo's item data).
 const TARGET_PROFILE: i32 = 0;
 const TARGET_DEFAULT: i32 = 1;
@@ -109,6 +112,8 @@ pub struct Features {
     as_text: QBox<QPushButton>,
     summary: QBox<QLabel>,
     body: QBox<QWidget>,
+    show_advanced: QBox<QCheckBox>,
+    advanced: QBox<QWidget>,
     form: Rc<Form>,
     /// Set while `load` fills the controls: their signals must not save.
     loading: Rc<Cell<bool>>,
@@ -151,19 +156,29 @@ impl Features {
             v.add_widget(&body);
             let bl = QVBoxLayout::new_1a(&body);
             bl.set_contents_margins_4a(0, 0, 0, 0);
+            // Everyday areas first; the rest folds away behind "Show advanced features".
+            let show_advanced = QCheckBox::from_q_string(&qs(t!("dlls-se-show-advanced")));
+            show_advanced.set_tool_tip(&qs(t!("dlls-se-show-advanced-tip")));
+            let advanced = QWidget::new_0a();
+            let al = QVBoxLayout::new_0a();
             let mut rows = Vec::new();
             for area in Area::ALL {
                 let g = QGroupBox::from_q_string(&qs(area.label()));
-                bl.add_widget(&g);
+                if area == ADVANCED[0] {
+                    bl.add_widget(&show_advanced);
+                    bl.add_widget(&advanced);
+                    advanced.set_layout(&al);
+                    al.set_contents_margins_4a(0, 0, 0, 0);
+                }
+                if ADVANCED.contains(&area) {
+                    al.add_widget(&g);
+                } else {
+                    bl.add_widget(&g);
+                }
                 let gl = QGridLayout::new_1a(&g);
                 gl.set_column_stretch(1, 1);
                 gl.set_vertical_spacing(2);
                 let mut row = 0;
-                if area == Area::MenuText {
-                    // The placeholders are typed into script_extender.cfg as they are: not translated.
-                    gl.add_widget_5a(&small_grey(&t!("se-ui-group-menu-note", game = "{game}", version = "{version}", sync = "{sync}")), row, 0, 1, 2);
-                    row += 1;
-                }
                 for k in KEYS.iter().filter(|k| k.area == area) {
                     let tip = qs(t!("se-ui-key-tip", key = k.key, default = k.default));
                     let (ctrl, name): (Ctrl, Ptr<QWidget>) = match k.kind {
@@ -216,7 +231,7 @@ impl Features {
             colored(&other, &icons::amber());
             bl.add_widget(&other);
             let form = Rc::new(Form { rows, base: RefCell::new(SeConfig::default()), other });
-            Features { root, target, use_default, reset, as_text, summary, body, form, loading: Rc::new(Cell::new(false)) }
+            Features { root, target, use_default, reset, as_text, summary, body, show_advanced, advanced, form, loading: Rc::new(Cell::new(false)) }
         }
     }
 
@@ -240,6 +255,13 @@ impl Features {
         self.loading.set(true);
         self.form.load(&shown);
         self.loading.set(false);
+        // A changed advanced value is never hidden.
+        let advanced_changed = KEYS.iter().any(|k| ADVANCED.contains(&k.area) && !shown.is_default(k.key));
+        if advanced_changed && !self.show_advanced.is_checked() {
+            self.show_advanced.set_checked(true);
+        }
+        self.show_advanced.set_enabled(!advanced_changed);
+        self.advanced.set_visible(self.show_advanced.is_checked());
         let editable = default_mode || own.is_some();
         self.body.set_enabled(editable);
         self.reset.set_enabled(editable);
@@ -284,6 +306,8 @@ impl Features {
                 Ctrl::Line(e) => e.editing_finished().connect(&SlotNoArgs::new(w, move || changed())),
             };
         }
+        let adv = self.advanced.as_ptr();
+        self.show_advanced.toggled().connect(&SlotOfBool::new(w, move |on| adv.set_visible(on)));
         let (f, a) = (self.clone(), app.clone());
         self.target.activated().connect(&SlotOfInt::new(w, move |_| f.load(&a)));
         // Ticked: the profile follows the default. Unticked: it starts its own copy of it.

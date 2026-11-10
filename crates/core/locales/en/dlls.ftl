@@ -34,3 +34,5 @@ dlls-se-summary-changed = Changed from the defaults: { $keys }. Changes are save
 # Added after the help text of settings that change the campaign itself.
 dlls-se-must-match = In co-op both players need the same setting.
 dlls-se-reset-question = Set every feature back to the script extender's defaults?
+dlls-se-show-advanced = Show advanced features
+dlls-se-show-advanced-tip = Performance tuning, sound, diagnostics and the main-menu text. Stays open while any of them is changed from its default.

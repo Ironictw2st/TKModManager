@@ -75,6 +75,25 @@ pub unsafe fn refresh(app: &Rc<App>) {
     v.set_contents_margins_4a(4, 4, 8, 4);
     v.set_spacing(8);
 
+    // Pages other than the mod list get a short note on what the page is for.
+    let page = app.page();
+    if page != crate::app::PAGE_MODS {
+        let (title, body, tip) = match page {
+            crate::app::PAGE_DLLS => (t!("app-tab-dlls"), t!("details-page-dlls"), t!("details-page-dlls-tip")),
+            crate::app::PAGE_CONFLICTS => (t!("app-tab-conflicts"), t!("details-page-conflicts"), t!("details-page-conflicts-tip")),
+            crate::app::PAGE_LOGS => (t!("app-tab-logs"), t!("details-page-logs"), t!("details-page-logs-tip")),
+            _ => (t!("app-settings"), t!("details-page-settings"), t!("details-page-settings-tip")),
+        };
+        let t = label(&title);
+        bold(&t);
+        v.add_widget(&t);
+        v.add_widget(&label(&body));
+        v.add_widget(&small(&tip));
+        v.add_stretch_1a(1);
+        app.details_area.set_widget(&content);
+        return;
+    }
+
     let st = app.st.borrow();
     let Some(key) = st.focused.clone() else {
         v.add_widget(&label(&t!("details-select-a-mod")));

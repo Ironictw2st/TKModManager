@@ -314,8 +314,6 @@ settings-check-app = Check for app updates
 ## Script extender features (DLLs tab)
 
 se-ui-use-default = Use the default settings
-# $game, $version and $sync show the placeholders as typed in the file ({game} ...); "[se version.sync]" stays as it is.
-se-ui-group-menu-note = Placeholders: { $game } = the game's own text, { $version } = script extender version, { $sync } = multiplayer settings hash. The [se version.sync] tag is always added.
 # Tooltip line under each setting's help: the key name in script_extender.cfg and its default value.
 se-ui-key-tip = { $key }  (default { $default })
 se-ui-other-keys = Other keys, kept as they are (edit them with "Edit as text…"): { $keys }

@@ -177,3 +177,14 @@ details-hidden = Hidden (only shown with "Show hidden")
 details-notes-title = Notes
 details-notes-placeholder = Your notes for this mod
 details-description-title = Description
+
+## Right column on pages other than Mods
+
+details-page-dlls = DLLs add things to the game that mods alone cannot, such as engine fixes and smarter AI. Choose which ones this profile uses and switch their features on or off.
+details-page-dlls-tip = Changes are saved straight away and used the next time you press Play.
+details-page-conflicts = Two mods sometimes change the same file. The game then uses the one lower in your load order and ignores the other's copy.
+details-page-conflicts-tip = Pairs marked "check" touch game data or scripts, so part of the upper mod may not work. Art-only overlaps are usually fine.
+details-page-logs = What happened the last time you played, and a button to send a report if the game crashed.
+details-page-logs-tip = Send report posts everything the developers need to the 190 Expanded Discord. You do not need to find any files yourself.
+details-page-settings = Folders, updates, Nexus Mods, playing together and more. Pick a section on the left.
+details-page-settings-tip = Take the tour again any time with the ? button at the top.

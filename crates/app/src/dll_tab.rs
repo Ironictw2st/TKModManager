@@ -10,6 +10,11 @@ use qt_core::{qs, QBox, SlotOfBool};
 use qt_widgets::{QCheckBox, QGroupBox, QLabel, QListWidget, QListWidgetItem, QScrollArea, QSplitter, QVBoxLayout, QWidget};
 use std::rc::Rc;
 
+/// Card lists: roomy rows, and a quiet selection (the Windows accent can be red, which reads as
+/// an error on a whole card).
+pub const CARD_STYLE: &str = "QListWidget::item { padding: 8px 6px; } \
+    QListWidget::item:selected { background: palette(midlight); color: palette(window-text); border-left: 3px solid palette(highlight); }";
+
 pub struct DllTabUi {
     pub root: QBox<QSplitter>,
     cards: QBox<QListWidget>,
@@ -26,6 +31,7 @@ impl DllTabUi {
             let cards = QListWidget::new_0a();
             cards.set_minimum_width(180);
             cards.set_maximum_width(300);
+            cards.set_style_sheet(&qs(CARD_STYLE));
             root.add_widget(&cards);
             let item = QListWidgetItem::from_q_string(&qs(t!("dlls-se-name")));
             cards.add_item_q_list_widget_item(item.into_ptr());

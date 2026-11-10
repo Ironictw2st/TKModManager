@@ -33,6 +33,7 @@ pub const DIRTY_DLLS: u32 = 32;
 pub const DIRTY_ALL: u32 = 63;
 
 // Pages of the stack; the header tabs use the same index (Settings has a button instead).
+pub const PAGE_MODS: i32 = 0;
 pub const PAGE_DLLS: i32 = 1;
 pub const PAGE_CONFLICTS: i32 = 2;
 pub const PAGE_LOGS: i32 = 3;
@@ -288,6 +289,8 @@ impl App {
             self.tabs.set_current_index(page);
         }
         self.suppress.set(false);
+        // The right column shows the focused mod on the Mods page, a page note elsewhere.
+        self.mark(DIRTY_DETAILS);
         if page == PAGE_CONFLICTS {
             self.run_conflicts();
         }
