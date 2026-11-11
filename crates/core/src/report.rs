@@ -636,7 +636,8 @@ pub fn save(text: &str) -> Result<PathBuf, String> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let (y, m, d) = ymd(now);
     let s = now % 86_400;
-    let path = dir.join(format!("TKMM mod report {y}-{m:02}-{d:02} {:02}{:02}{:02}.txt", s / 3600, s % 3600 / 60, s % 60));
+    // The time is UTC; the name says so, as it can be hours off the player's clock.
+    let path = dir.join(format!("TKMM mod report {y}-{m:02}-{d:02} {:02}{:02}{:02} UTC.txt", s / 3600, s % 3600 / 60, s % 60));
     std::fs::write(&path, text).map_err(|e| crate::t!("err-write-file", path = path.display().to_string(), error = e.to_string()))?;
     Ok(path)
 }

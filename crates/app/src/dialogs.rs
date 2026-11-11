@@ -8,15 +8,51 @@ use qt_widgets::{
 };
 
 pub unsafe fn info(parent: &QBox<QMainWindow>, title: &str, text: &str) {
-    QMessageBox::information_q_widget2_q_string(parent, &qs(title), &qs(text));
+    message(parent, qt_widgets::q_message_box::Icon::Information, title, text, StandardButton::Ok.into());
 }
 
 pub unsafe fn error(parent: &QBox<QMainWindow>, text: &str) {
-    QMessageBox::warning_q_widget2_q_string(parent, &qs("TK Mod Manager"), &qs(text));
+    message(parent, qt_widgets::q_message_box::Icon::Warning, "TK Mod Manager", text, StandardButton::Ok.into());
 }
 
 pub unsafe fn confirm(parent: &QBox<QMainWindow>, title: &str, text: &str) -> bool {
-    QMessageBox::question_q_widget2_q_string(parent, &qs(title), &qs(text)) == StandardButton::Yes
+    message(parent, qt_widgets::q_message_box::Icon::Question, title, text, StandardButton::Yes | StandardButton::No) == StandardButton::Yes.to_int()
+}
+
+/// A message box shown in front of the main window; returns the clicked standard button.
+unsafe fn message(
+    parent: &QBox<QMainWindow>,
+    icon: qt_widgets::q_message_box::Icon,
+    title: &str,
+    text: &str,
+    buttons: qt_core::QFlags<StandardButton>,
+) -> i32 {
+    let mb = QMessageBox::from_q_widget(parent);
+    mb.set_icon(icon);
+    mb.set_window_title(&qs(title));
+    mb.set_text(&qs(text));
+    mb.set_standard_buttons(buttons);
+    let r = exec_in_front(parent, &mb);
+    mb.delete_later();
+    r
+}
+
+/// Many questions are asked from the event pump after a wait (the launch questions come after the
+/// Workshop check), and could open behind the main window, so the app looked stuck on "Checking
+/// Workshop mods for updates…". Raise the owner, then the box above it. When another program has
+/// the foreground, Windows won't hand it over; the taskbar button flashes instead.
+unsafe fn exec_in_front(parent: &QBox<QMainWindow>, mb: &QBox<QMessageBox>) -> i32 {
+    if parent.is_visible() {
+        if parent.is_minimized() {
+            parent.show_normal();
+        }
+        parent.raise();
+    }
+    mb.show();
+    mb.raise();
+    mb.activate_window();
+    qt_widgets::QApplication::alert_2a(mb, 0);
+    mb.exec()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,7 +74,7 @@ pub unsafe fn ask_update(parent: &QBox<QMainWindow>, title: &str, text: &str) ->
     let later = mb.add_button_q_string_button_role(&qs(t!("dialog-not-now")), ButtonRole::RejectRole);
     mb.set_default_button_q_push_button(install);
     mb.set_escape_button_q_abstract_button(later);
-    mb.exec();
+    exec_in_front(parent, &mb);
     let clicked = mb.clicked_button();
     let choice = if clicked.is_null() {
         UpdateChoice::Later
