@@ -4,6 +4,8 @@ The section for a tagged version becomes that release's notes, shown in the app'
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-11
+
 ### Fixed
 - **Questions no longer open behind the window.** A question asked after a wait, such as "Older
   copy in the data folder" after the Workshop check, could open behind the main window, so the
@@ -22,6 +24,9 @@ The section for a tagged version becomes that release's notes, shown in the app'
   the latest crash has no dump. The post also names where Windows saw the game crash, and the
   script extender's crash report (se_crash.txt) is attached when it was written since the last
   launch. Windows crash times in the report are now real UTC (they were local time marked "Z").
+- **Plurals.** Counts such as "1 mods" or "1 versions published" now read correctly.
+- **Restarting** (after an update or a language change) waits for the old copy to close
+  instead of possibly handing over to it while it is still quitting.
 
 ### Added
 - **First-time setup and a tour.** On its first start the manager walks you through finding the
@@ -53,14 +58,9 @@ The section for a tagged version becomes that release's notes, shown in the app'
 - The right-hand column explains the page you are on when it is not the mod list.
 - **Translations.** All text in the app can now be translated. Each language is one folder of
   plain-text files that anyone can edit (see TRANSLATING.md). When more than one language is
-  available, the first start asks which to use, and Settings > Behaviour > Language changes it
+  available, the first start asks which to use, and Settings > General > Language changes it
   (after a restart). Text that a translation is missing shows in English. Translators can try
   their files in the installed app by putting them in `%APPDATA%\TKModManager\locales`.
-
-### Fixed
-- **Plurals.** Counts such as "1 mods" or "1 versions published" now read correctly.
-- **Restarting** (after an update or a language change) waits for the old copy to close
-  instead of possibly handing over to it while it is still quitting.
 
 ## [0.6.8] - 2026-10-11
 
