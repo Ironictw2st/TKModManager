@@ -5,6 +5,11 @@ The section for a tagged version becomes that release's notes, shown in the app'
 ## [Unreleased]
 
 ### Fixed
+- **Questions no longer open behind the window.** A question asked after a wait, such as "Older
+  copy in the data folder" after the Workshop check, could open behind the main window, so the
+  app looked stuck on "Checking Workshop mods for updates…". Questions and messages now come up
+  in front of the window, and the taskbar button flashes when another program is in front.
+- **Saved mod reports say "UTC" in the file name**, since the time in it is UTC, not your clock.
 - **Big crash dumps now reach the developers.** "Send report" used to drop a crash dump that
   zipped to more than 10 MB. It now packs the dump as 7z when that is smaller (about half the
   size) and, if it is still too big for one message, posts it in parts in the same thread (up to
